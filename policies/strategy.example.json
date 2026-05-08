@@ -30,5 +30,65 @@
   },
   "strategy_execute": {
     "allow_execute_phase1": false
+  },
+  "create_strategy_plan": {
+    "max_target_accounts": 20,
+    "max_projects_per_account": 10,
+    "max_units_per_project": 20,
+    "project_naming": {
+      "template": "{target_date_compact}_{product}_{project_type}_{advertiser_id}_{index}",
+      "index_width": 2,
+      "invalid_char_replacement": "_"
+    },
+    "candidate_filters": {
+      "allowed_review_statuses": [
+        "APPROVED"
+      ],
+      "min_candidate_score": 0,
+      "min_candidate_stat_cost": 0,
+      "exclude_target_account_existing_materials": false
+    }
+  },
+  "create_preflight": {
+    "require_account_pool": true,
+    "reject_existing_project_names": true,
+    "min_daily_budget": 100,
+    "max_daily_budget": 1000,
+    "max_project_name_length": 80,
+    "project_name_pattern": "^\\d{8}_.+_.+_.+_\\d{2}$",
+    "required_field_defaults": [
+      "landing_type",
+      "pricing",
+      "inventory_type"
+    ]
+  },
+  "create_dry_run": {
+    "max_projects_per_dry_run": 50,
+    "max_units_per_dry_run": 500,
+    "provider_adapter": {
+      "provider": "oceanengine",
+      "field_mapping_version": "phase1.oceanengine.create_payload.draft.v1"
+    },
+    "provider_field_map_path": "configs/provider-field-maps/oceanengine.create.phase1.example.json"
+  },
+  "create_approval": {
+    "auto_approve_phase1": true,
+    "max_projects_per_approval": 50,
+    "max_units_per_approval": 500,
+    "max_materials_per_approval": 1000
+  },
+  "create_execute": {
+    "allow_execute_phase1": false,
+    "allow_live_api_payloads": false,
+    "phase_gate": {
+      "allow_live_execute_development": false,
+      "allow_live_execute": false,
+      "required_next_phase": "phase2"
+    },
+    "payload_schema": {
+      "version": "phase1.create_payload.v1",
+      "mode": "schema_only",
+      "live_payload_generation_enabled": false
+    }
   }
 }

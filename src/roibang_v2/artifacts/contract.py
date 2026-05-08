@@ -67,6 +67,20 @@ def validate_artifact_contract(
     if missing_fields:
         violations.append(f"missing required fields: {', '.join(missing_fields)}")
 
+    must_equal = contract.get("must_equal")
+    if isinstance(must_equal, dict):
+        for field, expected in must_equal.items():
+            actual = artifact.get(str(field))
+            if actual != expected:
+                violations.append(f"field {field} must equal {expected!r}, got {actual!r}")
+
+    must_be_empty = contract.get("must_be_empty")
+    if isinstance(must_be_empty, list):
+        for field in must_be_empty:
+            actual = artifact.get(str(field))
+            if actual not in (None, [], {}, ""):
+                violations.append(f"field {field} must be empty")
+
     return {
         "ok": not violations,
         "job_id": job_id,

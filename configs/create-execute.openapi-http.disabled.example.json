@@ -1,0 +1,31 @@
+{
+  "create_execute": {
+    "live_api": {
+      "enabled": false,
+      "transport": "openapi_http",
+      "allow_live_api_payloads": false,
+      "token_env": "OCEANENGINE_ACCESS_TOKEN",
+      "response_audit_dir": "data/runs/create_execute/audit/openapi-http-disabled",
+      "endpoints": {
+        "create_project": "",
+        "create_unit": "",
+        "bind_material": ""
+      }
+    },
+    "audit": {
+      "format": "jsonl",
+      "path": "data/runs/create_execute/audit/openapi-http-disabled",
+      "redact_fields": ["Access-Token", "Cookie", "x-csrftoken"]
+    },
+    "payload_schema": {
+      "version": "phase1.create_payload.v1",
+      "mode": "schema_only",
+      "live_payload_generation_enabled": false
+    },
+    "execution": {
+      "status": "planned_only",
+      "execution_enabled": false,
+      "external_api_enabled": false
+    }
+  }
+}

@@ -1,0 +1,118 @@
+{
+  "provider": "oceanengine",
+  "field_mapping_version": "phase1.oceanengine.create_payload.draft.v1",
+  "mapping_verified": false,
+  "source": "phase1_example_config_no_legacy_reference",
+  "operations": {
+    "create_project": [
+      {
+        "internal_field": "advertiser_id",
+        "provider_field": "",
+        "purpose": "target advertiser account id",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
+        "internal_field": "project_name",
+        "provider_field": "",
+        "purpose": "planned project name",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
+        "internal_field": "project_type",
+        "provider_field": "",
+        "purpose": "internal project type",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
+        "internal_field": "daily_budget",
+        "provider_field": "",
+        "purpose": "planned project daily budget",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
+        "internal_field": "field_defaults",
+        "provider_field": "",
+        "purpose": "project and unit default fields",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      }
+    ],
+    "create_unit": [
+      {
+        "internal_field": "advertiser_id",
+        "provider_field": "",
+        "purpose": "target advertiser account id",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
+        "internal_field": "project_key",
+        "provider_field": "",
+        "purpose": "local planned project key",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
+        "internal_field": "unit_key",
+        "provider_field": "",
+        "purpose": "local planned unit key",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
+        "internal_field": "field_defaults",
+        "provider_field": "",
+        "purpose": "project and unit default fields",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      }
+    ],
+    "bind_material": [
+      {
+        "internal_field": "advertiser_id",
+        "provider_field": "",
+        "purpose": "target advertiser account id",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
+        "internal_field": "project_key",
+        "provider_field": "",
+        "purpose": "local planned project key",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
+        "internal_field": "unit_key",
+        "provider_field": "",
+        "purpose": "local planned unit key",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
+        "internal_field": "material_id",
+        "provider_field": "",
+        "purpose": "source material identity",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      }
+    ]
+  }
+}

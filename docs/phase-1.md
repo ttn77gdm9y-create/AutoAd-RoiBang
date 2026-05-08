@@ -1,5 +1,7 @@
 # Phase 1 Scope
 
+Closeout review: `docs/phase-1-closeout-review.md`.
+
 ## Included
 
 - Local project skeleton.

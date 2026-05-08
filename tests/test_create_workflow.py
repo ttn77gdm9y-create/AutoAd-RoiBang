@@ -1,0 +1,4495 @@
+import importlib.util
+import json
+import re
+import sqlite3
+from pathlib import Path
+
+from roibang_v2.db.bootstrap import bootstrap_database
+from roibang_v2.workflows.create_approval import build_create_approval, run_create_approval_request
+from roibang_v2.workflows.create_chain_manifest import build_create_chain_manifest, run_create_chain_manifest_request
+from roibang_v2.workflows.create_chain_replay import build_create_chain_replay, run_create_chain_replay_request
+from roibang_v2.workflows.create_dry_run import build_create_dry_run, run_create_dry_run_request
+from roibang_v2.workflows.create_execute import build_create_execute, run_create_execute_request
+from roibang_v2.workflows.create_provider_adapter import (
+    build_provider_payload_drafts,
+    provider_adapter_contract,
+)
+from roibang_v2.workflows.create_provider_field_map import default_provider_field_map
+from roibang_v2.workflows.create_provider_field_map_check import (
+    build_create_provider_field_map_check,
+    run_create_provider_field_map_check_request,
+)
+from roibang_v2.workflows.create_field_mapping_review_pack import (
+    build_create_field_mapping_review_pack,
+    run_create_field_mapping_review_pack_request,
+)
+from roibang_v2.workflows.create_template_slot_review_pack import (
+    build_create_template_slot_review_pack,
+    run_create_template_slot_review_pack_request,
+)
+from roibang_v2.workflows.create_readiness_matrix import (
+    build_create_readiness_matrix,
+    run_create_readiness_matrix_request,
+)
+from roibang_v2.workflows.create_live_execute_phase_gate import (
+    build_create_live_execute_phase_gate,
+    run_create_live_execute_phase_gate_request,
+)
+from roibang_v2.workflows.create_live_payload_adapter_scaffold import (
+    build_create_live_payload_adapter_scaffold,
+    run_create_live_payload_adapter_scaffold_request,
+)
+from roibang_v2.workflows.create_adapter_review_pack import (
+    build_create_adapter_review_pack,
+    run_create_adapter_review_pack_request,
+)
+from roibang_v2.workflows.create_chain_index import (
+    build_create_chain_index,
+    run_create_chain_index_request,
+)
+from roibang_v2.workflows.create_chain_final_report import (
+    build_create_chain_final_report,
+    run_create_chain_final_report_request,
+)
+from roibang_v2.workflows.create_phase1_acceptance_checklist import (
+    build_create_phase1_acceptance_checklist,
+    run_create_phase1_acceptance_checklist_request,
+)
+from roibang_v2.workflows.create_phase1_baseline_freeze import (
+    build_create_phase1_baseline_freeze,
+    run_create_phase1_baseline_freeze_request,
+)
+from roibang_v2.workflows.create_provider_readiness import provider_readiness_contract
+from roibang_v2.workflows.create_plan_snapshot import build_create_plan_snapshot, run_create_plan_snapshot_request
+from roibang_v2.workflows.create_preflight import build_create_preflight, run_create_preflight_request
+from roibang_v2.workflows.create_request import run_create_request
+from roibang_v2.workflows.create_strategy_plan import build_create_strategy_plan, run_create_strategy_plan_request
+
+
+def _load_script(name: str):
+    script_path = Path(f"scripts/{name}.py")
+    spec = importlib.util.spec_from_file_location(name, script_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(module)
+    return module
+
+
+def _runtime_config(tmp_path: Path, db_path: Path) -> Path:
+    path = tmp_path / "runtime.json"
+    path.write_text(
+        json.dumps(
+            {
+                "environment": "test",
+                "phase": "phase1",
+                "database_path": str(db_path),
+                "runs_dir": str(tmp_path / "runs"),
+                "fixtures_dir": "data/fixtures",
+                "external_api_enabled": False,
+                "execution_enabled": False,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _seed_create_db(db_path: Path) -> None:
+    bootstrap_database(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO account_pool (
+              advertiser_id, account_name, product, platform,
+              historical_spend, source, synced_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "target-1",
+                "目标账户1",
+                "勇者突进",
+                "WECHAT_GAME",
+                1000,
+                "unit_test",
+                "2026-05-08T00:00:00+00:00",
+            ),
+        )
+        for rank, material_id, cost in [
+            (1, "m-high", 800),
+            (2, "m-mid", 500),
+            (3, "m-low", 100),
+            (4, "m-extra", 50),
+        ]:
+            conn.execute(
+                """
+                INSERT INTO materials (
+                  material_id, name, material_type, video_id,
+                  review_status, cost_lookback, score, source, synced_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    material_id,
+                    f"素材{rank}",
+                    "video",
+                    f"video-{rank}",
+                    "APPROVED",
+                    cost,
+                    cost,
+                    "unit_test",
+                    "2026-05-08T00:00:00+00:00",
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO product_source_material_candidates (
+                  pool_key, product, source_advertiser_id, organization_id,
+                  window_key, period_start, period_end, rank,
+                  material_id, material_type, source_video_id, name,
+                  review_status, stat_cost, score, source, synced_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "pool-yzt-wx-7r",
+                    "勇者突进",
+                    "source-1",
+                    "org-1",
+                    "all_history",
+                    "2026-02-10",
+                    "2026-05-07",
+                    rank,
+                    material_id,
+                    "video",
+                    f"source-video-{rank}",
+                    f"素材{rank}",
+                    "APPROVED",
+                    cost,
+                    cost,
+                    "unit_test",
+                    "2026-05-08T00:00:00+00:00",
+                ),
+            )
+
+
+def _create_request() -> dict:
+    return {
+        "create_request": {
+            "request_id": "create_req_20260508_yzt_wx_7r",
+            "target_date": "2026-05-08",
+            "product": "勇者突进",
+            "platform": "WECHAT_GAME",
+            "project_type": "WX_PAY_7R_GENERAL",
+            "source_advertiser_id": "source-1",
+            "organization_id": "org-1",
+            "pool_key": "pool-yzt-wx-7r",
+            "target_accounts": [
+                {
+                    "advertiser_id": "target-1",
+                    "project_count": 1,
+                    "units_per_project": 2,
+                    "daily_budget": 300,
+                }
+            ],
+            "material_requirements": {
+                "material_type": "video",
+                "materials_per_unit": 2,
+                "dedupe_scope": "request",
+            },
+            "field_defaults": {
+                "landing_type": "MICRO_GAME",
+                "pricing": "PRICING_CPA",
+                "inventory_type": "UNION",
+            },
+            "project_name_template": "{product}-{project_type}-{advertiser_id}-{index}",
+            "constraints": {
+                "phase": "phase1",
+                "execution_enabled": False,
+                "allow_real_create": False,
+            },
+        }
+    }
+
+
+def test_create_request_writes_plan_only_artifact_and_sqlite(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+
+    result = run_create_request(
+        _create_request(),
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+    )
+
+    assert result["ok"] is True
+    assert result["workflow"] == "create_request"
+    assert result["phase"] == "phase1"
+    assert result["execution_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert result["summary"] == {
+        "request_id": "create_req_20260508_yzt_wx_7r",
+        "target_date": "2026-05-08",
+        "target_account_count": 1,
+        "planned_project_count": 1,
+        "planned_unit_count": 2,
+    }
+    assert Path(result["artifact_path"]).exists()
+
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT request_id, phase, execution_enabled, request_json FROM create_requests"
+        ).fetchone()
+
+    assert row[0] == "create_req_20260508_yzt_wx_7r"
+    assert row[1] == "phase1"
+    assert row[2] == 0
+    assert json.loads(row[3])["project_type"] == "WX_PAY_7R_GENERAL"
+
+
+def test_create_strategy_plan_allocates_candidate_materials_without_duplicates(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+
+    plan = build_create_strategy_plan(
+        request=_create_request()["create_request"],
+        db_path=db_path,
+        policy={"max_target_accounts": 5, "max_projects_per_account": 2, "max_units_per_project": 4},
+    )
+
+    assert plan["ok"] is True
+    assert plan["workflow"] == "create_strategy_plan"
+    assert plan["plan_id"] == "create_plan_create_req_20260508_yzt_wx_7r"
+    assert plan["phase"] == "phase1"
+    assert plan["execution_enabled"] is False
+    assert plan["external_api_calls"] == 0
+    assert plan["summary"] == {
+        "plan_id": "create_plan_create_req_20260508_yzt_wx_7r",
+        "request_id": "create_req_20260508_yzt_wx_7r",
+        "target_date": "2026-05-08",
+        "planned_project_count": 1,
+        "planned_unit_count": 2,
+        "planned_material_count": 4,
+        "candidate_pool_size": 4,
+        "violation_count": 0,
+    }
+    units = plan["strategy"]["projects"][0]["units"]
+    assert [item["material_id"] for item in units[0]["materials"]] == ["m-high", "m-mid"]
+    assert [item["material_id"] for item in units[1]["materials"]] == ["m-low", "m-extra"]
+    assert plan["actions"] == []
+    assert plan["live_api_payloads"] == []
+
+
+def test_create_strategy_plan_fails_closed_when_request_deduped_materials_are_insufficient(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    request = _create_request()["create_request"]
+    request["target_accounts"][0]["units_per_project"] = 3
+
+    plan = build_create_strategy_plan(request=request, db_path=db_path, policy={})
+
+    assert plan["ok"] is False
+    assert plan["summary"]["planned_unit_count"] == 3
+    assert plan["summary"]["planned_material_count"] == 4
+    assert plan["summary"]["candidate_pool_size"] == 4
+    assert plan["summary"]["violation_count"] == 1
+    assert plan["violations"] == [
+        "candidate pool has 4 usable materials, expected 6 for dedupe_scope=request"
+    ]
+
+
+def test_create_strategy_plan_filters_candidates_by_policy_thresholds(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE product_source_material_candidates
+            SET review_status = ?, score = ?, stat_cost = ?
+            WHERE pool_key = ? AND material_id = ?
+            """,
+            ("REJECTED", 900, 900, "pool-yzt-wx-7r", "m-high"),
+        )
+        conn.execute(
+            """
+            UPDATE product_source_material_candidates
+            SET score = ?, stat_cost = ?
+            WHERE pool_key = ? AND material_id = ?
+            """,
+            (20, 20, "pool-yzt-wx-7r", "m-extra"),
+        )
+
+    plan = build_create_strategy_plan(
+        request=_create_request()["create_request"],
+        db_path=db_path,
+        policy={
+            "candidate_filters": {
+                "allowed_review_statuses": ["APPROVED"],
+                "min_candidate_score": 100,
+                "min_candidate_stat_cost": 100,
+            }
+        },
+    )
+
+    units = plan["strategy"]["projects"][0]["units"]
+    assert plan["ok"] is False
+    assert plan["summary"]["candidate_pool_size"] == 2
+    assert [item["material_id"] for item in units[0]["materials"]] == ["m-mid", "m-low"]
+    assert units[1]["materials"] == []
+    assert plan["violations"] == [
+        "candidate pool has 2 usable materials, expected 4 for dedupe_scope=request"
+    ]
+
+
+def test_create_strategy_plan_excludes_target_account_existing_materials(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO account_materials (
+              advertiser_id, material_id, video_id, material_type,
+              review_status, source, synced_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "target-1",
+                "m-high",
+                "video-existing",
+                "video",
+                "APPROVED",
+                "unit_test",
+                "2026-05-08T00:00:00+00:00",
+            ),
+        )
+    request = _create_request()["create_request"]
+    request["target_accounts"][0]["units_per_project"] = 1
+
+    plan = build_create_strategy_plan(
+        request=request,
+        db_path=db_path,
+        policy={"candidate_filters": {"exclude_target_account_existing_materials": True}},
+    )
+
+    units = plan["strategy"]["projects"][0]["units"]
+    assert plan["ok"] is True
+    assert plan["summary"]["candidate_pool_size"] == 3
+    assert [item["material_id"] for item in units[0]["materials"]] == ["m-mid", "m-low"]
+    assert "m-high" not in {item["material_id"] for item in units[0]["materials"]}
+
+
+def test_create_strategy_plan_excludes_existing_materials_per_target_account(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO account_pool (
+              advertiser_id, account_name, product, platform,
+              historical_spend, source, synced_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "target-2",
+                "目标账户2",
+                "勇者突进",
+                "WECHAT_GAME",
+                800,
+                "unit_test",
+                "2026-05-08T00:00:00+00:00",
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO account_materials (
+              advertiser_id, material_id, video_id, material_type,
+              review_status, source, synced_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "target-1",
+                "m-high",
+                "video-existing",
+                "video",
+                "APPROVED",
+                "unit_test",
+                "2026-05-08T00:00:00+00:00",
+            ),
+        )
+    request = _create_request()["create_request"]
+    request["target_accounts"] = [
+        {
+            "advertiser_id": "target-1",
+            "project_count": 1,
+            "units_per_project": 1,
+            "daily_budget": 300,
+        },
+        {
+            "advertiser_id": "target-2",
+            "project_count": 1,
+            "units_per_project": 1,
+            "daily_budget": 300,
+        },
+    ]
+    request["material_requirements"]["materials_per_unit"] = 1
+
+    plan = build_create_strategy_plan(
+        request=request,
+        db_path=db_path,
+        policy={"candidate_filters": {"exclude_target_account_existing_materials": True}},
+    )
+
+    projects = plan["strategy"]["projects"]
+    assert plan["ok"] is True
+    assert projects[0]["advertiser_id"] == "target-1"
+    assert projects[1]["advertiser_id"] == "target-2"
+    assert [item["material_id"] for item in projects[0]["units"][0]["materials"]] == ["m-mid"]
+    assert [item["material_id"] for item in projects[1]["units"][0]["materials"]] == ["m-high"]
+
+
+def test_create_strategy_plan_uses_policy_project_naming_template(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    request = _create_request()["create_request"]
+    request["project_name_template"] = "request-side-{advertiser_id}-{index}"
+
+    plan = build_create_strategy_plan(
+        request=request,
+        db_path=db_path,
+        policy={
+            "project_naming": {
+                "template": "{target_date_compact}_{product}_{project_type}_{advertiser_id}_{index}",
+                "index_width": 2,
+                "invalid_char_replacement": "_",
+            }
+        },
+    )
+
+    project = plan["strategy"]["projects"][0]
+    assert project["project_name"] == "20260508_勇者突进_WX_PAY_7R_GENERAL_target-1_01"
+    assert project["naming"]["source"] == "policy"
+    assert project["naming"]["template"] == "{target_date_compact}_{product}_{project_type}_{advertiser_id}_{index}"
+
+
+def test_create_preflight_rejects_project_names_outside_policy_pattern(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    plan = build_create_strategy_plan(request=_create_request()["create_request"], db_path=db_path, policy={})
+    plan["strategy"]["projects"][0]["project_name"] = "manual-name"
+
+    result = build_create_preflight(
+        create_strategy_plan_artifact=plan,
+        db_path=db_path,
+        policy={"project_name_pattern": r"^\d{8}_勇者突进_WX_PAY_7R_GENERAL_target-1_\d{2}$"},
+    )
+
+    assert result["ok"] is False
+    assert "project name manual-name does not match required pattern" in result["violations"]
+
+
+def test_create_preflight_checks_account_budget_names_and_material_counts(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    plan = build_create_strategy_plan(request=_create_request()["create_request"], db_path=db_path, policy={})
+
+    result = build_create_preflight(
+        create_strategy_plan_artifact=plan,
+        db_path=db_path,
+        policy={
+            "require_account_pool": True,
+            "min_daily_budget": 100,
+            "max_daily_budget": 500,
+            "max_project_name_length": 80,
+            "required_field_defaults": ["landing_type", "pricing", "inventory_type"],
+        },
+    )
+
+    assert result["ok"] is True
+    assert result["workflow"] == "create_preflight"
+    assert result["status"] == "passed"
+    assert result["execution_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert result["summary"]["violation_count"] == 0
+    assert result["approved_for_execute"] is False
+    assert result["actions"] == []
+
+
+def test_create_preflight_fails_closed_for_missing_account_and_short_materials(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    request = _create_request()["create_request"]
+    request["target_accounts"][0]["advertiser_id"] = "missing-account"
+    request["target_accounts"][0]["daily_budget"] = 20
+    request["target_accounts"][0]["units_per_project"] = 3
+    plan = build_create_strategy_plan(request=request, db_path=db_path, policy={})
+
+    result = build_create_preflight(
+        create_strategy_plan_artifact=plan,
+        db_path=db_path,
+        policy={"require_account_pool": True, "min_daily_budget": 100},
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "failed"
+    assert "target account missing-account is not in account_pool for 勇者突进/WECHAT_GAME" in result["violations"]
+    assert "daily budget for missing-account must be at least 100" in result["violations"]
+    assert "unit missing-account-p001-u03 has 0 materials, expected 2" in result["violations"]
+    assert result["approved_for_execute"] is False
+
+
+def test_create_preflight_validates_material_candidate_source_type_status_and_dedupe(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    plan = build_create_strategy_plan(request=_create_request()["create_request"], db_path=db_path, policy={})
+    projects = plan["strategy"]["projects"]
+    projects[0]["units"][0]["materials"][0]["material_id"] = "not-in-candidate-pool"
+    projects[0]["units"][0]["materials"][1]["material_type"] = "image"
+    projects[0]["units"][1]["materials"][0]["material_id"] = projects[0]["units"][1]["materials"][1]["material_id"]
+
+    result = build_create_preflight(
+        create_strategy_plan_artifact=plan,
+        db_path=db_path,
+        policy={
+            "candidate_filters": {"allowed_review_statuses": ["APPROVED"]},
+            "material_type": "video",
+            "dedupe_scope": "request",
+        },
+    )
+
+    assert result["ok"] is False
+    assert "material not-in-candidate-pool is not in candidate pool pool-yzt-wx-7r" in result["violations"]
+    assert "material m-mid type must be video, got image" in result["violations"]
+    assert "material m-extra is duplicated in request scope" in result["violations"]
+
+
+def test_create_preflight_rejects_existing_and_in_plan_project_name_duplicates(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    request = _create_request()["create_request"]
+    request["target_accounts"][0]["project_count"] = 2
+    request["target_accounts"][0]["units_per_project"] = 1
+    request["material_requirements"]["materials_per_unit"] = 1
+    plan = build_create_strategy_plan(request=request, db_path=db_path, policy={})
+    projects = plan["strategy"]["projects"]
+    projects[1]["project_name"] = projects[0]["project_name"]
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO projects (
+              project_id, advertiser_id, name, status, source, synced_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "existing-project-1",
+                "target-1",
+                projects[0]["project_name"],
+                "ENABLE",
+                "unit_test",
+                "2026-05-08T00:00:00+00:00",
+            ),
+        )
+
+    result = build_create_preflight(
+        create_strategy_plan_artifact=plan,
+        db_path=db_path,
+        policy={"reject_existing_project_names": True},
+    )
+
+    assert result["ok"] is False
+    assert (
+        f"project name {projects[0]['project_name']} already exists for advertiser target-1"
+        in result["violations"]
+    )
+    assert (
+        f"project name {projects[0]['project_name']} is duplicated in plan for advertiser target-1"
+        in result["violations"]
+    )
+
+
+def test_create_dry_run_outputs_non_executable_project_unit_material_combinations(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    plan = build_create_strategy_plan(request=_create_request()["create_request"], db_path=db_path, policy={})
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+
+    result = build_create_dry_run(
+        create_strategy_plan_artifact=plan,
+        create_preflight_artifact=preflight,
+        policy={"max_projects_per_dry_run": 5, "max_units_per_dry_run": 10},
+    )
+
+    assert result["ok"] is True
+    assert result["workflow"] == "create_dry_run"
+    assert result["phase"] == "phase1"
+    assert result["status"] == "simulated"
+    assert result["execution_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert result["summary"] == {
+        "plan_id": "create_plan_create_req_20260508_yzt_wx_7r",
+        "request_id": "create_req_20260508_yzt_wx_7r",
+        "target_date": "2026-05-08",
+        "project_count": 1,
+        "unit_count": 2,
+        "material_count": 4,
+        "violation_count": 0,
+    }
+    task = result["candidate_tasks"][0]
+    assert task["task_type"] == "create_project_candidate"
+    assert task["executable"] is False
+    assert task["live_api_payloads"] == []
+    assert task["payload_schema_ref"] == "phase1.create_payload.v1"
+    assert task["idempotency_key"]["scope"] == "create_project"
+    assert re.fullmatch(r"[0-9a-f]{64}", task["idempotency_key"]["value"])
+    assert task["idempotency_key"]["source_fields"] == {
+        "plan_id": "create_plan_create_req_20260508_yzt_wx_7r",
+        "request_id": "create_req_20260508_yzt_wx_7r",
+        "target_date": "2026-05-08",
+        "advertiser_id": "target-1",
+        "project_key": "target-1-p001",
+    }
+    assert [unit["unit_key"] for unit in task["units"]] == ["target-1-p001-u01", "target-1-p001-u02"]
+    assert task["units"][0]["idempotency_key"]["scope"] == "create_unit"
+    assert re.fullmatch(r"[0-9a-f]{64}", task["units"][0]["idempotency_key"]["value"])
+    assert task["units"][0]["materials"][0]["idempotency_key"]["scope"] == "bind_material"
+    assert re.fullmatch(r"[0-9a-f]{64}", task["units"][0]["materials"][0]["idempotency_key"]["value"])
+    assert task["redacted_payload_drafts"][0] == {
+        "operation": "create_project",
+        "transport": "disabled_schema_only",
+        "executable": False,
+        "idempotency_key": task["idempotency_key"]["value"],
+        "endpoint": "",
+        "payload": {
+            "advertiser_id": "target-1",
+            "project_name": "勇者突进-WX_PAY_7R_GENERAL-target-1-001",
+            "project_type": "WX_PAY_7R_GENERAL",
+            "daily_budget": 300.0,
+            "field_defaults": {
+                "landing_type": "MICRO_GAME",
+                "pricing": "PRICING_CPA",
+                "inventory_type": "UNION",
+            },
+        },
+    }
+    assert task["redacted_payload_drafts"][1]["operation"] == "create_unit"
+    assert task["redacted_payload_drafts"][1]["payload"]["unit_key"] == "target-1-p001-u01"
+    assert task["redacted_payload_drafts"][3]["operation"] == "bind_material"
+    assert task["redacted_payload_drafts"][3]["payload"]["material_id"] == "m-high"
+    assert result["payload_schema"]["version"] == "phase1.create_payload.v1"
+    assert result["payload_schema"]["mode"] == "schema_only"
+    assert result["payload_schema"]["execution_enabled"] is False
+    assert result["payload_schema"]["external_api_enabled"] is False
+    assert result["payload_schema"]["live_payload_generation_enabled"] is False
+    assert result["payload_schema"]["endpoints"] == {
+        "create_project": "",
+        "create_unit": "",
+        "bind_material": "",
+    }
+    assert result["payload_schema"]["required_fields"]["create_project"] == [
+        "advertiser_id",
+        "project_name",
+        "project_type",
+        "daily_budget",
+        "field_defaults",
+    ]
+    assert result["payload_schema"]["required_fields"]["create_unit"] == [
+        "advertiser_id",
+        "project_key",
+        "unit_key",
+        "field_defaults",
+    ]
+    assert result["payload_schema"]["required_fields"]["bind_material"] == [
+        "advertiser_id",
+        "project_key",
+        "unit_key",
+        "material_id",
+    ]
+    assert result["payload_contract"] == {
+        "status": "passed",
+        "schema_version": "phase1.create_payload.v1",
+        "checked_project_count": 1,
+        "checked_unit_count": 2,
+        "checked_material_binding_count": 4,
+        "missing_fields": [],
+    }
+    assert result["idempotency_contract"] == {
+        "status": "passed",
+        "checked_key_count": 7,
+        "duplicate_keys": [],
+    }
+    assert result["payload_draft_contract"] == {
+        "status": "passed",
+        "draft_count": 7,
+        "live_payload_count": 0,
+        "executable_draft_count": 0,
+        "redacted": True,
+    }
+    assert result["provider_adapter"] == {
+        "status": "draft_unverified",
+        "provider": "oceanengine",
+        "transport": "disabled_provider_adapter",
+        "mapping_verified": False,
+        "executable": False,
+        "field_mapping_version": "phase1.oceanengine.create_payload.draft.v1",
+    }
+    assert result["provider_adapter_contract"] == {
+        "status": "draft_unverified",
+        "provider": "oceanengine",
+        "mapping_verified": False,
+        "draft_count": 7,
+        "live_payload_count": 0,
+        "executable_draft_count": 0,
+        "unmapped_payload_field_count": 0,
+        "unmapped_payload_fields": [],
+    }
+    assert result["provider_field_map"]["provider"] == "oceanengine"
+    assert result["provider_field_map"]["mapping_verified"] is False
+    assert result["provider_field_map"]["source"] == "phase1_placeholder_no_legacy_reference"
+    assert result["provider_field_map"]["field_mapping_version"] == "phase1.oceanengine.create_payload.draft.v1"
+    assert result["provider_field_map"]["operations"]["create_project"][0] == {
+        "internal_field": "advertiser_id",
+        "provider_field": "",
+        "purpose": "target advertiser account id",
+        "verified": False,
+        "required": True,
+        "source": "internal_phase1_schema",
+    }
+    assert result["provider_field_map"]["operations"]["bind_material"][-1] == {
+        "internal_field": "material_id",
+        "provider_field": "",
+        "purpose": "source material identity",
+        "verified": False,
+        "required": True,
+        "source": "internal_phase1_schema",
+    }
+    assert result["provider_field_map_contract"] == {
+        "status": "unverified",
+        "provider": "oceanengine",
+        "mapping_verified": False,
+        "operation_count": 3,
+        "field_count": 13,
+        "verified_field_count": 0,
+        "unverified_field_count": 13,
+        "missing_provider_field_count": 13,
+        "missing_required_field_count": 0,
+        "missing_required_fields": [],
+        "duplicate_internal_field_count": 0,
+        "duplicate_internal_fields": [],
+        "duplicate_provider_field_count": 0,
+        "duplicate_provider_fields": [],
+        "unknown_internal_field_count": 0,
+        "unknown_internal_fields": [],
+        "provider_mismatch_count": 0,
+        "provider_mismatches": [],
+        "field_mapping_version_mismatch_count": 0,
+        "field_mapping_version_mismatches": [],
+    }
+    assert result["provider_readiness_contract"] == {
+        "status": "not_ready",
+        "ready_for_live_execute": False,
+        "provider": "oceanengine",
+        "checks": {
+            "provider_adapter_mapping_verified": False,
+            "provider_field_map_verified": False,
+            "provider_payloads_fully_mapped": True,
+            "payload_drafts_non_executable": True,
+            "live_payload_count_zero": True,
+        },
+        "blocking_reasons": [
+            "provider adapter mapping is not verified",
+            "provider field map is not verified",
+        ],
+    }
+    assert result["provider_payload_drafts"][0]["operation"] == "create_project"
+    assert result["provider_payload_drafts"][0]["provider"] == "oceanengine"
+    assert result["provider_payload_drafts"][0]["mapping_verified"] is False
+    assert result["provider_payload_drafts"][0]["field_mapping_applied"] is False
+    assert result["provider_payload_drafts"][0]["executable"] is False
+    assert result["provider_payload_drafts"][0]["payload"]["advertiser_id"] == "target-1"
+    assert result["provider_payload_drafts"][0]["payload"]["project_name"] == "勇者突进-WX_PAY_7R_GENERAL-target-1-001"
+    assert result["provider_payload_draft_digest"]["algorithm"] == "sha256"
+    assert re.fullmatch(r"[0-9a-f]{64}", result["provider_payload_draft_digest"]["value"])
+    assert result["provider_payload_draft_digest"]["provider_payload_draft_count"] == 7
+    assert result["redacted_payload_drafts"][0]["operation"] == "create_project"
+    assert result["redacted_payload_drafts"][0]["payload"]["project_key"] == "target-1-p001"
+    assert result["redacted_payload_drafts"][0]["payload"]["materials"] == "<redacted:4 material ids>"
+    assert result["approved_for_execute"] is False
+    assert result["actions"] == []
+
+
+def test_create_dry_run_can_load_provider_field_map_from_json_config(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    plan = build_create_strategy_plan(request=_create_request()["create_request"], db_path=db_path, policy={})
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+    field_map_path = tmp_path / "provider-field-map.json"
+    field_map_path.write_text(
+        json.dumps(
+            {
+                "provider": "oceanengine",
+                "field_mapping_version": "phase1.oceanengine.create_payload.draft.v1",
+                "mapping_verified": True,
+                "source": "unit_test_config",
+                "operations": {
+                    "create_project": [
+                        {
+                            "internal_field": "advertiser_id",
+                            "provider_field": "advertiser_id",
+                            "purpose": "target advertiser account id",
+                            "verified": True,
+                            "required": True,
+                            "source": "unit_test",
+                        },
+                        {
+                            "internal_field": "project_name",
+                            "provider_field": "name",
+                            "purpose": "planned project name",
+                            "verified": True,
+                            "required": True,
+                            "source": "unit_test",
+                        },
+                        {
+                            "internal_field": "project_type",
+                            "provider_field": "landing_type",
+                            "purpose": "internal project type",
+                            "verified": True,
+                            "required": True,
+                            "source": "unit_test",
+                        },
+                        {
+                            "internal_field": "daily_budget",
+                            "provider_field": "budget",
+                            "purpose": "planned project daily budget",
+                            "verified": True,
+                            "required": True,
+                            "source": "unit_test",
+                        },
+                        {
+                            "internal_field": "field_defaults",
+                            "provider_field": "project_fields",
+                            "purpose": "project and unit default fields",
+                            "verified": True,
+                            "required": True,
+                            "source": "unit_test",
+                        },
+                    ],
+                    "create_unit": [
+                        {
+                            "internal_field": "advertiser_id",
+                            "provider_field": "advertiser_id",
+                            "purpose": "target advertiser account id",
+                            "verified": True,
+                            "required": True,
+                            "source": "unit_test",
+                        },
+                        {
+                            "internal_field": "project_key",
+                            "provider_field": "project_id",
+                            "purpose": "local planned project key",
+                            "verified": True,
+                            "required": True,
+                            "source": "unit_test",
+                        },
+                        {
+                            "internal_field": "unit_key",
+                            "provider_field": "promotion_name",
+                            "purpose": "local planned unit key",
+                            "verified": True,
+                            "required": True,
+                            "source": "unit_test",
+                        },
+                        {
+                            "internal_field": "field_defaults",
+                            "provider_field": "promotion_fields",
+                            "purpose": "project and unit default fields",
+                            "verified": True,
+                            "required": True,
+                            "source": "unit_test",
+                        },
+                    ],
+                    "bind_material": [
+                        {
+                            "internal_field": "advertiser_id",
+                            "provider_field": "advertiser_id",
+                            "purpose": "target advertiser account id",
+                            "verified": True,
+                            "required": True,
+                            "source": "unit_test",
+                        },
+                        {
+                            "internal_field": "project_key",
+                            "provider_field": "project_id",
+                            "purpose": "local planned project key",
+                            "verified": True,
+                            "required": True,
+                            "source": "unit_test",
+                        },
+                        {
+                            "internal_field": "unit_key",
+                            "provider_field": "promotion_id",
+                            "purpose": "local planned unit key",
+                            "verified": True,
+                            "required": True,
+                            "source": "unit_test",
+                        },
+                        {
+                            "internal_field": "material_id",
+                            "provider_field": "material_id",
+                            "purpose": "source material identity",
+                            "verified": True,
+                            "required": True,
+                            "source": "unit_test",
+                        },
+                    ],
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = build_create_dry_run(
+        create_strategy_plan_artifact=plan,
+        create_preflight_artifact=preflight,
+        policy={
+            "provider_adapter": {
+                "provider": "oceanengine",
+                "field_mapping_version": "phase1.oceanengine.create_payload.draft.v1",
+                "mapping_verified": True,
+            },
+            "provider_field_map_path": str(field_map_path),
+        },
+    )
+
+    assert result["provider_field_map"]["source"] == "unit_test_config"
+    assert result["provider_field_map_contract"] == {
+        "status": "verified",
+        "provider": "oceanengine",
+        "mapping_verified": True,
+        "operation_count": 3,
+        "field_count": 13,
+        "verified_field_count": 13,
+        "unverified_field_count": 0,
+        "missing_provider_field_count": 0,
+        "missing_required_field_count": 0,
+        "missing_required_fields": [],
+        "duplicate_internal_field_count": 0,
+        "duplicate_internal_fields": [],
+        "duplicate_provider_field_count": 0,
+        "duplicate_provider_fields": [],
+        "unknown_internal_field_count": 0,
+        "unknown_internal_fields": [],
+        "provider_mismatch_count": 0,
+        "provider_mismatches": [],
+        "field_mapping_version_mismatch_count": 0,
+        "field_mapping_version_mismatches": [],
+    }
+    assert result["provider_readiness_contract"] == {
+        "status": "ready",
+        "ready_for_live_execute": True,
+        "provider": "oceanengine",
+        "checks": {
+            "provider_adapter_mapping_verified": True,
+            "provider_field_map_verified": True,
+            "provider_payloads_fully_mapped": True,
+            "payload_drafts_non_executable": True,
+            "live_payload_count_zero": True,
+        },
+        "blocking_reasons": [],
+    }
+    assert result["execution_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert result["provider_payload_drafts"][0]["mapping_verified"] is True
+    assert result["provider_payload_drafts"][0]["field_mapping_applied"] is True
+    assert result["provider_payload_drafts"][0]["payload"]["advertiser_id"] == "target-1"
+    assert result["provider_payload_drafts"][0]["payload"]["name"] == "勇者突进-WX_PAY_7R_GENERAL-target-1-001"
+    assert result["provider_payload_drafts"][0]["payload"]["landing_type"] == "WX_PAY_7R_GENERAL"
+    assert result["provider_payload_drafts"][0]["payload"]["budget"] == 300.0
+    assert "project_name" not in result["provider_payload_drafts"][0]["payload"]
+    assert "daily_budget" not in result["provider_payload_drafts"][0]["payload"]
+    unit_draft = next(draft for draft in result["provider_payload_drafts"] if draft["operation"] == "create_unit")
+    assert unit_draft["field_mapping_applied"] is True
+    assert unit_draft["payload"]["project_id"] == "target-1-p001"
+    assert unit_draft["payload"]["promotion_name"] == "target-1-p001-u01"
+    assert "unit_key" not in unit_draft["payload"]
+    material_draft = next(draft for draft in result["provider_payload_drafts"] if draft["operation"] == "bind_material")
+    assert material_draft["field_mapping_applied"] is True
+    assert material_draft["payload"]["promotion_id"] == "target-1-p001-u01"
+    assert material_draft["payload"]["material_id"] == "m-high"
+    assert "unit_key" not in material_draft["payload"]
+    assert result["actions"] == []
+
+
+def test_provider_payload_contract_blocks_unmapped_internal_payload_fields():
+    field_map = default_provider_field_map(
+        {
+            "provider_adapter": {
+                "provider": "oceanengine",
+                "field_mapping_version": "phase1.oceanengine.create_payload.draft.v1",
+            }
+        }
+    )
+    field_map["mapping_verified"] = True
+    for entries in field_map["operations"].values():
+        for entry in entries:
+            entry["provider_field"] = entry["internal_field"]
+            entry["verified"] = True
+    field_contract = {
+        "status": "verified",
+        "provider": "oceanengine",
+        "mapping_verified": True,
+    }
+    adapter = {
+        "provider": "oceanengine",
+        "transport": "disabled_provider_adapter",
+        "mapping_verified": True,
+        "field_mapping_version": "phase1.oceanengine.create_payload.draft.v1",
+    }
+    tasks = [
+        {
+            "live_api_payloads": [],
+            "redacted_payload_drafts": [
+                {
+                    "operation": "create_project",
+                    "idempotency_key": "idem-1",
+                    "endpoint": "",
+                    "payload": {
+                        "advertiser_id": "target-1",
+                        "project_name": "name-1",
+                        "project_type": "WX_PAY_7R_GENERAL",
+                        "daily_budget": 300.0,
+                        "field_defaults": {},
+                        "new_internal_field": "must-not-pass-through",
+                    },
+                }
+            ],
+        }
+    ]
+
+    provider_payload_drafts = build_provider_payload_drafts(
+        tasks=tasks,
+        adapter=adapter,
+        provider_field_map=field_map,
+        provider_field_map_contract=field_contract,
+    )
+    adapter_contract = provider_adapter_contract(
+        adapter=adapter,
+        provider_payload_drafts=provider_payload_drafts,
+        tasks=tasks,
+    )
+    readiness = provider_readiness_contract(
+        provider_adapter_contract=adapter_contract,
+        provider_field_map_contract=field_contract,
+        payload_draft_contract={
+            "executable_draft_count": 0,
+            "live_payload_count": 0,
+        },
+    )
+
+    assert provider_payload_drafts[0]["field_mapping_applied"] is False
+    assert provider_payload_drafts[0]["unmapped_payload_fields"] == [
+        {"operation": "create_project", "internal_field": "new_internal_field"}
+    ]
+    assert adapter_contract["unmapped_payload_field_count"] == 1
+    assert readiness["ready_for_live_execute"] is False
+    assert "provider payload drafts contain unmapped internal fields" in readiness["blocking_reasons"]
+
+
+def test_create_dry_run_falls_back_to_unverified_provider_field_map_for_bad_config(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    plan = build_create_strategy_plan(request=_create_request()["create_request"], db_path=db_path, policy={})
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+    field_map_path = tmp_path / "bad-provider-field-map.json"
+    field_map_path.write_text(json.dumps({"provider": "oceanengine"}), encoding="utf-8")
+
+    result = build_create_dry_run(
+        create_strategy_plan_artifact=plan,
+        create_preflight_artifact=preflight,
+        policy={"provider_field_map_path": str(field_map_path)},
+    )
+
+    assert result["provider_field_map"]["source"] == "phase1_placeholder_invalid_provider_field_map_config"
+    assert result["provider_field_map_contract"]["status"] == "unverified"
+    assert result["provider_field_map_digest"]["algorithm"] == "sha256"
+    assert re.fullmatch(r"[0-9a-f]{64}", result["provider_field_map_digest"]["value"])
+    assert result["provider_readiness_contract"]["ready_for_live_execute"] is False
+
+
+def test_create_provider_field_map_check_reports_unverified_example_config():
+    result = build_create_provider_field_map_check(
+        policy={
+            "provider_adapter": {
+                "provider": "oceanengine",
+                "field_mapping_version": "phase1.oceanengine.create_payload.draft.v1",
+            },
+            "provider_field_map_path": "configs/provider-field-maps/oceanengine.create.phase1.example.json",
+        }
+    )
+
+    assert result["ok"] is True
+    assert result["workflow"] == "create_provider_field_map_check"
+    assert result["phase"] == "phase1"
+    assert result["execution_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert result["status"] == "unverified"
+    assert result["summary"] == {
+        "provider": "oceanengine",
+        "field_map_path": "configs/provider-field-maps/oceanengine.create.phase1.example.json",
+        "operation_count": 3,
+        "field_count": 13,
+        "verified_field_count": 0,
+        "missing_provider_field_count": 13,
+        "missing_required_field_count": 0,
+        "duplicate_internal_field_count": 0,
+        "duplicate_provider_field_count": 0,
+        "unknown_internal_field_count": 0,
+        "provider_mismatch_count": 0,
+        "field_mapping_version_mismatch_count": 0,
+        "ready_for_live_execute": False,
+    }
+    assert result["provider_field_map_contract"]["status"] == "unverified"
+    assert result["provider_readiness_contract"]["ready_for_live_execute"] is False
+    assert result["missing_provider_fields"][0] == {
+        "operation": "create_project",
+        "internal_field": "advertiser_id",
+    }
+    assert result["missing_required_fields"] == []
+    assert result["unverified_fields"][0] == {
+        "operation": "create_project",
+        "internal_field": "advertiser_id",
+    }
+    assert result["violations"] == []
+    assert result["actions"] == []
+
+
+def test_create_provider_field_map_check_requires_top_level_mapping_verified(tmp_path: Path):
+    field_map = default_provider_field_map(
+        {
+            "provider_adapter": {
+                "provider": "oceanengine",
+                "field_mapping_version": "phase1.oceanengine.create_payload.draft.v1",
+            }
+        }
+    )
+    field_map["source"] = "unit_test_rows_verified_but_map_not_confirmed"
+    for entries in field_map["operations"].values():
+        for entry in entries:
+            entry["provider_field"] = entry["internal_field"]
+            entry["verified"] = True
+            entry["source"] = "unit_test"
+    field_map_path = tmp_path / "rows-verified-map-not-confirmed.json"
+    field_map_path.write_text(json.dumps(field_map, ensure_ascii=False), encoding="utf-8")
+
+    result = build_create_provider_field_map_check(
+        policy={
+            "provider_adapter": {
+                "provider": "oceanengine",
+                "field_mapping_version": "phase1.oceanengine.create_payload.draft.v1",
+                "mapping_verified": True,
+            },
+            "provider_field_map_path": str(field_map_path),
+        }
+    )
+
+    assert result["status"] == "unverified"
+    assert result["provider_field_map_contract"]["mapping_verified"] is False
+    assert result["provider_readiness_contract"]["ready_for_live_execute"] is False
+    assert "provider field map is not verified" in result["provider_readiness_contract"]["blocking_reasons"]
+
+
+def test_create_provider_field_map_check_marks_bad_config_invalid(tmp_path: Path):
+    bad_path = tmp_path / "bad-field-map.json"
+    bad_path.write_text(json.dumps({"provider": "oceanengine"}), encoding="utf-8")
+
+    result = build_create_provider_field_map_check(policy={"provider_field_map_path": str(bad_path)})
+
+    assert result["ok"] is False
+    assert result["status"] == "invalid"
+    assert result["provider_field_map"]["source"] == "phase1_placeholder_invalid_provider_field_map_config"
+    assert "provider field map config is missing or malformed" in result["violations"]
+    assert result["actions"] == []
+
+
+def test_create_provider_field_map_check_detects_missing_required_internal_field(tmp_path: Path):
+    field_map = default_provider_field_map(
+        {
+            "provider_adapter": {
+                "provider": "oceanengine",
+                "field_mapping_version": "phase1.oceanengine.create_payload.draft.v1",
+            }
+        }
+    )
+    field_map["mapping_verified"] = True
+    field_map["source"] = "unit_test_missing_required_field"
+    for entries in field_map["operations"].values():
+        for entry in entries:
+            entry["provider_field"] = entry["internal_field"]
+            entry["verified"] = True
+            entry["source"] = "unit_test"
+    field_map["operations"]["bind_material"] = [
+        entry for entry in field_map["operations"]["bind_material"] if entry["internal_field"] != "material_id"
+    ]
+    field_map_path = tmp_path / "missing-material-id-field-map.json"
+    field_map_path.write_text(json.dumps(field_map, ensure_ascii=False), encoding="utf-8")
+
+    result = build_create_provider_field_map_check(
+        policy={
+            "provider_adapter": {
+                "provider": "oceanengine",
+                "field_mapping_version": "phase1.oceanengine.create_payload.draft.v1",
+                "mapping_verified": True,
+            },
+            "provider_field_map_path": str(field_map_path),
+        }
+    )
+
+    assert result["ok"] is True
+    assert result["status"] == "unverified"
+    assert result["provider_field_map_contract"]["status"] == "unverified"
+    assert result["provider_field_map_digest"]["algorithm"] == "sha256"
+    assert re.fullmatch(r"[0-9a-f]{64}", result["provider_field_map_digest"]["value"])
+    assert result["provider_field_map_contract"]["missing_required_field_count"] == 1
+    assert result["provider_field_map_contract"]["missing_required_fields"] == [
+        {"operation": "bind_material", "internal_field": "material_id"}
+    ]
+    assert result["missing_required_fields"] == [
+        {"operation": "bind_material", "internal_field": "material_id"}
+    ]
+    assert result["provider_readiness_contract"]["ready_for_live_execute"] is False
+    assert "provider field map is not verified" in result["provider_readiness_contract"]["blocking_reasons"]
+
+
+def test_create_provider_field_map_check_detects_duplicate_and_unknown_internal_fields(tmp_path: Path):
+    field_map = default_provider_field_map(
+        {
+            "provider_adapter": {
+                "provider": "oceanengine",
+                "field_mapping_version": "phase1.oceanengine.create_payload.draft.v1",
+            }
+        }
+    )
+    field_map["mapping_verified"] = True
+    field_map["source"] = "unit_test_duplicate_unknown_fields"
+    for entries in field_map["operations"].values():
+        for entry in entries:
+            entry["provider_field"] = entry["internal_field"]
+            entry["verified"] = True
+            entry["source"] = "unit_test"
+    field_map["operations"]["create_project"].append(
+        {
+            "internal_field": "advertiser_id",
+            "provider_field": "advertiser_id",
+            "purpose": "duplicate target advertiser account id",
+            "verified": True,
+            "required": True,
+            "source": "unit_test",
+        }
+    )
+    field_map["operations"]["create_unit"].append(
+        {
+            "internal_field": "unknown_field",
+            "provider_field": "unknown_provider_field",
+            "purpose": "unknown unit field",
+            "verified": True,
+            "required": False,
+            "source": "unit_test",
+        }
+    )
+    field_map_path = tmp_path / "duplicate-unknown-field-map.json"
+    field_map_path.write_text(json.dumps(field_map, ensure_ascii=False), encoding="utf-8")
+
+    result = build_create_provider_field_map_check(
+        policy={
+            "provider_adapter": {
+                "provider": "oceanengine",
+                "field_mapping_version": "phase1.oceanengine.create_payload.draft.v1",
+                "mapping_verified": True,
+            },
+            "provider_field_map_path": str(field_map_path),
+        }
+    )
+
+    assert result["status"] == "unverified"
+    assert result["provider_field_map_digest"]["algorithm"] == "sha256"
+    assert re.fullmatch(r"[0-9a-f]{64}", result["provider_field_map_digest"]["value"])
+    assert result["provider_field_map_contract"]["duplicate_internal_field_count"] == 1
+    assert result["provider_field_map_contract"]["duplicate_internal_fields"] == [
+        {"operation": "create_project", "internal_field": "advertiser_id"}
+    ]
+    assert result["provider_field_map_contract"]["unknown_internal_field_count"] == 1
+    assert result["provider_field_map_contract"]["unknown_internal_fields"] == [
+        {"operation": "create_unit", "internal_field": "unknown_field"}
+    ]
+    assert result["duplicate_internal_fields"] == [
+        {"operation": "create_project", "internal_field": "advertiser_id"}
+    ]
+    assert result["unknown_internal_fields"] == [
+        {"operation": "create_unit", "internal_field": "unknown_field"}
+    ]
+    assert result["provider_readiness_contract"]["ready_for_live_execute"] is False
+
+
+def test_create_provider_field_map_check_detects_duplicate_provider_fields(tmp_path: Path):
+    field_map = default_provider_field_map(
+        {
+            "provider_adapter": {
+                "provider": "oceanengine",
+                "field_mapping_version": "phase1.oceanengine.create_payload.draft.v1",
+            }
+        }
+    )
+    field_map["mapping_verified"] = True
+    field_map["source"] = "unit_test_duplicate_provider_fields"
+    for entries in field_map["operations"].values():
+        for entry in entries:
+            entry["provider_field"] = entry["internal_field"]
+            entry["verified"] = True
+            entry["source"] = "unit_test"
+    for entry in field_map["operations"]["create_project"]:
+        if entry["internal_field"] == "project_name":
+            entry["provider_field"] = "advertiser_id"
+    field_map_path = tmp_path / "duplicate-provider-field-map.json"
+    field_map_path.write_text(json.dumps(field_map, ensure_ascii=False), encoding="utf-8")
+
+    result = build_create_provider_field_map_check(
+        policy={
+            "provider_adapter": {
+                "provider": "oceanengine",
+                "field_mapping_version": "phase1.oceanengine.create_payload.draft.v1",
+                "mapping_verified": True,
+            },
+            "provider_field_map_path": str(field_map_path),
+        }
+    )
+
+    assert result["status"] == "unverified"
+    assert result["summary"]["duplicate_provider_field_count"] == 1
+    assert result["provider_field_map_contract"]["duplicate_provider_field_count"] == 1
+    assert result["provider_field_map_contract"]["duplicate_provider_fields"] == [
+        {
+            "operation": "create_project",
+            "provider_field": "advertiser_id",
+            "internal_fields": ["advertiser_id", "project_name"],
+        }
+    ]
+    assert result["duplicate_provider_fields"] == [
+        {
+            "operation": "create_project",
+            "provider_field": "advertiser_id",
+            "internal_fields": ["advertiser_id", "project_name"],
+        }
+    ]
+    assert result["provider_readiness_contract"]["ready_for_live_execute"] is False
+
+
+def test_create_provider_field_map_check_detects_provider_and_version_mismatch(tmp_path: Path):
+    field_map = default_provider_field_map(
+        {
+            "provider_adapter": {
+                "provider": "other_provider",
+                "field_mapping_version": "phase1.other.create_payload.draft.v9",
+            }
+        }
+    )
+    field_map["mapping_verified"] = True
+    field_map["source"] = "unit_test_provider_version_mismatch"
+    for entries in field_map["operations"].values():
+        for entry in entries:
+            entry["provider_field"] = entry["internal_field"]
+            entry["verified"] = True
+            entry["source"] = "unit_test"
+    field_map_path = tmp_path / "provider-version-mismatch-field-map.json"
+    field_map_path.write_text(json.dumps(field_map, ensure_ascii=False), encoding="utf-8")
+
+    result = build_create_provider_field_map_check(
+        policy={
+            "provider_adapter": {
+                "provider": "oceanengine",
+                "field_mapping_version": "phase1.oceanengine.create_payload.draft.v1",
+                "mapping_verified": True,
+            },
+            "provider_field_map_path": str(field_map_path),
+        }
+    )
+
+    assert result["status"] == "unverified"
+    assert result["provider_field_map_contract"]["provider_mismatch_count"] == 1
+    assert result["provider_field_map_contract"]["provider_mismatches"] == [
+        {"expected": "oceanengine", "actual": "other_provider"}
+    ]
+    assert result["provider_field_map_contract"]["field_mapping_version_mismatch_count"] == 1
+    assert result["provider_field_map_contract"]["field_mapping_version_mismatches"] == [
+        {
+            "expected": "phase1.oceanengine.create_payload.draft.v1",
+            "actual": "phase1.other.create_payload.draft.v9",
+        }
+    ]
+    assert result["provider_readiness_contract"]["ready_for_live_execute"] is False
+
+
+def test_run_create_provider_field_map_check_request_writes_artifact(tmp_path: Path):
+    result = run_create_provider_field_map_check_request(
+        {
+            "create_provider_field_map_check": {
+                "policy": {
+                    "provider_field_map_path": "configs/provider-field-maps/oceanengine.create.phase1.example.json"
+                }
+            }
+        },
+        runs_dir=tmp_path / "runs",
+    )
+
+    assert Path(result["artifact_path"]).exists()
+    assert result["workflow"] == "create_provider_field_map_check"
+    assert result["summary"]["field_count"] == 13
+
+
+def test_create_provider_field_map_check_cli_uses_policy_config(tmp_path: Path, capsys):
+    db_path = tmp_path / "roibang.sqlite3"
+    runtime_path = _runtime_config(tmp_path, db_path)
+    module = _load_script("run_create_provider_field_map_check")
+
+    exit_code = module.run_from_args(["--config", str(runtime_path), "--policy", "policies/strategy.example.json"])
+
+    output = json.loads(capsys.readouterr().out)
+    artifact = json.loads(Path(output["artifact_path"]).read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert output["status"] == "unverified"
+    assert artifact["workflow"] == "create_provider_field_map_check"
+    assert artifact["summary"]["field_map_path"] == "configs/provider-field-maps/oceanengine.create.phase1.example.json"
+    assert artifact["execution_enabled"] is False
+    assert artifact["external_api_calls"] == 0
+    assert artifact["actions"] == []
+
+
+def test_create_field_mapping_review_pack_lists_fields_without_requiring_user_input_now():
+    result = build_create_field_mapping_review_pack(
+        policy={
+            "provider_adapter": {
+                "provider": "oceanengine",
+                "field_mapping_version": "phase1.oceanengine.create_payload.draft.v1",
+            },
+            "provider_field_map_path": "configs/provider-field-maps/oceanengine.create.phase1.example.json",
+        }
+    )
+
+    assert result["ok"] is True
+    assert result["workflow"] == "create_field_mapping_review_pack"
+    assert result["phase"] == "phase1"
+    assert result["execution_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert result["status"] == "needs_review"
+    assert result["required_user_input_now"] is False
+    assert result["summary"] == {
+        "provider": "oceanengine",
+        "field_mapping_version": "phase1.oceanengine.create_payload.draft.v1",
+        "field_map_path": "configs/provider-field-maps/oceanengine.create.phase1.example.json",
+        "operation_count": 3,
+        "field_count": 13,
+        "needs_provider_field_count": 13,
+        "needs_verification_count": 13,
+        "ready_for_live_execute": False,
+    }
+    assert result["review_contract"] == {
+        "status": "needs_review",
+        "field_count": 13,
+        "needs_provider_field_count": 13,
+        "needs_verification_count": 13,
+        "verified_field_count": 0,
+        "missing_required_field_count": 0,
+        "duplicate_internal_field_count": 0,
+        "duplicate_provider_field_count": 0,
+        "unknown_internal_field_count": 0,
+    }
+    first_section = result["review_sections"][0]
+    assert first_section["operation"] == "create_project"
+    assert first_section["endpoint"] == ""
+    assert first_section["field_source"] == "create_strategy_plan.strategy.projects[]"
+    assert first_section["fields"][0] == {
+        "internal_field": "advertiser_id",
+        "provider_field": "",
+        "required": True,
+        "verified": False,
+        "purpose": "target advertiser account id",
+        "source": "internal_phase1_schema",
+        "review_status": "needs_provider_field",
+    }
+    assert result["provider_readiness_contract"]["ready_for_live_execute"] is False
+    assert result["violations"] == []
+    assert result["actions"] == []
+
+
+def test_run_create_field_mapping_review_pack_request_writes_artifact(tmp_path: Path):
+    result = run_create_field_mapping_review_pack_request(
+        {
+            "create_field_mapping_review_pack": {
+                "policy": {
+                    "provider_field_map_path": "configs/provider-field-maps/oceanengine.create.phase1.example.json"
+                }
+            }
+        },
+        runs_dir=tmp_path / "runs",
+    )
+
+    artifact = json.loads(Path(result["artifact_path"]).read_text(encoding="utf-8"))
+    assert result["workflow"] == "create_field_mapping_review_pack"
+    assert result["summary"]["field_count"] == 13
+    assert artifact["workflow"] == "create_field_mapping_review_pack"
+    assert artifact["actions"] == []
+
+
+def test_create_field_mapping_review_pack_cli_uses_policy_config(tmp_path: Path, capsys):
+    db_path = tmp_path / "roibang.sqlite3"
+    runtime_path = _runtime_config(tmp_path, db_path)
+    module = _load_script("run_create_field_mapping_review_pack")
+
+    exit_code = module.run_from_args(["--config", str(runtime_path), "--policy", "policies/strategy.example.json"])
+
+    output = json.loads(capsys.readouterr().out)
+    artifact = json.loads(Path(output["artifact_path"]).read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert output["workflow"] == "create_field_mapping_review_pack"
+    assert output["status"] == "needs_review"
+    assert artifact["summary"]["field_map_path"] == "configs/provider-field-maps/oceanengine.create.phase1.example.json"
+    assert artifact["required_user_input_now"] is False
+    assert artifact["execution_enabled"] is False
+    assert artifact["external_api_calls"] == 0
+    assert artifact["actions"] == []
+
+
+def test_create_template_slot_review_pack_lists_request_and_policy_slots_without_user_input_now():
+    request = _create_request()["create_request"]
+    result = build_create_template_slot_review_pack(
+        create_request=request,
+        policy={
+            "create_strategy_plan": {
+                "project_naming": {
+                    "template": "{target_date_compact}_{product}_{project_type}_{advertiser_id}_{index}",
+                    "index_width": 2,
+                    "invalid_char_replacement": "_",
+                }
+            },
+            "create_preflight": {
+                "required_field_defaults": ["landing_type", "pricing", "inventory_type"],
+                "min_daily_budget": 100,
+                "max_daily_budget": 1000,
+            },
+        },
+    )
+
+    assert result["ok"] is True
+    assert result["workflow"] == "create_template_slot_review_pack"
+    assert result["phase"] == "phase1"
+    assert result["execution_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert result["status"] == "needs_review"
+    assert result["required_user_input_now"] is False
+    assert result["summary"] == {
+        "request_id": "create_req_20260508_yzt_wx_7r",
+        "target_date": "2026-05-08",
+        "product": "勇者突进",
+        "platform": "WECHAT_GAME",
+        "project_type": "WX_PAY_7R_GENERAL",
+        "slot_count": 12,
+        "configured_slot_count": 12,
+        "missing_value_slot_count": 0,
+        "needs_review_slot_count": 12,
+    }
+    assert result["template_contract"] == {
+        "status": "needs_review",
+        "slot_count": 12,
+        "configured_slot_count": 12,
+        "missing_value_slot_count": 0,
+        "needs_review_slot_count": 12,
+        "required_defaults": ["landing_type", "pricing", "inventory_type"],
+    }
+    project_section = result["review_sections"][0]
+    assert project_section["operation"] == "create_project"
+    assert project_section["slots"][0] == {
+        "slot_key": "project_name_template",
+        "source": "policy.create_strategy_plan.project_naming.template",
+        "value_preview": "{target_date_compact}_{product}_{project_type}_{advertiser_id}_{index}",
+        "required": True,
+        "configured": True,
+        "review_status": "needs_review",
+    }
+    assert project_section["slots"][2]["slot_key"] == "daily_budget"
+    assert project_section["slots"][2]["value_preview"] == "<per-target-account>"
+    assert result["violations"] == []
+    assert result["actions"] == []
+
+
+def test_run_create_template_slot_review_pack_request_writes_artifact(tmp_path: Path):
+    result = run_create_template_slot_review_pack_request(
+        {
+            "create_template_slot_review_pack": {
+                "create_request": _create_request()["create_request"],
+                "policy": {"create_preflight": {"required_field_defaults": ["landing_type"]}},
+            }
+        },
+        runs_dir=tmp_path / "runs",
+    )
+
+    artifact = json.loads(Path(result["artifact_path"]).read_text(encoding="utf-8"))
+    assert result["workflow"] == "create_template_slot_review_pack"
+    assert result["required_user_input_now"] is False
+    assert artifact["workflow"] == "create_template_slot_review_pack"
+    assert artifact["actions"] == []
+
+
+def test_create_template_slot_review_pack_cli_uses_request_and_policy_config(tmp_path: Path, capsys):
+    db_path = tmp_path / "roibang.sqlite3"
+    runtime_path = _runtime_config(tmp_path, db_path)
+    module = _load_script("run_create_template_slot_review_pack")
+
+    exit_code = module.run_from_args(
+        [
+            "--config",
+            str(runtime_path),
+            "--request",
+            "configs/requests/example.create-request.json",
+            "--policy",
+            "policies/strategy.example.json",
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    artifact = json.loads(Path(output["artifact_path"]).read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert output["workflow"] == "create_template_slot_review_pack"
+    assert output["status"] == "needs_review"
+    assert artifact["summary"]["request_id"] == "create_req_20260508_yzt_wx_7r"
+    assert artifact["summary"]["slot_count"] == 12
+    assert artifact["required_user_input_now"] is False
+    assert artifact["execution_enabled"] is False
+    assert artifact["external_api_calls"] == 0
+    assert artifact["actions"] == []
+
+
+def test_create_readiness_matrix_summarizes_blocking_review_gates():
+    field_map_check = {
+        "workflow": "create_provider_field_map_check",
+        "ok": True,
+        "status": "unverified",
+        "summary": {"field_count": 13, "missing_provider_field_count": 13},
+        "provider_readiness_contract": {"ready_for_live_execute": False},
+    }
+    field_mapping_review_pack = {
+        "workflow": "create_field_mapping_review_pack",
+        "ok": True,
+        "status": "needs_review",
+        "summary": {"field_count": 13, "needs_provider_field_count": 13},
+    }
+    template_slot_review_pack = {
+        "workflow": "create_template_slot_review_pack",
+        "ok": True,
+        "status": "needs_review",
+        "summary": {"slot_count": 12, "needs_review_slot_count": 12},
+    }
+    preflight = {"workflow": "create_preflight", "ok": True, "status": "passed", "summary": {"violation_count": 0}}
+    dry_run = {"workflow": "create_dry_run", "ok": True, "status": "simulated", "summary": {"candidate_task_count": 1}}
+    replay = {"workflow": "create_chain_replay", "ok": True, "status": "passed", "summary": {"violation_count": 0}}
+    manifest = {"workflow": "create_chain_manifest", "ok": True, "status": "ready", "summary": {"artifact_count": 8}}
+
+    result = build_create_readiness_matrix(
+        create_provider_field_map_check_artifact=field_map_check,
+        create_field_mapping_review_pack_artifact=field_mapping_review_pack,
+        create_template_slot_review_pack_artifact=template_slot_review_pack,
+        create_preflight_artifact=preflight,
+        create_dry_run_artifact=dry_run,
+        create_chain_replay_artifact=replay,
+        create_chain_manifest_artifact=manifest,
+    )
+
+    assert result["ok"] is True
+    assert result["workflow"] == "create_readiness_matrix"
+    assert result["phase"] == "phase1"
+    assert result["execution_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert result["status"] == "not_ready"
+    assert result["ready_for_live_execute"] is False
+    assert result["summary"] == {
+        "gate_count": 7,
+        "passed_gate_count": 4,
+        "blocking_gate_count": 3,
+        "ready_for_live_execute": False,
+    }
+    assert result["readiness_matrix"][0] == {
+        "gate": "provider_field_map",
+        "workflow": "create_provider_field_map_check",
+        "artifact_status": "unverified",
+        "ready": False,
+        "blocking": True,
+        "reason": "provider field map must be verified before live execute",
+    }
+    assert result["readiness_matrix"][3]["gate"] == "create_preflight"
+    assert result["readiness_matrix"][3]["ready"] is True
+    assert result["blocking_reasons"] == [
+        "provider field map must be verified before live execute",
+        "field mapping review pack still needs review",
+        "template slot review pack still needs review",
+    ]
+    assert result["actions"] == []
+
+
+def test_run_create_readiness_matrix_request_writes_artifact(tmp_path: Path):
+    passed = {"ok": True, "status": "passed", "summary": {}}
+    result = run_create_readiness_matrix_request(
+        {
+            "create_readiness_matrix": {
+                "create_provider_field_map_check_artifact": {
+                    "workflow": "create_provider_field_map_check",
+                    "ok": True,
+                    "status": "verified",
+                    "provider_readiness_contract": {"ready_for_live_execute": True},
+                },
+                "create_field_mapping_review_pack_artifact": {
+                    "workflow": "create_field_mapping_review_pack",
+                    "ok": True,
+                    "status": "verified",
+                    "summary": {},
+                },
+                "create_template_slot_review_pack_artifact": {
+                    "workflow": "create_template_slot_review_pack",
+                    "ok": True,
+                    "status": "reviewed",
+                    "summary": {},
+                },
+                "create_preflight_artifact": {"workflow": "create_preflight", **passed},
+                "create_dry_run_artifact": {"workflow": "create_dry_run", "ok": True, "status": "simulated", "summary": {}},
+                "create_chain_replay_artifact": {"workflow": "create_chain_replay", **passed},
+                "create_chain_manifest_artifact": {"workflow": "create_chain_manifest", "ok": True, "status": "ready", "summary": {}},
+            }
+        },
+        runs_dir=tmp_path / "runs",
+    )
+
+    artifact = json.loads(Path(result["artifact_path"]).read_text(encoding="utf-8"))
+    assert result["workflow"] == "create_readiness_matrix"
+    assert result["ready_for_live_execute"] is True
+    assert artifact["workflow"] == "create_readiness_matrix"
+    assert artifact["actions"] == []
+
+
+def test_create_readiness_matrix_cli_uses_latest_artifacts(tmp_path: Path, capsys):
+    db_path = tmp_path / "roibang.sqlite3"
+    runtime_path = _runtime_config(tmp_path, db_path)
+    runs_dir = tmp_path / "runs"
+    artifacts = {
+        "create_provider_field_map_check": {
+            "workflow": "create_provider_field_map_check",
+            "ok": True,
+            "status": "unverified",
+            "summary": {},
+            "provider_readiness_contract": {"ready_for_live_execute": False},
+        },
+        "create_field_mapping_review_pack": {
+            "workflow": "create_field_mapping_review_pack",
+            "ok": True,
+            "status": "needs_review",
+            "summary": {},
+        },
+        "create_template_slot_review_pack": {
+            "workflow": "create_template_slot_review_pack",
+            "ok": True,
+            "status": "needs_review",
+            "summary": {},
+        },
+        "create_preflight": {"workflow": "create_preflight", "ok": True, "status": "passed", "summary": {}},
+        "create_dry_run": {"workflow": "create_dry_run", "ok": True, "status": "simulated", "summary": {}},
+        "create_chain_replay": {"workflow": "create_chain_replay", "ok": True, "status": "passed", "summary": {}},
+        "create_chain_manifest": {"workflow": "create_chain_manifest", "ok": True, "status": "ready", "summary": {}},
+    }
+    for workflow, payload in artifacts.items():
+        path = runs_dir / workflow / "20260508T000000Z.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    module = _load_script("run_create_readiness_matrix")
+
+    exit_code = module.run_from_args(["--config", str(runtime_path)])
+
+    output = json.loads(capsys.readouterr().out)
+    artifact = json.loads(Path(output["artifact_path"]).read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert output["workflow"] == "create_readiness_matrix"
+    assert output["status"] == "not_ready"
+    assert artifact["ready_for_live_execute"] is False
+    assert artifact["execution_enabled"] is False
+    assert artifact["external_api_calls"] == 0
+    assert artifact["actions"] == []
+
+
+def test_create_live_execute_phase_gate_blocks_phase1_even_when_readiness_is_ready():
+    readiness_matrix = {
+        "workflow": "create_readiness_matrix",
+        "ok": True,
+        "status": "ready",
+        "ready_for_live_execute": True,
+        "summary": {"blocking_gate_count": 0},
+        "blocking_reasons": [],
+    }
+
+    result = build_create_live_execute_phase_gate(
+        create_readiness_matrix_artifact=readiness_matrix,
+        policy={
+            "phase": "phase1",
+            "create_execute": {
+                "phase_gate": {
+                    "allow_live_execute_development": False,
+                    "allow_live_execute": False,
+                    "required_next_phase": "phase2",
+                }
+            },
+        },
+    )
+
+    assert result["ok"] is True
+    assert result["workflow"] == "create_live_execute_phase_gate"
+    assert result["phase"] == "phase1"
+    assert result["execution_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert result["status"] == "blocked"
+    assert result["live_execute_development_allowed"] is False
+    assert result["live_execute_allowed"] is False
+    assert result["summary"] == {
+        "current_phase": "phase1",
+        "required_next_phase": "phase2",
+        "readiness_status": "ready",
+        "ready_for_live_execute": True,
+        "condition_count": 5,
+        "passed_condition_count": 3,
+        "blocking_condition_count": 2,
+    }
+    assert result["phase_gate_conditions"] == [
+        {
+            "condition": "current_phase_is_not_phase1",
+            "passed": False,
+            "reason": "current phase is phase1",
+        },
+        {
+            "condition": "readiness_matrix_ready",
+            "passed": True,
+            "reason": "",
+        },
+        {
+            "condition": "policy_allows_live_execute_development",
+            "passed": False,
+            "reason": "policy does not allow live execute development",
+        },
+        {
+            "condition": "policy_blocks_live_execute",
+            "passed": True,
+            "reason": "",
+        },
+        {
+            "condition": "phase1_safety_values_retained",
+            "passed": True,
+            "reason": "",
+        },
+    ]
+    assert result["blocking_reasons"] == [
+        "current phase is phase1",
+        "policy does not allow live execute development",
+    ]
+    assert result["violations"] == []
+    assert result["actions"] == []
+
+
+def test_create_live_execute_phase_gate_rejects_dangerous_phase1_policy_switches():
+    readiness_matrix = {
+        "workflow": "create_readiness_matrix",
+        "ok": True,
+        "status": "ready",
+        "ready_for_live_execute": True,
+        "summary": {"blocking_gate_count": 0},
+        "blocking_reasons": [],
+    }
+
+    result = build_create_live_execute_phase_gate(
+        create_readiness_matrix_artifact=readiness_matrix,
+        policy={
+            "phase": "phase1",
+            "create_execute": {
+                "phase_gate": {
+                    "allow_live_execute_development": True,
+                    "allow_live_execute": True,
+                }
+            },
+        },
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "blocked"
+    assert result["live_execute_development_allowed"] is False
+    assert result["live_execute_allowed"] is False
+    assert "phase1 policy must not allow live execute development" in result["violations"]
+    assert "phase1 policy must not allow live execute" in result["violations"]
+    assert result["actions"] == []
+
+
+def test_run_create_live_execute_phase_gate_request_writes_artifact(tmp_path: Path):
+    result = run_create_live_execute_phase_gate_request(
+        {
+            "create_live_execute_phase_gate": {
+                "create_readiness_matrix_artifact": {
+                    "workflow": "create_readiness_matrix",
+                    "ok": True,
+                    "status": "not_ready",
+                    "ready_for_live_execute": False,
+                    "summary": {"blocking_gate_count": 3},
+                    "blocking_reasons": ["field mapping review pack still needs review"],
+                },
+                "policy": {"phase": "phase1", "create_execute": {"phase_gate": {}}},
+            }
+        },
+        runs_dir=tmp_path / "runs",
+    )
+
+    artifact = json.loads(Path(result["artifact_path"]).read_text(encoding="utf-8"))
+    assert result["workflow"] == "create_live_execute_phase_gate"
+    assert result["status"] == "blocked"
+    assert result["live_execute_development_allowed"] is False
+    assert artifact["workflow"] == "create_live_execute_phase_gate"
+    assert artifact["actions"] == []
+
+
+def test_create_live_execute_phase_gate_cli_uses_latest_readiness_matrix(tmp_path: Path, capsys):
+    db_path = tmp_path / "roibang.sqlite3"
+    runtime_path = _runtime_config(tmp_path, db_path)
+    runs_dir = tmp_path / "runs"
+    path = runs_dir / "create_readiness_matrix" / "20260508T000000Z.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "workflow": "create_readiness_matrix",
+                "ok": True,
+                "status": "not_ready",
+                "ready_for_live_execute": False,
+                "summary": {"blocking_gate_count": 3},
+                "blocking_reasons": ["field mapping review pack still needs review"],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    module = _load_script("run_create_live_execute_phase_gate")
+
+    exit_code = module.run_from_args(["--config", str(runtime_path), "--policy", "policies/strategy.example.json"])
+
+    output = json.loads(capsys.readouterr().out)
+    artifact = json.loads(Path(output["artifact_path"]).read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert output["workflow"] == "create_live_execute_phase_gate"
+    assert output["status"] == "blocked"
+    assert output["live_execute_development_allowed"] is False
+    assert artifact["execution_enabled"] is False
+    assert artifact["external_api_calls"] == 0
+    assert artifact["actions"] == []
+
+
+def test_create_live_payload_adapter_scaffold_keeps_live_payloads_disabled():
+    dry_run = {
+        "workflow": "create_dry_run",
+        "ok": True,
+        "status": "simulated",
+        "provider_adapter": {
+            "provider": "oceanengine",
+            "field_mapping_version": "phase1.oceanengine.create_payload.draft.v1",
+            "executable": False,
+        },
+        "provider_payload_drafts": [
+            {
+                "operation": "create_project",
+                "provider": "oceanengine",
+                "executable": False,
+                "payload": {"advertiser_id": "target-1"},
+            }
+        ],
+        "provider_payload_draft_digest": {
+            "algorithm": "sha256",
+            "value": "0" * 64,
+            "provider_payload_draft_count": 1,
+        },
+    }
+    phase_gate = {
+        "workflow": "create_live_execute_phase_gate",
+        "ok": True,
+        "status": "blocked",
+        "live_execute_development_allowed": False,
+        "live_execute_allowed": False,
+    }
+
+    result = build_create_live_payload_adapter_scaffold(
+        create_dry_run_artifact=dry_run,
+        create_live_execute_phase_gate_artifact=phase_gate,
+        policy={"phase": "phase1", "create_execute": {"payload_schema": {"live_payload_generation_enabled": False}}},
+    )
+
+    assert result["ok"] is True
+    assert result["workflow"] == "create_live_payload_adapter_scaffold"
+    assert result["phase"] == "phase1"
+    assert result["execution_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert result["status"] == "blocked"
+    assert result["live_payload_generation_enabled"] is False
+    assert result["live_payloads"] == []
+    assert result["executable_payloads"] == []
+    assert result["summary"] == {
+        "provider": "oceanengine",
+        "field_mapping_version": "phase1.oceanengine.create_payload.draft.v1",
+        "provider_payload_draft_count": 1,
+        "live_payload_count": 0,
+        "executable_payload_count": 0,
+        "phase_gate_status": "blocked",
+    }
+    assert result["adapter_interface"] == {
+        "provider": "oceanengine",
+        "transport": "disabled_live_payload_adapter_scaffold",
+        "input_contract": {
+            "source_workflow": "create_dry_run",
+            "requires_provider_payload_drafts": True,
+            "requires_phase_gate": True,
+        },
+        "output_contract": {
+            "emits_live_payloads": False,
+            "emits_executable_payloads": False,
+            "calls_external_api": False,
+        },
+    }
+    assert result["safety_contract"] == {
+        "status": "blocked",
+        "phase_gate_allows_development": False,
+        "phase_gate_allows_live_execute": False,
+        "live_payload_generation_enabled": False,
+        "live_payload_count_zero": True,
+        "executable_payload_count_zero": True,
+        "external_api_calls_zero": True,
+    }
+    assert result["provider_payload_draft_digest"] == dry_run["provider_payload_draft_digest"]
+    assert result["blocking_reasons"] == ["live execute phase gate has not opened development"]
+    assert result["violations"] == []
+    assert result["actions"] == []
+
+
+def test_create_live_payload_adapter_scaffold_rejects_dangerous_generation_policy():
+    result = build_create_live_payload_adapter_scaffold(
+        create_dry_run_artifact={
+            "workflow": "create_dry_run",
+            "ok": True,
+            "status": "simulated",
+            "provider_adapter": {"provider": "oceanengine"},
+            "provider_payload_drafts": [],
+            "provider_payload_draft_digest": {"algorithm": "sha256", "value": "0" * 64, "provider_payload_draft_count": 0},
+        },
+        create_live_execute_phase_gate_artifact={
+            "workflow": "create_live_execute_phase_gate",
+            "ok": True,
+            "status": "blocked",
+            "live_execute_development_allowed": False,
+            "live_execute_allowed": True,
+        },
+        policy={
+            "phase": "phase1",
+            "create_execute": {
+                "payload_schema": {"live_payload_generation_enabled": True},
+            },
+        },
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "blocked"
+    assert result["live_payload_generation_enabled"] is False
+    assert "phase1 policy must keep live payload generation disabled" in result["violations"]
+    assert "phase gate must not allow live execute for adapter scaffold" in result["violations"]
+    assert result["live_payloads"] == []
+    assert result["actions"] == []
+
+
+def test_run_create_live_payload_adapter_scaffold_request_writes_artifact(tmp_path: Path):
+    result = run_create_live_payload_adapter_scaffold_request(
+        {
+            "create_live_payload_adapter_scaffold": {
+                "create_dry_run_artifact": {
+                    "workflow": "create_dry_run",
+                    "ok": True,
+                    "status": "simulated",
+                    "provider_adapter": {"provider": "oceanengine"},
+                    "provider_payload_drafts": [],
+                    "provider_payload_draft_digest": {"algorithm": "sha256", "value": "0" * 64, "provider_payload_draft_count": 0},
+                },
+                "create_live_execute_phase_gate_artifact": {
+                    "workflow": "create_live_execute_phase_gate",
+                    "ok": True,
+                    "status": "blocked",
+                    "live_execute_development_allowed": False,
+                    "live_execute_allowed": False,
+                },
+                "policy": {"phase": "phase1"},
+            }
+        },
+        runs_dir=tmp_path / "runs",
+    )
+
+    artifact = json.loads(Path(result["artifact_path"]).read_text(encoding="utf-8"))
+    assert result["workflow"] == "create_live_payload_adapter_scaffold"
+    assert result["live_payloads"] == []
+    assert artifact["workflow"] == "create_live_payload_adapter_scaffold"
+    assert artifact["actions"] == []
+
+
+def test_create_live_payload_adapter_scaffold_cli_uses_latest_artifacts(tmp_path: Path, capsys):
+    db_path = tmp_path / "roibang.sqlite3"
+    runtime_path = _runtime_config(tmp_path, db_path)
+    runs_dir = tmp_path / "runs"
+    dry_run_path = runs_dir / "create_dry_run" / "20260508T000000Z.json"
+    dry_run_path.parent.mkdir(parents=True, exist_ok=True)
+    dry_run_path.write_text(
+        json.dumps(
+            {
+                "workflow": "create_dry_run",
+                "ok": True,
+                "status": "simulated",
+                "provider_adapter": {"provider": "oceanengine"},
+                "provider_payload_drafts": [],
+                "provider_payload_draft_digest": {"algorithm": "sha256", "value": "0" * 64, "provider_payload_draft_count": 0},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    gate_path = runs_dir / "create_live_execute_phase_gate" / "20260508T000000Z.json"
+    gate_path.parent.mkdir(parents=True, exist_ok=True)
+    gate_path.write_text(
+        json.dumps(
+            {
+                "workflow": "create_live_execute_phase_gate",
+                "ok": True,
+                "status": "blocked",
+                "live_execute_development_allowed": False,
+                "live_execute_allowed": False,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    module = _load_script("run_create_live_payload_adapter_scaffold")
+
+    exit_code = module.run_from_args(["--config", str(runtime_path), "--policy", "policies/strategy.example.json"])
+
+    output = json.loads(capsys.readouterr().out)
+    artifact = json.loads(Path(output["artifact_path"]).read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert output["workflow"] == "create_live_payload_adapter_scaffold"
+    assert output["status"] == "blocked"
+    assert artifact["live_payload_generation_enabled"] is False
+    assert artifact["external_api_calls"] == 0
+    assert artifact["actions"] == []
+
+
+def test_create_adapter_review_pack_summarizes_disabled_adapter_scaffold():
+    scaffold = {
+        "workflow": "create_live_payload_adapter_scaffold",
+        "ok": True,
+        "status": "blocked",
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "live_payload_generation_enabled": False,
+        "live_payloads": [],
+        "executable_payloads": [],
+        "summary": {
+            "provider": "oceanengine",
+            "field_mapping_version": "phase1.oceanengine.create_payload.draft.v1",
+            "provider_payload_draft_count": 1,
+            "live_payload_count": 0,
+            "executable_payload_count": 0,
+            "phase_gate_status": "blocked",
+        },
+        "adapter_interface": {
+            "provider": "oceanengine",
+            "transport": "disabled_live_payload_adapter_scaffold",
+            "input_contract": {
+                "source_workflow": "create_dry_run",
+                "requires_provider_payload_drafts": True,
+                "requires_phase_gate": True,
+            },
+            "output_contract": {
+                "emits_live_payloads": False,
+                "emits_executable_payloads": False,
+                "calls_external_api": False,
+            },
+        },
+        "safety_contract": {
+            "status": "blocked",
+            "phase_gate_allows_development": False,
+            "phase_gate_allows_live_execute": False,
+            "live_payload_generation_enabled": False,
+            "live_payload_count_zero": True,
+            "executable_payload_count_zero": True,
+            "external_api_calls_zero": True,
+        },
+        "provider_payload_draft_digest": {
+            "algorithm": "sha256",
+            "value": "0" * 64,
+            "provider_payload_draft_count": 1,
+        },
+        "blocking_reasons": ["live execute phase gate has not opened development"],
+        "violations": [],
+        "actions": [],
+    }
+
+    result = build_create_adapter_review_pack(create_live_payload_adapter_scaffold_artifact=scaffold)
+
+    assert result["ok"] is True
+    assert result["workflow"] == "create_adapter_review_pack"
+    assert result["phase"] == "phase1"
+    assert result["execution_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert result["status"] == "needs_review"
+    assert result["required_user_input_now"] is False
+    assert result["summary"] == {
+        "provider": "oceanengine",
+        "field_mapping_version": "phase1.oceanengine.create_payload.draft.v1",
+        "adapter_status": "blocked",
+        "provider_payload_draft_count": 1,
+        "live_payload_count": 0,
+        "executable_payload_count": 0,
+        "review_item_count": 4,
+        "blocking_reason_count": 1,
+    }
+    assert result["review_contract"] == {
+        "status": "needs_review",
+        "safe_to_review": True,
+        "live_payloads_empty": True,
+        "executable_payloads_empty": True,
+        "external_api_calls_zero": True,
+        "actions_empty": True,
+    }
+    assert result["review_sections"] == [
+        {
+            "section": "input_contract",
+            "status": "present",
+            "items": [
+                {"key": "source_workflow", "value": "create_dry_run"},
+                {"key": "requires_provider_payload_drafts", "value": True},
+                {"key": "requires_phase_gate", "value": True},
+            ],
+        },
+        {
+            "section": "output_contract",
+            "status": "disabled",
+            "items": [
+                {"key": "emits_live_payloads", "value": False},
+                {"key": "emits_executable_payloads", "value": False},
+                {"key": "calls_external_api", "value": False},
+            ],
+        },
+        {
+            "section": "safety_contract",
+            "status": "blocked",
+            "items": [
+                {"key": "phase_gate_allows_development", "value": False},
+                {"key": "phase_gate_allows_live_execute", "value": False},
+                {"key": "live_payload_generation_enabled", "value": False},
+            ],
+        },
+        {
+            "section": "blocking_reasons",
+            "status": "blocked",
+            "items": [{"key": "reason", "value": "live execute phase gate has not opened development"}],
+        },
+    ]
+    assert result["provider_payload_draft_digest"] == scaffold["provider_payload_draft_digest"]
+    assert result["actions"] == []
+
+
+def test_create_adapter_review_pack_rejects_non_empty_live_payloads():
+    result = build_create_adapter_review_pack(
+        create_live_payload_adapter_scaffold_artifact={
+            "workflow": "create_live_payload_adapter_scaffold",
+            "ok": True,
+            "status": "blocked",
+            "execution_enabled": False,
+            "external_api_calls": 0,
+            "live_payload_generation_enabled": False,
+            "live_payloads": [{"payload": {}}],
+            "executable_payloads": [],
+            "summary": {},
+            "adapter_interface": {},
+            "safety_contract": {},
+            "provider_payload_draft_digest": {"algorithm": "sha256", "value": "0" * 64, "provider_payload_draft_count": 0},
+            "blocking_reasons": [],
+            "violations": [],
+            "actions": [],
+        }
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "invalid"
+    assert result["review_contract"]["live_payloads_empty"] is False
+    assert "adapter scaffold live_payloads must be empty" in result["violations"]
+    assert result["actions"] == []
+
+
+def test_run_create_adapter_review_pack_request_writes_artifact(tmp_path: Path):
+    result = run_create_adapter_review_pack_request(
+        {
+            "create_adapter_review_pack": {
+                "create_live_payload_adapter_scaffold_artifact": {
+                    "workflow": "create_live_payload_adapter_scaffold",
+                    "ok": True,
+                    "status": "blocked",
+                    "execution_enabled": False,
+                    "external_api_calls": 0,
+                    "live_payload_generation_enabled": False,
+                    "live_payloads": [],
+                    "executable_payloads": [],
+                    "summary": {"provider": "oceanengine"},
+                    "adapter_interface": {},
+                    "safety_contract": {},
+                    "provider_payload_draft_digest": {"algorithm": "sha256", "value": "0" * 64, "provider_payload_draft_count": 0},
+                    "blocking_reasons": [],
+                    "violations": [],
+                    "actions": [],
+                }
+            }
+        },
+        runs_dir=tmp_path / "runs",
+    )
+
+    artifact = json.loads(Path(result["artifact_path"]).read_text(encoding="utf-8"))
+    assert result["workflow"] == "create_adapter_review_pack"
+    assert result["required_user_input_now"] is False
+    assert artifact["workflow"] == "create_adapter_review_pack"
+    assert artifact["actions"] == []
+
+
+def test_create_adapter_review_pack_cli_uses_latest_scaffold(tmp_path: Path, capsys):
+    db_path = tmp_path / "roibang.sqlite3"
+    runtime_path = _runtime_config(tmp_path, db_path)
+    scaffold_path = tmp_path / "runs" / "create_live_payload_adapter_scaffold" / "20260508T000000Z.json"
+    scaffold_path.parent.mkdir(parents=True, exist_ok=True)
+    scaffold_path.write_text(
+        json.dumps(
+            {
+                "workflow": "create_live_payload_adapter_scaffold",
+                "ok": True,
+                "status": "blocked",
+                "execution_enabled": False,
+                "external_api_calls": 0,
+                "live_payload_generation_enabled": False,
+                "live_payloads": [],
+                "executable_payloads": [],
+                "summary": {"provider": "oceanengine"},
+                "adapter_interface": {},
+                "safety_contract": {},
+                "provider_payload_draft_digest": {"algorithm": "sha256", "value": "0" * 64, "provider_payload_draft_count": 0},
+                "blocking_reasons": [],
+                "violations": [],
+                "actions": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    module = _load_script("run_create_adapter_review_pack")
+
+    exit_code = module.run_from_args(["--config", str(runtime_path)])
+
+    output = json.loads(capsys.readouterr().out)
+    artifact = json.loads(Path(output["artifact_path"]).read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert output["workflow"] == "create_adapter_review_pack"
+    assert output["status"] == "needs_review"
+    assert artifact["review_contract"]["safe_to_review"] is True
+    assert artifact["execution_enabled"] is False
+    assert artifact["external_api_calls"] == 0
+    assert artifact["actions"] == []
+
+
+def test_create_chain_index_collects_all_phase1_create_artifacts():
+    artifacts = {
+        "create_request": {"workflow": "create_request", "ok": True, "status": "", "artifact_path": "/runs/create_request/a.json"},
+        "create_strategy_plan": {"workflow": "create_strategy_plan", "ok": True, "status": "", "artifact_path": "/runs/create_strategy_plan/a.json"},
+        "create_preflight": {"workflow": "create_preflight", "ok": True, "status": "passed", "artifact_path": "/runs/create_preflight/a.json"},
+        "create_provider_field_map_check": {
+            "workflow": "create_provider_field_map_check",
+            "ok": True,
+            "status": "unverified",
+            "artifact_path": "/runs/create_provider_field_map_check/a.json",
+        },
+        "create_field_mapping_review_pack": {
+            "workflow": "create_field_mapping_review_pack",
+            "ok": True,
+            "status": "needs_review",
+            "artifact_path": "/runs/create_field_mapping_review_pack/a.json",
+        },
+        "create_template_slot_review_pack": {
+            "workflow": "create_template_slot_review_pack",
+            "ok": True,
+            "status": "needs_review",
+            "artifact_path": "/runs/create_template_slot_review_pack/a.json",
+        },
+        "create_dry_run": {
+            "workflow": "create_dry_run",
+            "ok": True,
+            "status": "simulated",
+            "artifact_path": "/runs/create_dry_run/a.json",
+            "provider_payload_draft_digest": {
+                "algorithm": "sha256",
+                "value": "1" * 64,
+                "provider_payload_draft_count": 1,
+            },
+        },
+        "create_approval": {"workflow": "create_approval", "ok": True, "status": "recorded", "artifact_path": "/runs/create_approval/a.json"},
+        "create_plan_snapshot": {"workflow": "create_plan_snapshot", "ok": True, "status": "", "artifact_path": "/runs/create_plan_snapshot/a.json"},
+        "create_execute": {
+            "workflow": "create_execute",
+            "ok": True,
+            "status": "blocked",
+            "artifact_path": "/runs/create_execute/a.json",
+            "executed_task_count": 0,
+        },
+        "create_chain_replay": {"workflow": "create_chain_replay", "ok": True, "status": "passed", "artifact_path": "/runs/create_chain_replay/a.json"},
+        "create_chain_manifest": {"workflow": "create_chain_manifest", "ok": True, "status": "ready", "artifact_path": "/runs/create_chain_manifest/a.json"},
+        "create_readiness_matrix": {
+            "workflow": "create_readiness_matrix",
+            "ok": True,
+            "status": "not_ready",
+            "artifact_path": "/runs/create_readiness_matrix/a.json",
+            "ready_for_live_execute": False,
+        },
+        "create_live_execute_phase_gate": {
+            "workflow": "create_live_execute_phase_gate",
+            "ok": True,
+            "status": "blocked",
+            "artifact_path": "/runs/create_live_execute_phase_gate/a.json",
+            "live_execute_development_allowed": False,
+            "live_execute_allowed": False,
+        },
+        "create_live_payload_adapter_scaffold": {
+            "workflow": "create_live_payload_adapter_scaffold",
+            "ok": True,
+            "status": "blocked",
+            "artifact_path": "/runs/create_live_payload_adapter_scaffold/a.json",
+            "live_payload_generation_enabled": False,
+            "live_payloads": [],
+            "executable_payloads": [],
+        },
+        "create_adapter_review_pack": {
+            "workflow": "create_adapter_review_pack",
+            "ok": True,
+            "status": "needs_review",
+            "artifact_path": "/runs/create_adapter_review_pack/a.json",
+            "required_user_input_now": False,
+        },
+    }
+
+    result = build_create_chain_index(artifacts=artifacts)
+
+    assert result["ok"] is True
+    assert result["workflow"] == "create_chain_index"
+    assert result["phase"] == "phase1"
+    assert result["execution_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert result["status"] == "indexed"
+    assert result["summary"] == {
+        "artifact_count": 16,
+        "missing_artifact_count": 0,
+        "unsafe_artifact_count": 0,
+        "ready_for_live_execute": False,
+        "live_execute_allowed": False,
+    }
+    assert result["artifact_index"][0] == {
+        "workflow": "create_request",
+        "artifact_path": "/runs/create_request/a.json",
+        "ok": True,
+        "status": "",
+        "execution_enabled": False,
+        "external_api_calls": 0,
+    }
+    assert result["artifact_paths"]["create_adapter_review_pack"] == "/runs/create_adapter_review_pack/a.json"
+    assert result["safety_contract"] == {
+        "status": "passed",
+        "execution_enabled_false": True,
+        "external_api_calls_zero": True,
+        "actions_empty": True,
+        "no_live_execute_allowed": True,
+        "no_live_payloads": True,
+    }
+    assert result["provider_payload_draft_digest"] == artifacts["create_dry_run"]["provider_payload_draft_digest"]
+    assert result["violations"] == []
+    assert result["actions"] == []
+
+
+def test_create_chain_index_reports_missing_and_unsafe_artifacts():
+    result = build_create_chain_index(
+        artifacts={
+            "create_request": {
+                "workflow": "create_request",
+                "ok": True,
+                "status": "",
+                "artifact_path": "/runs/create_request/a.json",
+                "execution_enabled": True,
+                "actions": [{"action": "bad"}],
+            }
+        }
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "incomplete"
+    assert result["summary"]["missing_artifact_count"] == 15
+    assert result["summary"]["unsafe_artifact_count"] == 1
+    assert "missing artifact create_strategy_plan" in result["violations"]
+    assert "create_request execution_enabled must be false" in result["violations"]
+    assert "create_request actions must be empty" in result["violations"]
+
+
+def test_run_create_chain_index_request_writes_artifact(tmp_path: Path):
+    artifacts = {
+        workflow: {"workflow": workflow, "ok": True, "status": "ok", "artifact_path": f"/runs/{workflow}/a.json"}
+        for workflow in [
+            "create_request",
+            "create_strategy_plan",
+            "create_preflight",
+            "create_provider_field_map_check",
+            "create_field_mapping_review_pack",
+            "create_template_slot_review_pack",
+            "create_dry_run",
+            "create_approval",
+            "create_plan_snapshot",
+            "create_execute",
+            "create_chain_replay",
+            "create_chain_manifest",
+            "create_readiness_matrix",
+            "create_live_execute_phase_gate",
+            "create_live_payload_adapter_scaffold",
+            "create_adapter_review_pack",
+        ]
+    }
+    artifacts["create_readiness_matrix"]["ready_for_live_execute"] = False
+    artifacts["create_live_execute_phase_gate"]["live_execute_allowed"] = False
+    artifacts["create_live_payload_adapter_scaffold"]["live_payloads"] = []
+    artifacts["create_live_payload_adapter_scaffold"]["executable_payloads"] = []
+
+    result = run_create_chain_index_request(
+        {"create_chain_index": {"artifacts": artifacts}},
+        runs_dir=tmp_path / "runs",
+    )
+
+    artifact = json.loads(Path(result["artifact_path"]).read_text(encoding="utf-8"))
+    assert result["workflow"] == "create_chain_index"
+    assert artifact["workflow"] == "create_chain_index"
+    assert artifact["actions"] == []
+
+
+def test_create_chain_index_cli_uses_latest_artifacts(tmp_path: Path, capsys):
+    db_path = tmp_path / "roibang.sqlite3"
+    runtime_path = _runtime_config(tmp_path, db_path)
+    runs_dir = tmp_path / "runs"
+    workflows = [
+        "create_request",
+        "create_strategy_plan",
+        "create_preflight",
+        "create_provider_field_map_check",
+        "create_field_mapping_review_pack",
+        "create_template_slot_review_pack",
+        "create_dry_run",
+        "create_approval",
+        "create_plan_snapshot",
+        "create_execute",
+        "create_chain_replay",
+        "create_chain_manifest",
+        "create_readiness_matrix",
+        "create_live_execute_phase_gate",
+        "create_live_payload_adapter_scaffold",
+        "create_adapter_review_pack",
+    ]
+    for workflow in workflows:
+        payload = {"workflow": workflow, "ok": True, "status": "ok"}
+        if workflow == "create_readiness_matrix":
+            payload["ready_for_live_execute"] = False
+        if workflow == "create_live_execute_phase_gate":
+            payload["live_execute_allowed"] = False
+        if workflow == "create_live_payload_adapter_scaffold":
+            payload["live_payloads"] = []
+            payload["executable_payloads"] = []
+        path = runs_dir / workflow / "20260508T000000Z.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    module = _load_script("run_create_chain_index")
+
+    exit_code = module.run_from_args(["--config", str(runtime_path)])
+
+    output = json.loads(capsys.readouterr().out)
+    artifact = json.loads(Path(output["artifact_path"]).read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert output["workflow"] == "create_chain_index"
+    assert output["status"] == "indexed"
+    assert artifact["summary"]["artifact_count"] == 16
+    assert artifact["execution_enabled"] is False
+    assert artifact["external_api_calls"] == 0
+    assert artifact["actions"] == []
+
+
+def test_create_chain_final_report_summarizes_index_and_blockers_for_humans():
+    chain_index = {
+        "workflow": "create_chain_index",
+        "ok": True,
+        "status": "indexed",
+        "summary": {
+            "artifact_count": 16,
+            "missing_artifact_count": 0,
+            "unsafe_artifact_count": 0,
+            "ready_for_live_execute": False,
+            "live_execute_allowed": False,
+        },
+        "safety_contract": {
+            "status": "passed",
+            "execution_enabled_false": True,
+            "external_api_calls_zero": True,
+            "actions_empty": True,
+            "no_live_execute_allowed": True,
+            "no_live_payloads": True,
+        },
+        "violations": [],
+    }
+    readiness_matrix = {
+        "workflow": "create_readiness_matrix",
+        "ok": True,
+        "status": "not_ready",
+        "ready_for_live_execute": False,
+        "summary": {"gate_count": 7, "passed_gate_count": 4, "blocking_gate_count": 3},
+        "blocking_reasons": [
+            "provider field map must be verified before live execute",
+            "field mapping review pack still needs review",
+            "template slot review pack still needs review",
+        ],
+    }
+    phase_gate = {
+        "workflow": "create_live_execute_phase_gate",
+        "ok": True,
+        "status": "blocked",
+        "live_execute_development_allowed": False,
+        "live_execute_allowed": False,
+        "blocking_reasons": ["current phase is phase1"],
+    }
+    adapter_review = {
+        "workflow": "create_adapter_review_pack",
+        "ok": True,
+        "status": "needs_review",
+        "required_user_input_now": False,
+        "summary": {
+            "provider": "oceanengine",
+            "adapter_status": "blocked",
+            "live_payload_count": 0,
+            "executable_payload_count": 0,
+        },
+        "review_contract": {"safe_to_review": True},
+    }
+
+    result = build_create_chain_final_report(
+        create_chain_index_artifact=chain_index,
+        create_readiness_matrix_artifact=readiness_matrix,
+        create_live_execute_phase_gate_artifact=phase_gate,
+        create_adapter_review_pack_artifact=adapter_review,
+    )
+
+    assert result["ok"] is True
+    assert result["workflow"] == "create_chain_final_report"
+    assert result["phase"] == "phase1"
+    assert result["execution_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert result["status"] == "reported"
+    assert result["overall_status"] == "not_ready_for_live_create"
+    assert result["business_summary"] == (
+        "创建链路本地产物已索引完成，Phase 1 仍保持真实创建阻断；"
+        "当前主要卡点是字段映射、模板槽位和阶段闸门。"
+    )
+    assert result["summary"] == {
+        "artifact_count": 16,
+        "missing_artifact_count": 0,
+        "unsafe_artifact_count": 0,
+        "ready_for_live_execute": False,
+        "live_execute_development_allowed": False,
+        "live_execute_allowed": False,
+        "blocking_reason_count": 4,
+    }
+    assert result["completed_sections"] == [
+        "创建请求到本地预演链路已成型",
+        "字段映射审阅包和模板槽位审阅包已生成",
+        "链路回放、清单、索引和安全契约已覆盖",
+        "真实执行和真实请求体仍保持硬阻断",
+    ]
+    assert result["pending_confirmations"] == [
+        "确认 provider field map（渠道字段映射）",
+        "确认 template slots（固定模板槽位）",
+        "确认是否进入 Phase 2（真实创建开发阶段）",
+    ]
+    assert result["blocking_reasons"] == [
+        "provider field map must be verified before live execute",
+        "field mapping review pack still needs review",
+        "template slot review pack still needs review",
+        "current phase is phase1",
+    ]
+    assert result["recommended_next_steps"] == [
+        "保持 create_execute 硬阻断",
+        "审阅字段映射和模板槽位",
+        "准备后续由你确认是否参考老项目成熟模板",
+    ]
+    assert result["actions"] == []
+
+
+def test_create_chain_final_report_rejects_unsafe_index():
+    result = build_create_chain_final_report(
+        create_chain_index_artifact={
+            "workflow": "create_chain_index",
+            "ok": False,
+            "status": "incomplete",
+            "summary": {"artifact_count": 1, "missing_artifact_count": 15, "unsafe_artifact_count": 1},
+            "safety_contract": {"status": "failed"},
+            "violations": ["create_request execution_enabled must be false"],
+        },
+        create_readiness_matrix_artifact={
+            "workflow": "create_readiness_matrix",
+            "ok": True,
+            "status": "not_ready",
+            "ready_for_live_execute": False,
+            "blocking_reasons": [],
+        },
+        create_live_execute_phase_gate_artifact={
+            "workflow": "create_live_execute_phase_gate",
+            "ok": True,
+            "status": "blocked",
+            "live_execute_development_allowed": False,
+            "live_execute_allowed": False,
+            "blocking_reasons": [],
+        },
+        create_adapter_review_pack_artifact={
+            "workflow": "create_adapter_review_pack",
+            "ok": True,
+            "status": "needs_review",
+            "required_user_input_now": False,
+            "summary": {},
+            "review_contract": {"safe_to_review": True},
+        },
+    )
+
+    assert result["ok"] is False
+    assert result["overall_status"] == "invalid_chain_artifacts"
+    assert result["summary"]["unsafe_artifact_count"] == 1
+    assert "create_request execution_enabled must be false" in result["violations"]
+    assert result["actions"] == []
+
+
+def test_run_create_chain_final_report_request_writes_artifact(tmp_path: Path):
+    result = run_create_chain_final_report_request(
+        {
+            "create_chain_final_report": {
+                "create_chain_index_artifact": {
+                    "workflow": "create_chain_index",
+                    "ok": True,
+                    "status": "indexed",
+                    "summary": {"artifact_count": 16, "missing_artifact_count": 0, "unsafe_artifact_count": 0},
+                    "safety_contract": {"status": "passed"},
+                    "violations": [],
+                },
+                "create_readiness_matrix_artifact": {
+                    "workflow": "create_readiness_matrix",
+                    "ok": True,
+                    "status": "not_ready",
+                    "ready_for_live_execute": False,
+                    "blocking_reasons": [],
+                },
+                "create_live_execute_phase_gate_artifact": {
+                    "workflow": "create_live_execute_phase_gate",
+                    "ok": True,
+                    "status": "blocked",
+                    "live_execute_development_allowed": False,
+                    "live_execute_allowed": False,
+                    "blocking_reasons": ["current phase is phase1"],
+                },
+                "create_adapter_review_pack_artifact": {
+                    "workflow": "create_adapter_review_pack",
+                    "ok": True,
+                    "status": "needs_review",
+                    "required_user_input_now": False,
+                    "summary": {},
+                    "review_contract": {"safe_to_review": True},
+                },
+            }
+        },
+        runs_dir=tmp_path / "runs",
+    )
+
+    artifact = json.loads(Path(result["artifact_path"]).read_text(encoding="utf-8"))
+    assert result["workflow"] == "create_chain_final_report"
+    assert artifact["workflow"] == "create_chain_final_report"
+    assert artifact["actions"] == []
+
+
+def test_create_chain_final_report_cli_uses_latest_artifacts(tmp_path: Path, capsys):
+    db_path = tmp_path / "roibang.sqlite3"
+    runtime_path = _runtime_config(tmp_path, db_path)
+    runs_dir = tmp_path / "runs"
+    artifacts = {
+        "create_chain_index": {
+            "workflow": "create_chain_index",
+            "ok": True,
+            "status": "indexed",
+            "summary": {"artifact_count": 16, "missing_artifact_count": 0, "unsafe_artifact_count": 0},
+            "safety_contract": {"status": "passed"},
+            "violations": [],
+        },
+        "create_readiness_matrix": {
+            "workflow": "create_readiness_matrix",
+            "ok": True,
+            "status": "not_ready",
+            "ready_for_live_execute": False,
+            "blocking_reasons": ["provider field map must be verified before live execute"],
+        },
+        "create_live_execute_phase_gate": {
+            "workflow": "create_live_execute_phase_gate",
+            "ok": True,
+            "status": "blocked",
+            "live_execute_development_allowed": False,
+            "live_execute_allowed": False,
+            "blocking_reasons": ["current phase is phase1"],
+        },
+        "create_adapter_review_pack": {
+            "workflow": "create_adapter_review_pack",
+            "ok": True,
+            "status": "needs_review",
+            "required_user_input_now": False,
+            "summary": {},
+            "review_contract": {"safe_to_review": True},
+        },
+    }
+    for workflow, payload in artifacts.items():
+        path = runs_dir / workflow / "20260508T000000Z.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    module = _load_script("run_create_chain_final_report")
+
+    exit_code = module.run_from_args(["--config", str(runtime_path)])
+
+    output = json.loads(capsys.readouterr().out)
+    artifact = json.loads(Path(output["artifact_path"]).read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert output["workflow"] == "create_chain_final_report"
+    assert output["overall_status"] == "not_ready_for_live_create"
+    assert artifact["execution_enabled"] is False
+    assert artifact["external_api_calls"] == 0
+    assert artifact["actions"] == []
+
+
+def test_create_phase1_acceptance_checklist_accepts_safe_blocked_chain():
+    final_report = {
+        "workflow": "create_chain_final_report",
+        "ok": True,
+        "status": "reported",
+        "overall_status": "not_ready_for_live_create",
+        "required_user_input_now": False,
+        "summary": {
+            "artifact_count": 16,
+            "missing_artifact_count": 0,
+            "unsafe_artifact_count": 0,
+            "ready_for_live_execute": False,
+            "live_execute_development_allowed": False,
+            "live_execute_allowed": False,
+            "blocking_reason_count": 4,
+        },
+        "blocking_reasons": ["current phase is phase1"],
+        "violations": [],
+    }
+    chain_index = {
+        "workflow": "create_chain_index",
+        "ok": True,
+        "status": "indexed",
+        "summary": {
+            "artifact_count": 16,
+            "missing_artifact_count": 0,
+            "unsafe_artifact_count": 0,
+            "ready_for_live_execute": False,
+            "live_execute_allowed": False,
+        },
+        "safety_contract": {
+            "status": "passed",
+            "execution_enabled_false": True,
+            "external_api_calls_zero": True,
+            "actions_empty": True,
+            "no_live_execute_allowed": True,
+            "no_live_payloads": True,
+        },
+        "violations": [],
+    }
+
+    result = build_create_phase1_acceptance_checklist(
+        create_chain_final_report_artifact=final_report,
+        create_chain_index_artifact=chain_index,
+    )
+
+    assert result["ok"] is True
+    assert result["workflow"] == "create_phase1_acceptance_checklist"
+    assert result["phase"] == "phase1"
+    assert result["execution_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert result["status"] == "accepted_with_phase1_blockers"
+    assert result["phase1_acceptance_status"] == "accepted"
+    assert result["summary"] == {
+        "check_count": 6,
+        "accepted_check_count": 6,
+        "blocking_check_count": 0,
+        "phase1_real_create_blocked": True,
+        "ready_for_phase2_review": True,
+    }
+    assert result["checklist"][0] == {
+        "check_id": "create_chain_complete",
+        "label": "创建链路本地产物完整",
+        "accepted": True,
+        "evidence": "artifact_count=16, missing_artifact_count=0",
+    }
+    assert result["accepted_items"] == [
+        "创建链路本地产物完整",
+        "创建链路安全契约通过",
+        "最终报告已生成",
+        "真实创建保持阻断",
+        "当前不要求人工临场输入",
+        "Phase 1 可作为安全前半段收尾",
+    ]
+    assert result["blocking_items"] == []
+    assert result["recommended_next_steps"] == [
+        "冻结 Phase 1 创建链路安全基线",
+        "由你决定是否进入 Phase 2 字段和模板确认",
+        "继续保持真实创建执行脚本硬阻断",
+    ]
+    assert result["required_user_input_now"] is False
+    assert result["actions"] == []
+
+
+def test_create_phase1_acceptance_checklist_rejects_unsafe_final_report():
+    result = build_create_phase1_acceptance_checklist(
+        create_chain_final_report_artifact={
+            "workflow": "create_chain_final_report",
+            "ok": False,
+            "status": "reported",
+            "overall_status": "unsafe_live_execute_allowed",
+            "required_user_input_now": False,
+            "summary": {
+                "artifact_count": 16,
+                "missing_artifact_count": 0,
+                "unsafe_artifact_count": 0,
+                "live_execute_allowed": True,
+            },
+            "blocking_reasons": [],
+            "violations": ["live execute unexpectedly allowed"],
+        },
+        create_chain_index_artifact={
+            "workflow": "create_chain_index",
+            "ok": True,
+            "status": "indexed",
+            "summary": {"artifact_count": 16, "missing_artifact_count": 0, "unsafe_artifact_count": 0},
+            "safety_contract": {"status": "passed"},
+            "violations": [],
+        },
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "blocked"
+    assert result["phase1_acceptance_status"] == "blocked"
+    assert "最终报告已生成" in result["accepted_items"]
+    assert "真实创建保持阻断" in result["blocking_items"]
+    assert "live execute unexpectedly allowed" in result["violations"]
+    assert result["actions"] == []
+
+
+def test_run_create_phase1_acceptance_checklist_request_writes_artifact(tmp_path: Path):
+    result = run_create_phase1_acceptance_checklist_request(
+        {
+            "create_phase1_acceptance_checklist": {
+                "create_chain_final_report_artifact": {
+                    "workflow": "create_chain_final_report",
+                    "ok": True,
+                    "status": "reported",
+                    "overall_status": "not_ready_for_live_create",
+                    "required_user_input_now": False,
+                    "summary": {
+                        "artifact_count": 16,
+                        "missing_artifact_count": 0,
+                        "unsafe_artifact_count": 0,
+                        "live_execute_allowed": False,
+                    },
+                    "blocking_reasons": ["current phase is phase1"],
+                    "violations": [],
+                },
+                "create_chain_index_artifact": {
+                    "workflow": "create_chain_index",
+                    "ok": True,
+                    "status": "indexed",
+                    "summary": {"artifact_count": 16, "missing_artifact_count": 0, "unsafe_artifact_count": 0},
+                    "safety_contract": {
+                        "status": "passed",
+                        "execution_enabled_false": True,
+                        "external_api_calls_zero": True,
+                        "actions_empty": True,
+                        "no_live_execute_allowed": True,
+                        "no_live_payloads": True,
+                    },
+                    "violations": [],
+                },
+            }
+        },
+        runs_dir=tmp_path / "runs",
+    )
+
+    artifact = json.loads(Path(result["artifact_path"]).read_text(encoding="utf-8"))
+    assert result["workflow"] == "create_phase1_acceptance_checklist"
+    assert artifact["workflow"] == "create_phase1_acceptance_checklist"
+    assert artifact["actions"] == []
+
+
+def test_create_phase1_acceptance_checklist_cli_uses_latest_artifacts(tmp_path: Path, capsys):
+    db_path = tmp_path / "roibang.sqlite3"
+    runtime_path = _runtime_config(tmp_path, db_path)
+    runs_dir = tmp_path / "runs"
+    artifacts = {
+        "create_chain_final_report": {
+            "workflow": "create_chain_final_report",
+            "ok": True,
+            "status": "reported",
+            "overall_status": "not_ready_for_live_create",
+            "required_user_input_now": False,
+            "summary": {
+                "artifact_count": 16,
+                "missing_artifact_count": 0,
+                "unsafe_artifact_count": 0,
+                "live_execute_allowed": False,
+            },
+            "blocking_reasons": ["current phase is phase1"],
+            "violations": [],
+        },
+        "create_chain_index": {
+            "workflow": "create_chain_index",
+            "ok": True,
+            "status": "indexed",
+            "summary": {"artifact_count": 16, "missing_artifact_count": 0, "unsafe_artifact_count": 0},
+            "safety_contract": {
+                "status": "passed",
+                "execution_enabled_false": True,
+                "external_api_calls_zero": True,
+                "actions_empty": True,
+                "no_live_execute_allowed": True,
+                "no_live_payloads": True,
+            },
+            "violations": [],
+        },
+    }
+    for workflow, payload in artifacts.items():
+        path = runs_dir / workflow / "20260508T000000Z.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    module = _load_script("run_create_phase1_acceptance_checklist")
+
+    exit_code = module.run_from_args(["--config", str(runtime_path)])
+
+    output = json.loads(capsys.readouterr().out)
+    artifact = json.loads(Path(output["artifact_path"]).read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert output["workflow"] == "create_phase1_acceptance_checklist"
+    assert output["phase1_acceptance_status"] == "accepted"
+    assert artifact["execution_enabled"] is False
+    assert artifact["external_api_calls"] == 0
+    assert artifact["actions"] == []
+
+
+def test_create_phase1_baseline_freeze_records_accepted_safe_baseline():
+    acceptance = {
+        "workflow": "create_phase1_acceptance_checklist",
+        "ok": True,
+        "status": "accepted_with_phase1_blockers",
+        "phase1_acceptance_status": "accepted",
+        "summary": {
+            "check_count": 6,
+            "accepted_check_count": 6,
+            "blocking_check_count": 0,
+            "phase1_real_create_blocked": True,
+            "ready_for_phase2_review": True,
+        },
+        "accepted_items": ["创建链路本地产物完整", "真实创建保持阻断"],
+        "blocking_items": [],
+        "violations": [],
+        "artifact_path": "/runs/create_phase1_acceptance_checklist/a.json",
+    }
+    final_report = {
+        "workflow": "create_chain_final_report",
+        "ok": True,
+        "status": "reported",
+        "overall_status": "not_ready_for_live_create",
+        "summary": {
+            "artifact_count": 16,
+            "missing_artifact_count": 0,
+            "unsafe_artifact_count": 0,
+            "live_execute_allowed": False,
+        },
+        "blocking_reasons": ["current phase is phase1"],
+        "artifact_path": "/runs/create_chain_final_report/a.json",
+    }
+    chain_index = {
+        "workflow": "create_chain_index",
+        "ok": True,
+        "status": "indexed",
+        "summary": {"artifact_count": 16, "missing_artifact_count": 0, "unsafe_artifact_count": 0},
+        "safety_contract": {
+            "status": "passed",
+            "execution_enabled_false": True,
+            "external_api_calls_zero": True,
+            "actions_empty": True,
+            "no_live_execute_allowed": True,
+            "no_live_payloads": True,
+        },
+        "artifact_paths": {"create_request": "/runs/create_request/a.json"},
+        "artifact_path": "/runs/create_chain_index/a.json",
+    }
+
+    result = build_create_phase1_baseline_freeze(
+        create_phase1_acceptance_checklist_artifact=acceptance,
+        create_chain_final_report_artifact=final_report,
+        create_chain_index_artifact=chain_index,
+    )
+
+    assert result["ok"] is True
+    assert result["workflow"] == "create_phase1_baseline_freeze"
+    assert result["phase"] == "phase1"
+    assert result["execution_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert result["status"] == "frozen"
+    assert result["phase1_baseline_status"] == "frozen"
+    assert result["baseline_id"] == "phase1-create-safe-baseline-v1"
+    assert re.fullmatch(r"[0-9a-f]{64}", result["baseline_digest"]["value"])
+    assert result["summary"] == {
+        "accepted": True,
+        "artifact_count": 16,
+        "accepted_check_count": 6,
+        "blocking_check_count": 0,
+        "real_create_blocked": True,
+        "ready_for_phase2_review": True,
+    }
+    assert result["freeze_contract"] == {
+        "status": "frozen",
+        "acceptance_required": True,
+        "acceptance_status": "accepted",
+        "execution_enabled_false": True,
+        "external_api_calls_zero": True,
+        "actions_empty": True,
+        "no_live_execute_allowed": True,
+        "no_live_payloads": True,
+    }
+    assert result["frozen_workflows"] == [
+        "create_phase1_acceptance_checklist",
+        "create_chain_final_report",
+        "create_chain_index",
+    ]
+    assert result["source_artifact_paths"] == {
+        "create_phase1_acceptance_checklist": "/runs/create_phase1_acceptance_checklist/a.json",
+        "create_chain_final_report": "/runs/create_chain_final_report/a.json",
+        "create_chain_index": "/runs/create_chain_index/a.json",
+    }
+    assert result["recommended_next_steps"] == [
+        "保留 Phase 1 安全基线产物",
+        "进入 Phase 2 前先确认字段映射和模板槽位",
+        "真实创建执行仍保持关闭",
+    ]
+    assert result["actions"] == []
+
+
+def test_create_phase1_baseline_freeze_blocks_unaccepted_checklist():
+    result = build_create_phase1_baseline_freeze(
+        create_phase1_acceptance_checklist_artifact={
+            "workflow": "create_phase1_acceptance_checklist",
+            "ok": False,
+            "status": "blocked",
+            "phase1_acceptance_status": "blocked",
+            "summary": {"blocking_check_count": 1, "phase1_real_create_blocked": False},
+            "blocking_items": ["真实创建保持阻断"],
+            "violations": ["live execute unexpectedly allowed"],
+        },
+        create_chain_final_report_artifact={
+            "workflow": "create_chain_final_report",
+            "ok": False,
+            "status": "reported",
+            "overall_status": "unsafe_live_execute_allowed",
+            "summary": {"artifact_count": 16, "live_execute_allowed": True},
+        },
+        create_chain_index_artifact={
+            "workflow": "create_chain_index",
+            "ok": True,
+            "status": "indexed",
+            "summary": {"artifact_count": 16},
+            "safety_contract": {"status": "passed"},
+        },
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "blocked"
+    assert result["phase1_baseline_status"] == "blocked"
+    assert result["freeze_contract"]["status"] == "blocked"
+    assert result["blocking_reasons"] == ["真实创建保持阻断"]
+    assert "live execute unexpectedly allowed" in result["violations"]
+    assert result["actions"] == []
+
+
+def test_run_create_phase1_baseline_freeze_request_writes_artifact(tmp_path: Path):
+    result = run_create_phase1_baseline_freeze_request(
+        {
+            "create_phase1_baseline_freeze": {
+                "create_phase1_acceptance_checklist_artifact": {
+                    "workflow": "create_phase1_acceptance_checklist",
+                    "ok": True,
+                    "status": "accepted_with_phase1_blockers",
+                    "phase1_acceptance_status": "accepted",
+                    "summary": {
+                        "check_count": 6,
+                        "accepted_check_count": 6,
+                        "blocking_check_count": 0,
+                        "phase1_real_create_blocked": True,
+                        "ready_for_phase2_review": True,
+                    },
+                    "accepted_items": [],
+                    "blocking_items": [],
+                    "violations": [],
+                },
+                "create_chain_final_report_artifact": {
+                    "workflow": "create_chain_final_report",
+                    "ok": True,
+                    "status": "reported",
+                    "overall_status": "not_ready_for_live_create",
+                    "summary": {"artifact_count": 16, "live_execute_allowed": False},
+                    "blocking_reasons": ["current phase is phase1"],
+                },
+                "create_chain_index_artifact": {
+                    "workflow": "create_chain_index",
+                    "ok": True,
+                    "status": "indexed",
+                    "summary": {"artifact_count": 16},
+                    "safety_contract": {
+                        "status": "passed",
+                        "execution_enabled_false": True,
+                        "external_api_calls_zero": True,
+                        "actions_empty": True,
+                        "no_live_execute_allowed": True,
+                        "no_live_payloads": True,
+                    },
+                },
+            }
+        },
+        runs_dir=tmp_path / "runs",
+    )
+
+    artifact = json.loads(Path(result["artifact_path"]).read_text(encoding="utf-8"))
+    assert result["workflow"] == "create_phase1_baseline_freeze"
+    assert artifact["workflow"] == "create_phase1_baseline_freeze"
+    assert artifact["actions"] == []
+
+
+def test_create_phase1_baseline_freeze_cli_uses_latest_artifacts(tmp_path: Path, capsys):
+    db_path = tmp_path / "roibang.sqlite3"
+    runtime_path = _runtime_config(tmp_path, db_path)
+    runs_dir = tmp_path / "runs"
+    artifacts = {
+        "create_phase1_acceptance_checklist": {
+            "workflow": "create_phase1_acceptance_checklist",
+            "ok": True,
+            "status": "accepted_with_phase1_blockers",
+            "phase1_acceptance_status": "accepted",
+            "summary": {
+                "check_count": 6,
+                "accepted_check_count": 6,
+                "blocking_check_count": 0,
+                "phase1_real_create_blocked": True,
+                "ready_for_phase2_review": True,
+            },
+            "accepted_items": [],
+            "blocking_items": [],
+            "violations": [],
+        },
+        "create_chain_final_report": {
+            "workflow": "create_chain_final_report",
+            "ok": True,
+            "status": "reported",
+            "overall_status": "not_ready_for_live_create",
+            "summary": {"artifact_count": 16, "live_execute_allowed": False},
+            "blocking_reasons": ["current phase is phase1"],
+        },
+        "create_chain_index": {
+            "workflow": "create_chain_index",
+            "ok": True,
+            "status": "indexed",
+            "summary": {"artifact_count": 16},
+            "safety_contract": {
+                "status": "passed",
+                "execution_enabled_false": True,
+                "external_api_calls_zero": True,
+                "actions_empty": True,
+                "no_live_execute_allowed": True,
+                "no_live_payloads": True,
+            },
+        },
+    }
+    for workflow, payload in artifacts.items():
+        path = runs_dir / workflow / "20260509T000000Z.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    module = _load_script("run_create_phase1_baseline_freeze")
+
+    exit_code = module.run_from_args(["--config", str(runtime_path)])
+
+    output = json.loads(capsys.readouterr().out)
+    artifact = json.loads(Path(output["artifact_path"]).read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert output["workflow"] == "create_phase1_baseline_freeze"
+    assert output["phase1_baseline_status"] == "frozen"
+    assert artifact["execution_enabled"] is False
+    assert artifact["external_api_calls"] == 0
+    assert artifact["actions"] == []
+
+
+def test_create_dry_run_records_provider_field_map_check_lineage(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    plan = build_create_strategy_plan(request=_create_request()["create_request"], db_path=db_path, policy={})
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+    policy = {
+        "provider_field_map_path": "configs/provider-field-maps/oceanengine.create.phase1.example.json"
+    }
+    field_map_check = build_create_provider_field_map_check(policy=policy)
+
+    result = build_create_dry_run(
+        create_strategy_plan_artifact=plan,
+        create_preflight_artifact=preflight,
+        create_provider_field_map_check_artifact=field_map_check,
+        policy=policy,
+    )
+
+    assert result["ok"] is True
+    assert result["status"] == "simulated"
+    assert result["lineage"]["create_provider_field_map_check"]["workflow"] == "create_provider_field_map_check"
+    assert result["lineage"]["create_provider_field_map_check"]["provider"] == "oceanengine"
+    assert result["lineage"]["create_provider_field_map_check"]["status"] == "unverified"
+    assert result["provider_field_map_digest"] == field_map_check["provider_field_map_digest"]
+    assert result["provider_field_map_contract"] == field_map_check["provider_field_map_contract"]
+    assert result["provider_readiness_contract"] == field_map_check["provider_readiness_contract"]
+
+
+def test_create_dry_run_blocks_mismatched_provider_field_map_check(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    plan = build_create_strategy_plan(request=_create_request()["create_request"], db_path=db_path, policy={})
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+    field_map_check = build_create_provider_field_map_check(
+        policy={"provider_field_map_path": "configs/provider-field-maps/oceanengine.create.phase1.example.json"}
+    )
+    field_map_check["provider_field_map_contract"]["missing_provider_field_count"] = 0
+
+    result = build_create_dry_run(
+        create_strategy_plan_artifact=plan,
+        create_preflight_artifact=preflight,
+        create_provider_field_map_check_artifact=field_map_check,
+        policy={"provider_field_map_path": "configs/provider-field-maps/oceanengine.create.phase1.example.json"},
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "blocked"
+    assert "provider field map check contract must match dry-run field map contract" in result["violations"]
+    assert result["candidate_tasks"] == []
+    assert result["actions"] == []
+
+
+def test_create_dry_run_blocks_mismatched_provider_field_map_digest(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    plan = build_create_strategy_plan(request=_create_request()["create_request"], db_path=db_path, policy={})
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+    field_map_check = build_create_provider_field_map_check(
+        policy={"provider_field_map_path": "configs/provider-field-maps/oceanengine.create.phase1.example.json"}
+    )
+    field_map_check["provider_field_map_digest"]["value"] = "0" * 64
+
+    result = build_create_dry_run(
+        create_strategy_plan_artifact=plan,
+        create_preflight_artifact=preflight,
+        create_provider_field_map_check_artifact=field_map_check,
+        policy={"provider_field_map_path": "configs/provider-field-maps/oceanengine.create.phase1.example.json"},
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "blocked"
+    assert "provider field map check digest must match dry-run field map digest" in result["violations"]
+    assert result["candidate_tasks"] == []
+    assert result["actions"] == []
+
+
+def test_provider_field_map_check_lineage_propagates_after_dry_run(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    plan = build_create_strategy_plan(request=_create_request()["create_request"], db_path=db_path, policy={})
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+    policy = {"provider_field_map_path": "configs/provider-field-maps/oceanengine.create.phase1.example.json"}
+    field_map_check = build_create_provider_field_map_check(policy=policy)
+    dry_run = build_create_dry_run(
+        create_strategy_plan_artifact=plan,
+        create_preflight_artifact=preflight,
+        create_provider_field_map_check_artifact=field_map_check,
+        policy=policy,
+    )
+    approval = build_create_approval(create_dry_run_artifact=dry_run, policy={"auto_approve_phase1": True})
+    snapshot = build_create_plan_snapshot(
+        create_strategy_plan_artifact=plan,
+        create_preflight_artifact=preflight,
+        create_dry_run_artifact=dry_run,
+        create_approval_artifact=approval,
+    )
+    execute = build_create_execute(create_approval_artifact=approval, policy={})
+
+    expected = dry_run["lineage"]["create_provider_field_map_check"]
+    assert approval["lineage"]["create_provider_field_map_check"] == expected
+    assert snapshot["lineage"]["create_provider_field_map_check"] == expected
+    assert execute["lineage"]["create_provider_field_map_check"] == expected
+    assert approval["provider_field_map_digest"] == dry_run["provider_field_map_digest"]
+    assert snapshot["provider_field_map_digest"] == dry_run["provider_field_map_digest"]
+    assert execute["provider_field_map_digest"] == dry_run["provider_field_map_digest"]
+
+
+def test_create_dry_run_blocks_when_payload_required_fields_are_missing(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    plan = build_create_strategy_plan(request=_create_request()["create_request"], db_path=db_path, policy={})
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+    project = plan["strategy"]["projects"][0]
+    project["project_name"] = ""
+    project["units"][0]["unit_key"] = ""
+    project["units"][0]["materials"][0]["material_id"] = ""
+
+    result = build_create_dry_run(
+        create_strategy_plan_artifact=plan,
+        create_preflight_artifact=preflight,
+        policy={},
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "blocked"
+    assert result["candidate_tasks"] == []
+    assert result["payload_contract"]["status"] == "failed"
+    assert "create_project project target-1-p001 missing project_name" in result["violations"]
+    assert "create_unit unit target-1-p001-u01 missing unit_key" in result["violations"]
+    assert "bind_material unit target-1-p001-u01 missing material_id" in result["violations"]
+
+
+def test_create_dry_run_blocks_duplicate_idempotency_keys(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    request = _create_request()["create_request"]
+    request["target_accounts"][0]["project_count"] = 2
+    request["target_accounts"][0]["units_per_project"] = 1
+    request["material_requirements"]["materials_per_unit"] = 1
+    plan = build_create_strategy_plan(request=request, db_path=db_path, policy={})
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+    plan["strategy"]["projects"][1]["project_key"] = plan["strategy"]["projects"][0]["project_key"]
+
+    result = build_create_dry_run(
+        create_strategy_plan_artifact=plan,
+        create_preflight_artifact=preflight,
+        policy={},
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "blocked"
+    assert result["candidate_tasks"] == []
+    assert result["idempotency_contract"]["status"] == "failed"
+    assert result["idempotency_contract"]["duplicate_keys"]
+    assert "duplicate idempotency key for create_project" in result["violations"]
+
+
+def test_run_create_dry_run_request_records_idempotency_ledger_in_sqlite(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    plan = build_create_strategy_plan(request=_create_request()["create_request"], db_path=db_path, policy={})
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+
+    result = run_create_dry_run_request(
+        {
+            "create_dry_run": {
+                "create_strategy_plan_artifact": plan,
+                "create_preflight_artifact": preflight,
+                "policy": {},
+            }
+        },
+        runs_dir=tmp_path / "runs",
+        db_path=db_path,
+    )
+
+    assert result["idempotency_ledger"] == {
+        "status": "recorded",
+        "recorded_key_count": 7,
+        "existing_key_count": 0,
+    }
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT scope, plan_id, request_id, target_date, advertiser_id, status, execution_enabled
+            FROM create_idempotency_keys
+            ORDER BY scope, idempotency_key
+            """
+        ).fetchall()
+
+    assert len(rows) == 7
+    assert {row[0] for row in rows} == {"bind_material", "create_project", "create_unit"}
+    assert {row[1] for row in rows} == {"create_plan_create_req_20260508_yzt_wx_7r"}
+    assert {row[2] for row in rows} == {"create_req_20260508_yzt_wx_7r"}
+    assert {row[3] for row in rows} == {"2026-05-08"}
+    assert {row[4] for row in rows} == {"target-1"}
+    assert {row[5] for row in rows} == {"planned"}
+    assert {row[6] for row in rows} == {0}
+
+    second = run_create_dry_run_request(
+        {
+            "create_dry_run": {
+                "create_strategy_plan_artifact": plan,
+                "create_preflight_artifact": preflight,
+                "policy": {},
+            }
+        },
+        runs_dir=tmp_path / "runs",
+        db_path=db_path,
+    )
+
+    assert second["idempotency_ledger"] == {
+        "status": "recorded",
+        "recorded_key_count": 7,
+        "existing_key_count": 7,
+    }
+
+
+def test_create_dry_run_blocks_when_preflight_failed(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    plan = build_create_strategy_plan(request=_create_request()["create_request"], db_path=db_path, policy={})
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+    preflight["status"] = "failed"
+    preflight["ok"] = False
+    preflight["violations"] = ["manual block"]
+
+    result = build_create_dry_run(
+        create_strategy_plan_artifact=plan,
+        create_preflight_artifact=preflight,
+        policy={},
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "blocked"
+    assert result["candidate_tasks"] == []
+    assert "create preflight must pass before dry-run" in result["violations"]
+
+
+def test_create_approval_records_automatic_policy_review_but_disallows_execute_in_phase1(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    plan = build_create_strategy_plan(request=_create_request()["create_request"], db_path=db_path, policy={})
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+    dry_run = build_create_dry_run(
+        create_strategy_plan_artifact=plan,
+        create_preflight_artifact=preflight,
+        policy={},
+    )
+
+    result = build_create_approval(
+        create_dry_run_artifact=dry_run,
+        policy={"auto_approve_phase1": True, "max_projects_per_approval": 5, "max_units_per_approval": 10},
+    )
+
+    assert result["ok"] is True
+    assert result["workflow"] == "create_approval"
+    assert result["phase"] == "phase1"
+    assert result["execution_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert result["status"] == "recorded"
+    assert result["approval_mode"] == "phase1_record_only"
+    assert result["policy_decision"] == "would_approve"
+    assert result["approved"] is False
+    assert result["execute_allowed"] is False
+    assert result["approved_for_execute"] is False
+    assert result["actions"] == []
+    assert result["summary"] == {
+        "plan_id": "create_plan_create_req_20260508_yzt_wx_7r",
+        "request_id": "create_req_20260508_yzt_wx_7r",
+        "target_date": "2026-05-08",
+        "project_count": 1,
+        "unit_count": 2,
+        "material_count": 4,
+        "violation_count": 0,
+    }
+    assert result["lineage"]["create_dry_run"]["plan_id"] == "create_plan_create_req_20260508_yzt_wx_7r"
+    assert result["lineage"]["create_strategy_plan"]["plan_id"] == "create_plan_create_req_20260508_yzt_wx_7r"
+    assert result["candidate_task_digest"]["algorithm"] == "sha256"
+    assert re.fullmatch(r"[0-9a-f]{64}", result["candidate_task_digest"]["value"])
+    assert result["candidate_task_digest"]["candidate_task_count"] == 1
+    assert result["provider_field_map_digest"] == dry_run["provider_field_map_digest"]
+    assert result["provider_payload_draft_digest"] == dry_run["provider_payload_draft_digest"]
+    assert result["provider_readiness_contract"] == dry_run["provider_readiness_contract"]
+
+
+def test_create_approval_blocks_failed_dry_run_and_policy_limit(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    plan = build_create_strategy_plan(request=_create_request()["create_request"], db_path=db_path, policy={})
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+    dry_run = build_create_dry_run(
+        create_strategy_plan_artifact=plan,
+        create_preflight_artifact=preflight,
+        policy={"max_units_per_dry_run": 1},
+    )
+
+    result = build_create_approval(
+        create_dry_run_artifact=dry_run,
+        policy={"max_units_per_approval": 1},
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "blocked"
+    assert result["policy_decision"] == "reject"
+    assert result["execute_allowed"] is False
+    assert "create dry-run must be simulated before approval" in result["violations"]
+    assert "dry-run unit count exceeds policy limit" in result["violations"]
+
+
+def test_create_execute_is_hard_blocked_in_phase1_even_after_recorded_approval(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    plan = build_create_strategy_plan(request=_create_request()["create_request"], db_path=db_path, policy={})
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+    dry_run = build_create_dry_run(create_strategy_plan_artifact=plan, create_preflight_artifact=preflight, policy={})
+    approval = build_create_approval(create_dry_run_artifact=dry_run, policy={"auto_approve_phase1": True})
+
+    result = build_create_execute(create_approval_artifact=approval, policy={})
+
+    assert result["ok"] is True
+    assert result["workflow"] == "create_execute"
+    assert result["phase"] == "phase1"
+    assert result["execution_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert result["status"] == "blocked"
+    assert result["reason"] == "phase1_execute_disabled"
+    assert result["summary"] == {
+        "plan_id": "create_plan_create_req_20260508_yzt_wx_7r",
+        "request_id": "create_req_20260508_yzt_wx_7r",
+        "target_date": "2026-05-08",
+        "project_count": 1,
+        "unit_count": 2,
+        "material_count": 4,
+        "approval_status": "recorded",
+        "policy_decision": "would_approve",
+        "execute_allowed": False,
+    }
+    assert result["lineage"]["create_approval"]["plan_id"] == "create_plan_create_req_20260508_yzt_wx_7r"
+    assert result["candidate_task_digest"] == approval["candidate_task_digest"]
+    assert result["provider_field_map_digest"] == approval["provider_field_map_digest"]
+    assert result["provider_payload_draft_digest"] == approval["provider_payload_draft_digest"]
+    assert result["provider_readiness_contract"] == approval["provider_readiness_contract"]
+    assert result["provider_readiness_contract"]["ready_for_live_execute"] is False
+    assert result["violations"] == []
+    assert result["approved_for_execute"] is False
+    assert result["executed_task_count"] == 0
+    assert result["payload_schema"] == result["execution_plan"]["payload_schema"]
+    assert result["execution_plan"] == {
+        "mode": "phase1_skeleton_only",
+        "steps": [
+            {
+                "step": "create_project",
+                "order": 1,
+                "planned_count": 1,
+                "status": "blocked_in_phase1",
+            },
+            {
+                "step": "create_unit",
+                "order": 2,
+                "planned_count": 2,
+                "status": "blocked_in_phase1",
+            },
+            {
+                "step": "bind_material",
+                "order": 3,
+                "planned_count": 4,
+                "status": "blocked_in_phase1",
+            },
+        ],
+        "failure_policy": {
+            "on_project_create_error": "stop",
+            "on_unit_create_error": "stop",
+            "on_material_bind_error": "stop",
+            "retry_enabled": False,
+        },
+        "payload_schema": {
+            "version": "phase1.create_payload.v1",
+            "mode": "schema_only",
+            "execution_enabled": False,
+            "external_api_enabled": False,
+            "live_payload_generation_enabled": False,
+            "endpoints": {
+                "create_project": "",
+                "create_unit": "",
+                "bind_material": "",
+            },
+            "required_fields": {
+                "create_project": [
+                    "advertiser_id",
+                    "project_name",
+                    "project_type",
+                    "daily_budget",
+                    "field_defaults",
+                ],
+                "create_unit": [
+                    "advertiser_id",
+                    "project_key",
+                    "unit_key",
+                    "field_defaults",
+                ],
+                "bind_material": [
+                    "advertiser_id",
+                    "project_key",
+                    "unit_key",
+                    "material_id",
+                ],
+            },
+            "field_sources": {
+                "create_project": "create_strategy_plan.strategy.projects[]",
+                "create_unit": "create_strategy_plan.strategy.projects[].units[]",
+                "bind_material": "create_strategy_plan.strategy.projects[].units[].materials[]",
+            },
+        },
+        "live_api_payloads": [],
+    }
+    assert result["audit"] == {
+        "enabled": False,
+        "format": "jsonl",
+        "path": "data/runs/create_execute/audit",
+        "redact_fields": ["Access-Token", "Cookie", "x-csrftoken"],
+    }
+    assert result["actions"] == []
+
+
+def test_create_execute_rejects_dangerous_phase1_policy_switches(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    plan = build_create_strategy_plan(request=_create_request()["create_request"], db_path=db_path, policy={})
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+    dry_run = build_create_dry_run(create_strategy_plan_artifact=plan, create_preflight_artifact=preflight, policy={})
+    approval = build_create_approval(create_dry_run_artifact=dry_run, policy={"auto_approve_phase1": True})
+
+    result = build_create_execute(
+        create_approval_artifact=approval,
+        policy={"allow_execute_phase1": True, "allow_live_api_payloads": True},
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "blocked"
+    assert result["execution_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert "create execute policy allow_execute_phase1 must be false in phase1" in result["violations"]
+    assert "create execute policy allow_live_api_payloads must be false in phase1" in result["violations"]
+    assert result["execution_plan"]["live_api_payloads"] == []
+    assert result["actions"] == []
+
+
+def test_create_execute_rejects_dangerous_live_api_template(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    plan = build_create_strategy_plan(request=_create_request()["create_request"], db_path=db_path, policy={})
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+    dry_run = build_create_dry_run(create_strategy_plan_artifact=plan, create_preflight_artifact=preflight, policy={})
+    approval = build_create_approval(create_dry_run_artifact=dry_run, policy={"auto_approve_phase1": True})
+
+    result = build_create_execute(
+        create_approval_artifact=approval,
+        policy={
+            "live_api": {
+                "enabled": True,
+                "allow_live_api_payloads": True,
+            },
+            "execution": {
+                "status": "execute",
+                "execution_enabled": True,
+                "external_api_enabled": True,
+            },
+            "payload_schema": {
+                "mode": "live_payloads",
+                "live_payload_generation_enabled": True,
+            },
+        },
+    )
+
+    assert result["ok"] is False
+    assert "create execute live_api.enabled must be false in phase1" in result["violations"]
+    assert "create execute live_api.allow_live_api_payloads must be false in phase1" in result["violations"]
+    assert "create execute request execution.status must not be execute in phase1" in result["violations"]
+    assert "create execute request execution_enabled must be false in phase1" in result["violations"]
+    assert "create execute request external_api_enabled must be false in phase1" in result["violations"]
+    assert "create execute payload_schema.live_payload_generation_enabled must be false in phase1" in result["violations"]
+    assert result["executed_task_count"] == 0
+    assert result["actions"] == []
+
+
+def test_run_create_approval_and_execute_request_write_artifacts(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    plan = build_create_strategy_plan(request=_create_request()["create_request"], db_path=db_path, policy={})
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+    dry_run = build_create_dry_run(create_strategy_plan_artifact=plan, create_preflight_artifact=preflight, policy={})
+
+    approval = run_create_approval_request(
+        {"create_approval": {"create_dry_run_artifact": dry_run, "policy": {"auto_approve_phase1": True}}},
+        runs_dir=tmp_path / "runs",
+    )
+    execute = run_create_execute_request(
+        {"create_execute": {"create_approval_artifact": approval}},
+        runs_dir=tmp_path / "runs",
+    )
+
+    assert Path(approval["artifact_path"]).exists()
+    assert Path(execute["artifact_path"]).exists()
+    assert approval["execute_allowed"] is False
+    assert execute["executed_task_count"] == 0
+    assert execute["provider_readiness_contract"]["ready_for_live_execute"] is False
+
+
+def test_create_execute_cli_accepts_disabled_live_template_and_still_blocks(tmp_path: Path, capsys):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    runs_dir = tmp_path / "runs"
+    runtime_path = _runtime_config(tmp_path, db_path)
+    plan = build_create_strategy_plan(request=_create_request()["create_request"], db_path=db_path, policy={})
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+    dry_run = build_create_dry_run(create_strategy_plan_artifact=plan, create_preflight_artifact=preflight, policy={})
+    run_create_approval_request(
+        {"create_approval": {"create_dry_run_artifact": dry_run, "policy": {"auto_approve_phase1": True}}},
+        runs_dir=runs_dir,
+    )
+    module = _load_script("run_create_execute")
+
+    exit_code = module.run_from_args(
+        [
+            "--config",
+            str(runtime_path),
+            "--request",
+            "configs/create-execute.openapi-http.disabled.example.json",
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    artifact = json.loads(Path(output["artifact_path"]).read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert output["status"] == "blocked"
+    assert artifact["executed_task_count"] == 0
+    assert artifact["payload_schema"]["mode"] == "schema_only"
+    assert artifact["payload_schema"]["live_payload_generation_enabled"] is False
+    assert artifact["execution_plan"]["live_api_payloads"] == []
+    assert artifact["audit"]["enabled"] is False
+    assert artifact["audit"]["path"] == "data/runs/create_execute/audit/openapi-http-disabled"
+
+
+def test_create_plan_snapshot_summarizes_plan_for_review(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    plan = build_create_strategy_plan(request=_create_request()["create_request"], db_path=db_path, policy={})
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+    dry_run = build_create_dry_run(create_strategy_plan_artifact=plan, create_preflight_artifact=preflight, policy={})
+    approval = build_create_approval(create_dry_run_artifact=dry_run, policy={"auto_approve_phase1": True})
+
+    result = build_create_plan_snapshot(
+        create_strategy_plan_artifact=plan,
+        create_preflight_artifact=preflight,
+        create_dry_run_artifact=dry_run,
+        create_approval_artifact=approval,
+    )
+
+    assert result["ok"] is True
+    assert result["workflow"] == "create_plan_snapshot"
+    assert result["phase"] == "phase1"
+    assert result["execution_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert result["candidate_task_digest"] == approval["candidate_task_digest"]
+    assert result["payload_contract"] == dry_run["payload_contract"]
+    assert result["payload_draft_contract"] == dry_run["payload_draft_contract"]
+    assert result["provider_adapter_contract"] == dry_run["provider_adapter_contract"]
+    assert result["provider_field_map_contract"] == dry_run["provider_field_map_contract"]
+    assert result["provider_field_map_digest"] == dry_run["provider_field_map_digest"]
+    assert result["provider_payload_draft_digest"] == approval["provider_payload_draft_digest"]
+    assert result["provider_readiness_contract"] == dry_run["provider_readiness_contract"]
+    assert result["idempotency_contract"] == dry_run["idempotency_contract"]
+    assert result["idempotency_ledger"] == dry_run["idempotency_ledger"]
+    assert result["summary"] == {
+        "plan_id": "create_plan_create_req_20260508_yzt_wx_7r",
+        "request_id": "create_req_20260508_yzt_wx_7r",
+        "target_date": "2026-05-08",
+        "account_count": 1,
+        "project_count": 1,
+        "unit_count": 2,
+        "material_count": 4,
+        "preflight_status": "passed",
+        "dry_run_status": "simulated",
+        "approval_status": "recorded",
+        "policy_decision": "would_approve",
+        "violation_count": 0,
+    }
+    assert result["accounts"] == [
+        {
+            "advertiser_id": "target-1",
+            "project_count": 1,
+            "unit_count": 2,
+            "material_count": 4,
+            "material_ids": ["m-extra", "m-high", "m-low", "m-mid"],
+            "projects": [
+                {
+                    "project_key": "target-1-p001",
+                    "project_name": "勇者突进-WX_PAY_7R_GENERAL-target-1-001",
+                    "idempotency_key": dry_run["candidate_tasks"][0]["idempotency_key"],
+                    "unit_count": 2,
+                    "material_ids": ["m-extra", "m-high", "m-low", "m-mid"],
+                }
+            ],
+        }
+    ]
+    assert result["lineage"]["create_strategy_plan"]["plan_id"] == "create_plan_create_req_20260508_yzt_wx_7r"
+    assert result["lineage"]["create_preflight"]["plan_id"] == "create_plan_create_req_20260508_yzt_wx_7r"
+    assert result["lineage"]["create_dry_run"]["plan_id"] == "create_plan_create_req_20260508_yzt_wx_7r"
+    assert result["lineage"]["create_approval"]["plan_id"] == "create_plan_create_req_20260508_yzt_wx_7r"
+    assert result["review_notes"] == [
+        "phase1 snapshot is review-only",
+        "no live API payloads or actions are included",
+    ]
+    assert result["actions"] == []
+
+
+def test_run_create_plan_snapshot_request_writes_artifact(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    plan = build_create_strategy_plan(request=_create_request()["create_request"], db_path=db_path, policy={})
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+    dry_run = build_create_dry_run(create_strategy_plan_artifact=plan, create_preflight_artifact=preflight, policy={})
+    approval = build_create_approval(create_dry_run_artifact=dry_run, policy={"auto_approve_phase1": True})
+
+    result = run_create_plan_snapshot_request(
+        {
+            "create_plan_snapshot": {
+                "create_strategy_plan_artifact": plan,
+                "create_preflight_artifact": preflight,
+                "create_dry_run_artifact": dry_run,
+                "create_approval_artifact": approval,
+            }
+        },
+        runs_dir=tmp_path / "runs",
+    )
+
+    assert Path(result["artifact_path"]).exists()
+    assert result["summary"]["project_count"] == 1
+
+
+def test_create_chain_replay_accepts_consistent_phase1_artifact_chain(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    request = run_create_request(_create_request(), db_path=db_path, runs_dir=tmp_path / "runs")
+    plan = run_create_strategy_plan_request(
+        request,
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        policy={},
+        create_request_artifact_path=request["artifact_path"],
+    )
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+    dry_run = build_create_dry_run(create_strategy_plan_artifact=plan, create_preflight_artifact=preflight, policy={})
+    approval = build_create_approval(create_dry_run_artifact=dry_run, policy={"auto_approve_phase1": True})
+    snapshot = build_create_plan_snapshot(
+        create_strategy_plan_artifact=plan,
+        create_preflight_artifact=preflight,
+        create_dry_run_artifact=dry_run,
+        create_approval_artifact=approval,
+    )
+    execute = build_create_execute(create_approval_artifact=approval, policy={})
+
+    result = build_create_chain_replay(
+        create_request_artifact=request,
+        create_strategy_plan_artifact=plan,
+        create_preflight_artifact=preflight,
+        create_dry_run_artifact=dry_run,
+        create_approval_artifact=approval,
+        create_plan_snapshot_artifact=snapshot,
+        create_execute_artifact=execute,
+    )
+
+    assert result["ok"] is True
+    assert result["workflow"] == "create_chain_replay"
+    assert result["phase"] == "phase1"
+    assert result["execution_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert result["status"] == "passed"
+    assert result["summary"] == {
+        "plan_id": "create_plan_create_req_20260508_yzt_wx_7r",
+        "request_id": "create_req_20260508_yzt_wx_7r",
+        "target_date": "2026-05-08",
+        "checked_workflow_count": 7,
+        "violation_count": 0,
+    }
+    assert result["lineage"]["create_request"]["workflow"] == "create_request"
+    assert result["lineage"]["create_execute"]["workflow"] == "create_execute"
+    assert result["digest_consistency"]["candidate_task_digest"]["status"] == "passed"
+    assert result["digest_consistency"]["provider_field_map_digest"]["status"] == "passed"
+    assert result["digest_consistency"]["provider_payload_draft_digest"]["status"] == "passed"
+    assert result["phase1_safety_contract"] == {
+        "status": "passed",
+        "execution_enabled_false": True,
+        "external_api_calls_zero": True,
+        "actions_empty": True,
+    }
+    assert result["violations"] == []
+    assert result["actions"] == []
+
+
+def test_create_chain_replay_blocks_mismatched_provider_payload_draft_digest(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    request = run_create_request(_create_request(), db_path=db_path, runs_dir=tmp_path / "runs")
+    plan = run_create_strategy_plan_request(
+        request,
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        policy={},
+        create_request_artifact_path=request["artifact_path"],
+    )
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+    dry_run = build_create_dry_run(create_strategy_plan_artifact=plan, create_preflight_artifact=preflight, policy={})
+    approval = build_create_approval(create_dry_run_artifact=dry_run, policy={"auto_approve_phase1": True})
+    snapshot = build_create_plan_snapshot(
+        create_strategy_plan_artifact=plan,
+        create_preflight_artifact=preflight,
+        create_dry_run_artifact=dry_run,
+        create_approval_artifact=approval,
+    )
+    execute = build_create_execute(create_approval_artifact=approval, policy={})
+    execute["provider_payload_draft_digest"] = {**execute["provider_payload_draft_digest"], "value": "0" * 64}
+
+    result = build_create_chain_replay(
+        create_request_artifact=request,
+        create_strategy_plan_artifact=plan,
+        create_preflight_artifact=preflight,
+        create_dry_run_artifact=dry_run,
+        create_approval_artifact=approval,
+        create_plan_snapshot_artifact=snapshot,
+        create_execute_artifact=execute,
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "blocked"
+    assert result["digest_consistency"]["provider_payload_draft_digest"]["status"] == "failed"
+    assert "provider payload draft digest must match across dry-run, approval, snapshot, and execute" in result["violations"]
+    assert result["actions"] == []
+
+
+def test_create_chain_replay_blocks_wrong_artifact_workflow_identity(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    request = run_create_request(_create_request(), db_path=db_path, runs_dir=tmp_path / "runs")
+    plan = run_create_strategy_plan_request(
+        request,
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        policy={},
+        create_request_artifact_path=request["artifact_path"],
+    )
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+    dry_run = build_create_dry_run(create_strategy_plan_artifact=plan, create_preflight_artifact=preflight, policy={})
+    approval = build_create_approval(create_dry_run_artifact=dry_run, policy={"auto_approve_phase1": True})
+    snapshot = build_create_plan_snapshot(
+        create_strategy_plan_artifact=plan,
+        create_preflight_artifact=preflight,
+        create_dry_run_artifact=dry_run,
+        create_approval_artifact=approval,
+    )
+    execute = build_create_execute(create_approval_artifact=approval, policy={})
+    execute["workflow"] = "create_plan_snapshot"
+
+    result = build_create_chain_replay(
+        create_request_artifact=request,
+        create_strategy_plan_artifact=plan,
+        create_preflight_artifact=preflight,
+        create_dry_run_artifact=dry_run,
+        create_approval_artifact=approval,
+        create_plan_snapshot_artifact=snapshot,
+        create_execute_artifact=execute,
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "blocked"
+    assert result["artifact_identity_contract"]["status"] == "failed"
+    assert "create_execute artifact workflow must be create_execute" in result["violations"]
+    assert result["actions"] == []
+
+
+def test_run_create_chain_replay_request_writes_artifact(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    request = run_create_request(_create_request(), db_path=db_path, runs_dir=tmp_path / "runs")
+    plan = run_create_strategy_plan_request(
+        request,
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        policy={},
+        create_request_artifact_path=request["artifact_path"],
+    )
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+    dry_run = build_create_dry_run(create_strategy_plan_artifact=plan, create_preflight_artifact=preflight, policy={})
+    approval = build_create_approval(create_dry_run_artifact=dry_run, policy={"auto_approve_phase1": True})
+    snapshot = build_create_plan_snapshot(
+        create_strategy_plan_artifact=plan,
+        create_preflight_artifact=preflight,
+        create_dry_run_artifact=dry_run,
+        create_approval_artifact=approval,
+    )
+    execute = build_create_execute(create_approval_artifact=approval, policy={})
+
+    result = run_create_chain_replay_request(
+        {
+            "create_chain_replay": {
+                "create_request_artifact": request,
+                "create_strategy_plan_artifact": plan,
+                "create_preflight_artifact": preflight,
+                "create_dry_run_artifact": dry_run,
+                "create_approval_artifact": approval,
+                "create_plan_snapshot_artifact": snapshot,
+                "create_execute_artifact": execute,
+            }
+        },
+        runs_dir=tmp_path / "runs",
+    )
+
+    assert result["workflow"] == "create_chain_replay"
+    assert Path(result["artifact_path"]).exists()
+    assert result["summary"]["checked_workflow_count"] == 7
+
+
+def test_create_chain_manifest_is_ready_when_replay_passed(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    request = run_create_request(_create_request(), db_path=db_path, runs_dir=tmp_path / "runs")
+    plan = run_create_strategy_plan_request(
+        request,
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        policy={},
+        create_request_artifact_path=request["artifact_path"],
+    )
+    preflight = run_create_preflight_request(
+        {"create_preflight": {"create_strategy_plan_artifact": plan, "policy": {}}},
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+    )
+    dry_run = run_create_dry_run_request(
+        {"create_dry_run": {"create_strategy_plan_artifact": plan, "create_preflight_artifact": preflight, "policy": {}}},
+        runs_dir=tmp_path / "runs",
+        db_path=db_path,
+    )
+    approval = run_create_approval_request(
+        {"create_approval": {"create_dry_run_artifact": dry_run, "policy": {"auto_approve_phase1": True}}},
+        runs_dir=tmp_path / "runs",
+    )
+    snapshot = run_create_plan_snapshot_request(
+        {
+            "create_plan_snapshot": {
+                "create_strategy_plan_artifact": plan,
+                "create_preflight_artifact": preflight,
+                "create_dry_run_artifact": dry_run,
+                "create_approval_artifact": approval,
+            }
+        },
+        runs_dir=tmp_path / "runs",
+    )
+    execute = run_create_execute_request(
+        {"create_execute": {"create_approval_artifact": approval, "policy": {}}},
+        runs_dir=tmp_path / "runs",
+    )
+    replay = run_create_chain_replay_request(
+        {
+            "create_chain_replay": {
+                "create_request_artifact": request,
+                "create_strategy_plan_artifact": plan,
+                "create_preflight_artifact": preflight,
+                "create_dry_run_artifact": dry_run,
+                "create_approval_artifact": approval,
+                "create_plan_snapshot_artifact": snapshot,
+                "create_execute_artifact": execute,
+            }
+        },
+        runs_dir=tmp_path / "runs",
+    )
+
+    result = build_create_chain_manifest(
+        create_request_artifact=request,
+        create_strategy_plan_artifact=plan,
+        create_preflight_artifact=preflight,
+        create_dry_run_artifact=dry_run,
+        create_approval_artifact=approval,
+        create_plan_snapshot_artifact=snapshot,
+        create_execute_artifact=execute,
+        create_chain_replay_artifact=replay,
+    )
+
+    assert result["ok"] is True
+    assert result["workflow"] == "create_chain_manifest"
+    assert result["phase"] == "phase1"
+    assert result["execution_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert result["status"] == "ready"
+    assert result["summary"] == {
+        "plan_id": "create_plan_create_req_20260508_yzt_wx_7r",
+        "request_id": "create_req_20260508_yzt_wx_7r",
+        "target_date": "2026-05-08",
+        "replay_status": "passed",
+        "artifact_count": 8,
+    }
+    assert result["artifact_paths"]["create_request"] == request["artifact_path"]
+    assert result["artifact_paths"]["create_chain_replay"] == replay["artifact_path"]
+    assert result["candidate_task_digest"] == approval["candidate_task_digest"]
+    assert result["provider_field_map_digest"] == dry_run["provider_field_map_digest"]
+    assert result["provider_payload_draft_digest"] == dry_run["provider_payload_draft_digest"]
+    assert result["phase1_safety_contract"] == replay["phase1_safety_contract"]
+    assert result["violations"] == []
+    assert result["actions"] == []
+
+
+def test_create_chain_manifest_is_not_ready_when_replay_blocked(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    request = run_create_request(_create_request(), db_path=db_path, runs_dir=tmp_path / "runs")
+    plan = run_create_strategy_plan_request(
+        request,
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        policy={},
+        create_request_artifact_path=request["artifact_path"],
+    )
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+    dry_run = build_create_dry_run(create_strategy_plan_artifact=plan, create_preflight_artifact=preflight, policy={})
+    approval = build_create_approval(create_dry_run_artifact=dry_run, policy={"auto_approve_phase1": True})
+    snapshot = build_create_plan_snapshot(
+        create_strategy_plan_artifact=plan,
+        create_preflight_artifact=preflight,
+        create_dry_run_artifact=dry_run,
+        create_approval_artifact=approval,
+    )
+    execute = build_create_execute(create_approval_artifact=approval, policy={})
+    execute["provider_payload_draft_digest"] = {**execute["provider_payload_draft_digest"], "value": "0" * 64}
+    replay = build_create_chain_replay(
+        create_request_artifact=request,
+        create_strategy_plan_artifact=plan,
+        create_preflight_artifact=preflight,
+        create_dry_run_artifact=dry_run,
+        create_approval_artifact=approval,
+        create_plan_snapshot_artifact=snapshot,
+        create_execute_artifact=execute,
+    )
+
+    result = build_create_chain_manifest(
+        create_request_artifact=request,
+        create_strategy_plan_artifact=plan,
+        create_preflight_artifact=preflight,
+        create_dry_run_artifact=dry_run,
+        create_approval_artifact=approval,
+        create_plan_snapshot_artifact=snapshot,
+        create_execute_artifact=execute,
+        create_chain_replay_artifact=replay,
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "not_ready"
+    assert result["summary"]["replay_status"] == "blocked"
+    assert "create chain replay must pass before manifest is ready" in result["violations"]
+    assert result["actions"] == []
+
+
+def test_run_create_chain_manifest_request_writes_artifact(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    request = run_create_request(_create_request(), db_path=db_path, runs_dir=tmp_path / "runs")
+    plan = run_create_strategy_plan_request(
+        request,
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        policy={},
+        create_request_artifact_path=request["artifact_path"],
+    )
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+    dry_run = build_create_dry_run(create_strategy_plan_artifact=plan, create_preflight_artifact=preflight, policy={})
+    approval = build_create_approval(create_dry_run_artifact=dry_run, policy={"auto_approve_phase1": True})
+    snapshot = build_create_plan_snapshot(
+        create_strategy_plan_artifact=plan,
+        create_preflight_artifact=preflight,
+        create_dry_run_artifact=dry_run,
+        create_approval_artifact=approval,
+    )
+    execute = build_create_execute(create_approval_artifact=approval, policy={})
+    replay = build_create_chain_replay(
+        create_request_artifact=request,
+        create_strategy_plan_artifact=plan,
+        create_preflight_artifact=preflight,
+        create_dry_run_artifact=dry_run,
+        create_approval_artifact=approval,
+        create_plan_snapshot_artifact=snapshot,
+        create_execute_artifact=execute,
+    )
+
+    result = run_create_chain_manifest_request(
+        {
+            "create_chain_manifest": {
+                "create_request_artifact": request,
+                "create_strategy_plan_artifact": plan,
+                "create_preflight_artifact": preflight,
+                "create_dry_run_artifact": dry_run,
+                "create_approval_artifact": approval,
+                "create_plan_snapshot_artifact": snapshot,
+                "create_execute_artifact": execute,
+                "create_chain_replay_artifact": replay,
+            }
+        },
+        runs_dir=tmp_path / "runs",
+    )
+
+    assert result["workflow"] == "create_chain_manifest"
+    assert Path(result["artifact_path"]).exists()
+    assert result["summary"]["artifact_count"] == 8
+
+
+def test_create_strategy_plan_preflight_and_dry_run_cli_use_latest_artifacts(tmp_path: Path, capsys):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    runtime_path = _runtime_config(tmp_path, db_path)
+    request_result = run_create_request(_create_request(), db_path=db_path, runs_dir=tmp_path / "runs")
+
+    strategy_module = _load_script("run_create_strategy_plan")
+    assert strategy_module.run_from_args(["--config", str(runtime_path)]) == 0
+    strategy_output = json.loads(capsys.readouterr().out)
+    strategy_artifact = Path(strategy_output["artifact_path"])
+    assert strategy_artifact.exists()
+
+    preflight_module = _load_script("run_create_preflight")
+    assert preflight_module.run_from_args(["--config", str(runtime_path)]) == 0
+    preflight_output = json.loads(capsys.readouterr().out)
+    assert preflight_output["status"] == "passed"
+
+    field_map_module = _load_script("run_create_provider_field_map_check")
+    assert field_map_module.run_from_args(["--config", str(runtime_path)]) == 0
+    field_map_output = json.loads(capsys.readouterr().out)
+    assert field_map_output["status"] == "unverified"
+
+    dry_run_module = _load_script("run_create_dry_run")
+    assert dry_run_module.run_from_args(["--config", str(runtime_path)]) == 0
+    dry_run_output = json.loads(capsys.readouterr().out)
+    dry_run_artifact = json.loads(Path(dry_run_output["artifact_path"]).read_text(encoding="utf-8"))
+    assert dry_run_artifact["status"] == "simulated"
+    assert dry_run_artifact["candidate_tasks"][0]["executable"] is False
+    assert dry_run_artifact["lineage"]["create_provider_field_map_check"]["artifact_path"] == field_map_output["artifact_path"]
+    assert dry_run_artifact["idempotency_ledger"]["status"] == "recorded"
+    assert dry_run_artifact["provider_field_map"]["source"] == "phase1_example_config_no_legacy_reference"
+    assert dry_run_artifact["provider_readiness_contract"]["ready_for_live_execute"] is False
+    assert request_result["summary"]["request_id"] == "create_req_20260508_yzt_wx_7r"
+
+    approval_module = _load_script("run_create_approval")
+    assert approval_module.run_from_args(["--config", str(runtime_path)]) == 0
+    approval_output = json.loads(capsys.readouterr().out)
+    assert approval_output["workflow"] == "create_approval"
+    assert approval_output["execute_allowed"] is False
+
+    snapshot_module = _load_script("run_create_plan_snapshot")
+    assert snapshot_module.run_from_args(["--config", str(runtime_path)]) == 0
+    snapshot_output = json.loads(capsys.readouterr().out)
+    snapshot_artifact = json.loads(Path(snapshot_output["artifact_path"]).read_text(encoding="utf-8"))
+    assert snapshot_output["workflow"] == "create_plan_snapshot"
+    assert snapshot_artifact["summary"]["project_count"] == 1
+    assert snapshot_artifact["candidate_task_digest"]["candidate_task_count"] == 1
+
+    execute_module = _load_script("run_create_execute")
+    assert execute_module.run_from_args(["--config", str(runtime_path)]) == 0
+    execute_output = json.loads(capsys.readouterr().out)
+    execute_artifact = json.loads(Path(execute_output["artifact_path"]).read_text(encoding="utf-8"))
+    assert execute_output["workflow"] == "create_execute"
+    assert execute_output["status"] == "blocked"
+    assert execute_artifact["executed_task_count"] == 0
+
+
+def test_create_chain_fixed_cli_scripts_run_through_replay(tmp_path: Path, capsys):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    runtime_path = _runtime_config(tmp_path, db_path)
+    request_path = tmp_path / "create-request.json"
+    request_path.write_text(json.dumps(_create_request(), ensure_ascii=False), encoding="utf-8")
+
+    request_module = _load_script("run_create_request")
+    assert request_module.run_from_args(["--config", str(runtime_path), "--request", str(request_path)]) == 0
+    request_output = json.loads(capsys.readouterr().out)
+    assert Path(request_output["artifact_path"]).exists()
+
+    strategy_module = _load_script("run_create_strategy_plan")
+    assert strategy_module.run_from_args(["--config", str(runtime_path)]) == 0
+    strategy_output = json.loads(capsys.readouterr().out)
+    assert Path(strategy_output["artifact_path"]).exists()
+
+    preflight_module = _load_script("run_create_preflight")
+    assert preflight_module.run_from_args(["--config", str(runtime_path)]) == 0
+    preflight_output = json.loads(capsys.readouterr().out)
+    assert preflight_output["status"] == "passed"
+
+    field_map_module = _load_script("run_create_provider_field_map_check")
+    assert field_map_module.run_from_args(["--config", str(runtime_path)]) == 0
+    field_map_output = json.loads(capsys.readouterr().out)
+    assert field_map_output["status"] == "unverified"
+
+    dry_run_module = _load_script("run_create_dry_run")
+    assert dry_run_module.run_from_args(["--config", str(runtime_path)]) == 0
+    dry_run_output = json.loads(capsys.readouterr().out)
+    assert dry_run_output["status"] == "simulated"
+
+    approval_module = _load_script("run_create_approval")
+    assert approval_module.run_from_args(["--config", str(runtime_path)]) == 0
+    approval_output = json.loads(capsys.readouterr().out)
+    assert approval_output["execute_allowed"] is False
+
+    snapshot_module = _load_script("run_create_plan_snapshot")
+    assert snapshot_module.run_from_args(["--config", str(runtime_path)]) == 0
+    snapshot_output = json.loads(capsys.readouterr().out)
+    assert snapshot_output["workflow"] == "create_plan_snapshot"
+
+    execute_module = _load_script("run_create_execute")
+    assert execute_module.run_from_args(["--config", str(runtime_path)]) == 0
+    execute_output = json.loads(capsys.readouterr().out)
+    assert execute_output["status"] == "blocked"
+
+    replay_module = _load_script("run_create_chain_replay")
+    assert replay_module.run_from_args(["--config", str(runtime_path)]) == 0
+    replay_output = json.loads(capsys.readouterr().out)
+    replay_artifact = json.loads(Path(replay_output["artifact_path"]).read_text(encoding="utf-8"))
+    assert replay_output["workflow"] == "create_chain_replay"
+    assert replay_output["status"] == "passed"
+    assert replay_artifact["phase1_safety_contract"] == {
+        "status": "passed",
+        "execution_enabled_false": True,
+        "external_api_calls_zero": True,
+        "actions_empty": True,
+    }
+    assert replay_artifact["digest_consistency"]["candidate_task_digest"]["status"] == "passed"
+    assert replay_artifact["digest_consistency"]["provider_field_map_digest"]["status"] == "passed"
+    assert replay_artifact["digest_consistency"]["provider_payload_draft_digest"]["status"] == "passed"
+    assert replay_artifact["actions"] == []
+
+    manifest_module = _load_script("run_create_chain_manifest")
+    assert manifest_module.run_from_args(["--config", str(runtime_path)]) == 0
+    manifest_output = json.loads(capsys.readouterr().out)
+    manifest_artifact = json.loads(Path(manifest_output["artifact_path"]).read_text(encoding="utf-8"))
+    assert manifest_output["workflow"] == "create_chain_manifest"
+    assert manifest_output["status"] == "ready"
+    assert manifest_artifact["artifact_paths"]["create_chain_replay"] == replay_output["artifact_path"]
+    assert manifest_artifact["provider_payload_draft_digest"] == replay_artifact["digest_consistency"]["provider_payload_draft_digest"]["sources"]["dry_run"]
+    assert manifest_artifact["actions"] == []

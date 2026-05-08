@@ -1,0 +1,36 @@
+{
+  "create_request": {
+    "request_id": "create_req_20260508_yzt_wx_7r",
+    "target_date": "2026-05-08",
+    "product": "勇者突进",
+    "platform": "WECHAT_GAME",
+    "project_type": "WX_PAY_7R_GENERAL",
+    "source_advertiser_id": "source-advertiser-id",
+    "organization_id": "",
+    "pool_key": "yzt_wx_7r_all_history",
+    "target_accounts": [
+      {
+        "advertiser_id": "target-advertiser-id",
+        "project_count": 1,
+        "units_per_project": 2,
+        "daily_budget": 300
+      }
+    ],
+    "material_requirements": {
+      "material_type": "video",
+      "materials_per_unit": 2,
+      "dedupe_scope": "request"
+    },
+    "field_defaults": {
+      "landing_type": "MICRO_GAME",
+      "pricing": "PRICING_CPA",
+      "inventory_type": "UNION"
+    },
+    "project_name_template": "{product}-{project_type}-{advertiser_id}-{index}",
+    "constraints": {
+      "phase": "phase1",
+      "execution_enabled": false,
+      "allow_real_create": false
+    }
+  }
+}

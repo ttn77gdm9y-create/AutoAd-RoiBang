@@ -198,6 +198,70 @@ def bootstrap_database(database_path: str | Path) -> None:
               ON product_source_material_candidates (pool_key, rank)
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS create_requests (
+              request_id TEXT PRIMARY KEY,
+              phase TEXT NOT NULL,
+              execution_enabled INTEGER NOT NULL,
+              request_json TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS create_strategy_plans (
+              plan_id TEXT PRIMARY KEY,
+              request_id TEXT NOT NULL,
+              phase TEXT NOT NULL,
+              execution_enabled INTEGER NOT NULL,
+              request_json TEXT NOT NULL,
+              plan_json TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_create_strategy_plans_request
+              ON create_strategy_plans (request_id)
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS create_idempotency_keys (
+              idempotency_key TEXT PRIMARY KEY,
+              scope TEXT NOT NULL,
+              plan_id TEXT NOT NULL,
+              request_id TEXT NOT NULL,
+              target_date TEXT NOT NULL,
+              advertiser_id TEXT NOT NULL DEFAULT '',
+              project_key TEXT NOT NULL DEFAULT '',
+              unit_key TEXT NOT NULL DEFAULT '',
+              material_id TEXT NOT NULL DEFAULT '',
+              phase TEXT NOT NULL,
+              status TEXT NOT NULL,
+              source_workflow TEXT NOT NULL,
+              execution_enabled INTEGER NOT NULL,
+              payload_json TEXT NOT NULL DEFAULT '{}',
+              first_seen_at TEXT NOT NULL,
+              last_seen_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_create_idempotency_keys_plan
+              ON create_idempotency_keys (plan_id, scope)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_create_idempotency_keys_status
+              ON create_idempotency_keys (status, target_date)
+            """
+        )
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
