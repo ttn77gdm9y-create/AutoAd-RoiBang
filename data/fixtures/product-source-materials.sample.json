@@ -1,0 +1,51 @@
+{
+  "meta": {
+    "product": "勇者突进",
+    "source_advertiser_id": "1856647522964490",
+    "organization_id": "1851650746645060",
+    "source": "fixture"
+  },
+  "videos": [
+    {
+      "material_id": "m001",
+      "video_id": "v001",
+      "name": "勇者开局强冲",
+      "material_type": "video",
+      "review_status": "APPROVED",
+      "signature": "sig-m001",
+      "duration": 12.5,
+      "video_size": "1024",
+      "create_time": "2026-05-01 10:00:00",
+      "tag_ids": ["1004", "1"],
+      "cost_lookback": 1200,
+      "score": 91
+    },
+    {
+      "material_id": "m002",
+      "video_id": "v002",
+      "name": "宝箱奖励展示",
+      "material_type": "video",
+      "review_status": "APPROVED",
+      "cost_lookback": 800,
+      "score": 78
+    },
+    {
+      "material_id": "m003",
+      "video_id": "v003",
+      "name": "战力飙升合集",
+      "material_type": "video",
+      "review_status": "APPROVED",
+      "cost_lookback": 600,
+      "score": 75
+    },
+    {
+      "material_id": "m004",
+      "video_id": "v004",
+      "name": "首充福利演示",
+      "material_type": "video",
+      "review_status": "APPROVED",
+      "cost_lookback": 300,
+      "score": 60
+    }
+  ]
+}

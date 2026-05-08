@@ -1,0 +1,6 @@
+{
+  "data_sync": {
+    "kind": "local_report_snapshot",
+    "snapshot_file": "data/fixtures/report-snapshot.sample.json"
+  }
+}

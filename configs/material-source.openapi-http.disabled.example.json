@@ -1,0 +1,34 @@
+{
+  "material_source": {
+    "kind": "openapi_source_materials",
+    "enabled": false,
+    "product": "勇者突进",
+    "source_accounts": [
+      {
+        "source_advertiser_id": "1856647522964490",
+        "organization_id": "1851650746645060"
+      }
+    ],
+    "target_advertiser_id": "1850000000000001",
+    "required_material_count": 4,
+    "material_type": "video",
+    "available_statuses": ["APPROVED"],
+    "page_size": 100,
+    "openapi_http": {
+      "enabled": false,
+      "token_store": {
+        "enabled": true,
+        "store_file": "data/secrets/oceanengine-tokens.local.json",
+        "user_id": "default",
+        "app_id": "",
+        "app_secret": "",
+        "auto_refresh": true,
+        "refresh_lead_seconds": 900
+      },
+      "timeout_seconds": 20,
+      "max_retries": 1,
+      "retry_sleep_seconds": 1,
+      "min_interval_seconds": 0.2
+    }
+  }
+}

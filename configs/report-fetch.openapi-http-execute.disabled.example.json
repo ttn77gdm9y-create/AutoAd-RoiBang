@@ -1,0 +1,40 @@
+{
+  "report_fetch": {
+    "mode": "backfill",
+    "source": "openapi_http_execute",
+    "account_pool_csv": "data/sources/accounts/roibangv2yztj.csv",
+    "product": "勇者突进",
+    "platforms": ["WECHAT_GAME"],
+    "date_range": {
+      "start": "2026-02-10",
+      "end": "2026-02-10"
+    },
+    "openapi": {
+      "endpoints": ["report_custom", "operation_log_search"],
+      "report_presets": ["promotion_daily"],
+      "page_size": 100
+    },
+    "openapi_http": {
+      "enabled": false,
+      "token_env": "OCEANENGINE_ACCESS_TOKEN",
+      "token_file": "",
+      "timeout_seconds": 20,
+      "max_retries": 2,
+      "retry_sleep_seconds": 1,
+      "min_interval_seconds": 0.2,
+      "retry_statuses": [429, 500, 502, 503, 504],
+      "response_audit_dir": "data/runs/openapi_http"
+    },
+    "output": {
+      "snapshot_dir": "data/snapshots/report/openapi-http"
+    },
+    "limits": {
+      "max_accounts": 1,
+      "max_dates": 1
+    },
+    "execution": {
+      "status": "execute",
+      "external_api_enabled": false
+    }
+  }
+}

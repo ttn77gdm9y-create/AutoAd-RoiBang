@@ -1,0 +1,1 @@
+"""Report snapshot normalization helpers."""

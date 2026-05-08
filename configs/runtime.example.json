@@ -1,0 +1,9 @@
+{
+  "environment": "local",
+  "phase": "phase1",
+  "database_path": "data/roibang_v2.sqlite3",
+  "runs_dir": "data/runs",
+  "fixtures_dir": "data/fixtures",
+  "external_api_enabled": false,
+  "execution_enabled": false
+}

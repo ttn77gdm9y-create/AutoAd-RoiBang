@@ -1,0 +1,54 @@
+{
+  "material_profile_sync": {
+    "kind": "workbench_material_center",
+    "enabled": false,
+    "session_file": "data/secrets/oceanengine-workbench-session.local.json",
+    "source_accounts": [
+      {
+        "advertiser_id": "1856647523922953"
+      },
+      {
+        "advertiser_id": "1856647428023303"
+      },
+      {
+        "advertiser_id": "1858371222574218"
+      }
+    ],
+    "statistic_start_time": "2026-02-10 00:00:00",
+    "statistic_end_time": "2026-05-08 23:59:59",
+    "limit": 50,
+    "limits": {
+      "max_accounts": 3,
+      "max_pages": 40
+    },
+    "fields": [
+      "lego_material_delivery_status",
+      "audit_suggestion_level",
+      "material_property",
+      "ff_see_status",
+      "delivery_promotion_cnt",
+      "stat_cost",
+      "show_cnt",
+      "click_cnt",
+      "ctr",
+      "cpc_platform",
+      "cpm_platform",
+      "convert_cnt",
+      "conversion_cost",
+      "conversion_rate",
+      "deep_convert_cnt",
+      "deep_convert_cost",
+      "deep_convert_rate",
+      "game_non_standard_v2"
+    ],
+    "filter": [],
+    "order": 1,
+    "order_field": "create_time",
+    "need_summation": false,
+    "scene": "333430303336343739",
+    "timeout_seconds": 30,
+    "max_retries": 2,
+    "retry_sleep_seconds": 2,
+    "response_audit_dir": "data/runs/workbench_material_center"
+  }
+}

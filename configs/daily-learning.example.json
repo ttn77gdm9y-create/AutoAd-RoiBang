@@ -1,0 +1,9 @@
+{
+  "daily_learning": {
+    "target_date": "2026-05-05",
+    "min_cost_for_signal": 50,
+    "min_conversions_for_signal": 3,
+    "low_roi_threshold": 0.4,
+    "top_material_limit": 10
+  }
+}

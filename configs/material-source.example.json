@@ -1,0 +1,13 @@
+{
+  "material_source": {
+    "kind": "local_product_source",
+    "source_file": "data/fixtures/product-source-materials.sample.json",
+    "product": "勇者突进",
+    "source_advertiser_id": "1856647522964490",
+    "organization_id": "1851650746645060",
+    "target_advertiser_id": "1850000000000001",
+    "required_material_count": 4,
+    "material_type": "video",
+    "available_statuses": ["APPROVED"]
+  }
+}

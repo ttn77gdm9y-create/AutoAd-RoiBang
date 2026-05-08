@@ -1,0 +1,27 @@
+# RoiBang-v2 Phase 1 scheduler example.
+# Review before installing. This file is not installed by the renderer.
+# Create logs/scheduler before enabling these entries.
+
+# roibang-daily-report-pipeline - RoiBang-v2 每日报表拉取同步学习 [Asia/Shanghai]
+20 8 * * * cd '/Users/hongen/Documents/New project 2' && mkdir -p logs/scheduler && PYTHONPATH=src scripts/run_scheduler_job.py --registry configs/scheduler/roibang-v2.jobs.example.json --job-id roibang-daily-report-pipeline --repo-root '/Users/hongen/Documents/New project 2' >> logs/scheduler/roibang-daily-report-pipeline.out.log 2>> logs/scheduler/roibang-daily-report-pipeline.err.log
+
+# roibang-material-sync - RoiBang-v2 目标账户素材同步 [Asia/Shanghai]
+10 9 * * * cd '/Users/hongen/Documents/New project 2' && mkdir -p logs/scheduler && PYTHONPATH=src scripts/run_scheduler_job.py --registry configs/scheduler/roibang-v2.jobs.example.json --job-id roibang-material-sync --repo-root '/Users/hongen/Documents/New project 2' >> logs/scheduler/roibang-material-sync.out.log 2>> logs/scheduler/roibang-material-sync.err.log
+
+# roibang-material-source-plan - RoiBang-v2 源素材账户补材计划 [Asia/Shanghai]
+20 9 * * * cd '/Users/hongen/Documents/New project 2' && mkdir -p logs/scheduler && PYTHONPATH=src scripts/run_scheduler_job.py --registry configs/scheduler/roibang-v2.jobs.example.json --job-id roibang-material-source-plan --repo-root '/Users/hongen/Documents/New project 2' >> logs/scheduler/roibang-material-source-plan.out.log 2>> logs/scheduler/roibang-material-source-plan.err.log
+
+# roibang-strategy-plan - RoiBang-v2 策略计划生成 [Asia/Shanghai]
+40 9 * * * cd '/Users/hongen/Documents/New project 2' && mkdir -p logs/scheduler && PYTHONPATH=src scripts/run_scheduler_job.py --registry configs/scheduler/roibang-v2.jobs.example.json --job-id roibang-strategy-plan --repo-root '/Users/hongen/Documents/New project 2' >> logs/scheduler/roibang-strategy-plan.out.log 2>> logs/scheduler/roibang-strategy-plan.err.log
+
+# roibang-strategy-preflight - RoiBang-v2 策略计划预检 [Asia/Shanghai]
+45 9 * * * cd '/Users/hongen/Documents/New project 2' && mkdir -p logs/scheduler && PYTHONPATH=src scripts/run_scheduler_job.py --registry configs/scheduler/roibang-v2.jobs.example.json --job-id roibang-strategy-preflight --repo-root '/Users/hongen/Documents/New project 2' >> logs/scheduler/roibang-strategy-preflight.out.log 2>> logs/scheduler/roibang-strategy-preflight.err.log
+
+# roibang-strategy-dry-run - RoiBang-v2 策略模拟执行 [Asia/Shanghai]
+50 9 * * * cd '/Users/hongen/Documents/New project 2' && mkdir -p logs/scheduler && PYTHONPATH=src scripts/run_scheduler_job.py --registry configs/scheduler/roibang-v2.jobs.example.json --job-id roibang-strategy-dry-run --repo-root '/Users/hongen/Documents/New project 2' >> logs/scheduler/roibang-strategy-dry-run.out.log 2>> logs/scheduler/roibang-strategy-dry-run.err.log
+
+# roibang-strategy-approval - RoiBang-v2 策略自动审批记录 [Asia/Shanghai]
+55 9 * * * cd '/Users/hongen/Documents/New project 2' && mkdir -p logs/scheduler && PYTHONPATH=src scripts/run_scheduler_job.py --registry configs/scheduler/roibang-v2.jobs.example.json --job-id roibang-strategy-approval --repo-root '/Users/hongen/Documents/New project 2' >> logs/scheduler/roibang-strategy-approval.out.log 2>> logs/scheduler/roibang-strategy-approval.err.log
+
+# roibang-strategy-execute - RoiBang-v2 策略执行硬阻断 [Asia/Shanghai]
+0 10 * * * cd '/Users/hongen/Documents/New project 2' && mkdir -p logs/scheduler && PYTHONPATH=src scripts/run_scheduler_job.py --registry configs/scheduler/roibang-v2.jobs.example.json --job-id roibang-strategy-execute --repo-root '/Users/hongen/Documents/New project 2' >> logs/scheduler/roibang-strategy-execute.out.log 2>> logs/scheduler/roibang-strategy-execute.err.log

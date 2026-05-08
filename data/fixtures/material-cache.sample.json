@@ -1,0 +1,26 @@
+{
+  "meta": {
+    "advertiser_id": "1850000000000001",
+    "source": "fixture"
+  },
+  "videos": [
+    {
+      "material_id": "m001",
+      "video_id": "v001",
+      "name": "勇者开局强冲",
+      "material_type": "video",
+      "review_status": "APPROVED",
+      "cost_lookback": 1200,
+      "score": 91
+    },
+    {
+      "material_id": "m002",
+      "video_id": "v002",
+      "name": "宝箱奖励展示",
+      "material_type": "video",
+      "review_status": "APPROVED",
+      "cost_lookback": 800,
+      "score": 78
+    }
+  ]
+}

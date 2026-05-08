@@ -1,0 +1,12 @@
+{
+  "material_sync": {
+    "kind": "local_cache",
+    "cache_file": "data/fixtures/material-cache.sample.json",
+    "advertiser_id": "1850000000000001",
+    "policy": {
+      "material_type": "video",
+      "available_statuses": ["APPROVED"],
+      "target_available_count": 5
+    }
+  }
+}

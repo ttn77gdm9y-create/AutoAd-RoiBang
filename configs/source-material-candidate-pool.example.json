@@ -1,0 +1,17 @@
+{
+  "source_material_candidate_pool": {
+    "product": "勇者突进",
+    "source_advertiser_id": "1856647522964490",
+    "organization_id": "1851650746645060",
+    "pool_key": "yzt-source-all-history-video",
+    "candidate_policy": {
+      "window_key": "all_history",
+      "material_type": "video",
+      "limit": 300,
+      "min_stat_cost": 0,
+      "min_account_count": 1,
+      "min_convert_cnt": 0,
+      "exclude_review_statuses": []
+    }
+  }
+}

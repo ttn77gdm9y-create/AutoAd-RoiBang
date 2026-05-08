@@ -1,0 +1,20 @@
+{
+  "backfill_runner": {
+    "plan_file": "data/runs/report_backfill_batch_plan/20260506T150241Z.json",
+    "batch_ids": ["batch_0001"],
+    "execution": {
+      "status": "planned_only",
+      "external_api_enabled": false
+    },
+    "openapi_http": {
+      "enabled": false,
+      "token_env": "OCEANENGINE_ACCESS_TOKEN",
+      "response_audit_dir": "data/runs/openapi_http/backfill",
+      "timeout_seconds": 20,
+      "max_retries": 2,
+      "retry_sleep_seconds": 1,
+      "min_interval_seconds": 0.2
+    },
+    "stop_on_error": true
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "material_duplicate_analysis": {
+    "rules": ["signature"],
+    "min_group_size": 2,
+    "duration_tolerance_seconds": 0.25
+  }
+}

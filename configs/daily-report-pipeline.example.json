@@ -1,0 +1,46 @@
+{
+  "daily_report_pipeline": {
+    "target_date": {
+      "mode": "yesterday"
+    },
+    "report_fetch": {
+      "source": "mock_openapi",
+      "account_pool_csv": "data/sources/accounts/roibangv2yztj.csv",
+      "product": "勇者突进",
+      "platforms": ["WECHAT_GAME"],
+      "output": {
+        "snapshot_dir": "data/snapshots/report/daily"
+      },
+      "limits": {
+        "max_accounts": 2
+      },
+      "execution": {
+        "status": "planned_only",
+        "external_api_enabled": false
+      }
+    },
+    "daily_learning": {
+      "min_cost_for_signal": 50,
+      "min_conversions_for_signal": 3,
+      "low_roi_threshold": 0.4,
+      "top_material_limit": 10,
+      "operation_log_limit": 20
+    },
+    "material_source": {
+      "kind": "openapi_source_materials",
+      "enabled": false,
+      "product": "勇者突进",
+      "source_accounts": [
+        {
+          "source_advertiser_id": "1856647522964490",
+          "organization_id": "1851650746645060"
+        }
+      ],
+      "target_advertiser_id": "1850000000000001",
+      "required_material_count": 4,
+      "material_type": "video",
+      "available_statuses": ["APPROVED"],
+      "page_size": 100
+    }
+  }
+}

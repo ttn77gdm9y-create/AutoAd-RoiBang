@@ -1,0 +1,17 @@
+{
+  "strategy_request": {
+    "request_id": "req_20260505_yzt_review",
+    "target_date": "2026-05-05",
+    "objective": "review_daily_learning",
+    "learning_artifact": {
+      "use_latest_from_sqlite": true
+    },
+    "constraints": {
+      "phase": "phase1",
+      "execution_enabled": false,
+      "allow_real_create": false,
+      "allow_real_pause": false,
+      "allow_real_delete": false
+    }
+  }
+}

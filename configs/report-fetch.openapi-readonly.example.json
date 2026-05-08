@@ -1,0 +1,35 @@
+{
+  "report_fetch": {
+    "mode": "backfill",
+    "source": "openapi_readonly",
+    "account_pool_csv": "data/sources/accounts/roibangv2yztj.csv",
+    "product": "勇者突进",
+    "platforms": ["WECHAT_GAME"],
+    "date_range": {
+      "start": "2026-02-10",
+      "end": "2026-02-10"
+    },
+    "openapi": {
+      "endpoints": [
+        "report_custom_config",
+        "report_custom",
+        "project_list",
+        "promotion_list",
+        "operation_log_search"
+      ],
+      "report_presets": ["promotion_daily"],
+      "page_size": 100
+    },
+    "output": {
+      "snapshot_dir": "data/snapshots/report/openapi-readonly"
+    },
+    "limits": {
+      "max_accounts": 1,
+      "max_dates": 1
+    },
+    "execution": {
+      "status": "planned_only",
+      "external_api_enabled": false
+    }
+  }
+}

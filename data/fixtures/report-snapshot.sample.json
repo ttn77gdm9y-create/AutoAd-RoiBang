@@ -1,0 +1,86 @@
+{
+  "period": {
+    "start": "2026-05-05",
+    "end": "2026-05-05"
+  },
+  "accounts": [
+    {
+      "advertiser_id": "1850000000000001",
+      "projects": [
+        {
+          "advertiser_id": "1850000000000001",
+          "project_id": "p001",
+          "project_name": "0505_郭靖勇者突进_微小每付通投_B001_01",
+          "project_status": "PROJECT_STATUS_ENABLE"
+        }
+      ],
+      "promotions": [
+        {
+          "advertiser_id": "1850000000000001",
+          "project_id": "p001",
+          "project_name": "0505_郭靖勇者突进_微小每付通投_B001_01",
+          "promotion_id": "u001",
+          "promotion_name": "0505_微小每付通投_勇者开局强冲_B001_01",
+          "promotion_status_name": "投放中",
+          "promotion_materials": {
+            "video_material_list": [
+              {
+                "material_id": "m001",
+                "video_id": "v001",
+                "title": "勇者开局强冲"
+              }
+            ],
+            "title_material_list": [
+              {
+                "title": "上线就送百连抽"
+              }
+            ]
+          }
+        }
+      ],
+      "promotion_metrics": [
+        {
+          "promotion_id": "u001",
+          "stat_cost": 100,
+          "active_register": 4,
+          "attribution_convert_cnt": 2,
+          "attribution_billing_game_in_app_roi_1day": 0.31,
+          "attribution_billing_game_in_app_roi_7days": 0.57
+        }
+      ],
+      "operation_logs": [
+        {
+          "operation_id": "op-account-001",
+          "occurred_at": "2026-05-05T09:10:00+08:00",
+          "operator": "system",
+          "entity_type": "account",
+          "entity_id": "1850000000000001",
+          "action": "sync_report",
+          "detail": "同步账户报表数据"
+        },
+        {
+          "operation_id": "op-project-001",
+          "occurred_at": "2026-05-05T10:20:00+08:00",
+          "operator": "operator_a",
+          "entity_type": "project",
+          "entity_id": "p001",
+          "action": "update_budget",
+          "before": {"budget": 300},
+          "after": {"budget": 500},
+          "detail": "项目预算从300调整到500"
+        },
+        {
+          "operation_id": "op-promotion-001",
+          "occurred_at": "2026-05-05T11:30:00+08:00",
+          "operator": "operator_a",
+          "entity_type": "promotion",
+          "entity_id": "u001",
+          "action": "replace_material",
+          "before": {"material_id": "m000"},
+          "after": {"material_id": "m001"},
+          "detail": "单元替换为素材m001"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "policy_version": "2026-05-06.phase1",
+  "phase": "phase1",
+  "execution_enabled": false,
+  "daily_learning": {
+    "lookback_days": 7,
+    "min_cost_for_signal": 100,
+    "min_conversions_for_signal": 3
+  },
+  "materials": {
+    "reuse_limit_per_plan": 1,
+    "supplement_when_available_count_below": 5
+  },
+  "strategy_plan": {
+    "allow_real_create": false,
+    "allow_real_pause": false,
+    "allow_real_delete": false,
+    "require_preflight": true,
+    "require_dry_run": true,
+    "require_approval_before_execute": true
+  },
+  "strategy_dry_run": {
+    "max_materials_per_dry_run": 50,
+    "max_target_accounts_per_dry_run": 20
+  },
+  "strategy_approval": {
+    "auto_approve_phase1": true,
+    "max_materials_per_approval": 50,
+    "max_target_accounts_per_approval": 20
+  },
+  "strategy_execute": {
+    "allow_execute_phase1": false
+  }
+}

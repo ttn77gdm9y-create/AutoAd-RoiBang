@@ -1,0 +1,13 @@
+{
+  "openapi_http": {
+    "enabled": false,
+    "token_env": "OCEANENGINE_ACCESS_TOKEN",
+    "token_file": "",
+    "timeout_seconds": 20,
+    "max_retries": 2,
+    "retry_sleep_seconds": 1,
+    "min_interval_seconds": 0.2,
+    "retry_statuses": [429, 500, 502, 503, 504],
+    "response_audit_dir": "data/runs/openapi_http"
+  }
+}

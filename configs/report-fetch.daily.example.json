@@ -1,0 +1,20 @@
+{
+  "report_fetch": {
+    "mode": "daily",
+    "account_pool_csv": "data/sources/accounts/roibangv2yztj.csv",
+    "product": "勇者突进",
+    "platforms": ["WECHAT_GAME"],
+    "date_range": {
+      "mode": "yesterday"
+    },
+    "active_account_filter": {
+      "metric": "stat_cost",
+      "operator": ">",
+      "value": 0
+    },
+    "execution": {
+      "status": "planned_only",
+      "external_api_enabled": false
+    }
+  }
+}

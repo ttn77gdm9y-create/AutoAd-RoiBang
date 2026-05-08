@@ -1,0 +1,16 @@
+{
+  "report_fetch": {
+    "mode": "backfill",
+    "account_pool_csv": "data/sources/accounts/roibangv2yztj.csv",
+    "product": "勇者突进",
+    "platforms": ["WECHAT_GAME"],
+    "date_range": {
+      "start": "2026-02-10",
+      "end": "2026-05-05"
+    },
+    "execution": {
+      "status": "planned_only",
+      "external_api_enabled": false
+    }
+  }
+}

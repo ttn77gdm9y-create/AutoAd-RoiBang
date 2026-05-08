@@ -1,0 +1,73 @@
+{
+  "responses": [
+    {
+      "endpoint_key": "report_custom",
+      "report_preset": "promotion_daily",
+      "page": 1,
+      "response": {
+        "code": 0,
+        "message": "OK",
+        "data": {
+          "rows": [
+            {
+              "dimensions": {
+                "stat_time": "2026-02-10",
+                "project_id": "mock_project_1",
+                "project_name": "0210_勇者突进_微小_项目",
+                "promotion_id": "mock_promotion_1",
+                "promotion_name": "0210_勇者突进_微小_单元"
+              },
+              "metrics": {
+                "stat_cost": "321.5",
+                "show_cnt": 12000,
+                "click_cnt": 430,
+                "convert_cnt": "9"
+              }
+            }
+          ],
+          "page_info": {
+            "page": 1,
+            "total_page": 1
+          }
+        }
+      }
+    },
+    {
+      "endpoint_key": "operation_log_search",
+      "page": 1,
+      "response": {
+        "code": 0,
+        "message": "OK",
+        "data": {
+          "logs": [
+            {
+              "request_id": "mock_log_1",
+              "content_title": "修改预算",
+              "object_type": "广告计划",
+              "object_id": 123456,
+              "object_name": "0210_勇者突进_微小_单元",
+              "create_time": "2026-02-10 11:22:33",
+              "content_log": ["预算: 300.0 -> 420.0"],
+              "operator": "管理员"
+            },
+            {
+              "request_id": "mock_log_2",
+              "content_title": "修改项目状态",
+              "object_type": "项目",
+              "object_id": 654321,
+              "object_name": "0210_勇者突进_微小_项目",
+              "create_time": "2026-02-10 12:00:00",
+              "content_log": ["状态: 暂停 -> 开启"],
+              "operator": "管理员"
+            }
+          ],
+          "page_info": {
+            "page": 1,
+            "page_size": 20,
+            "total_page": 1
+          }
+        }
+      }
+    }
+  ]
+}

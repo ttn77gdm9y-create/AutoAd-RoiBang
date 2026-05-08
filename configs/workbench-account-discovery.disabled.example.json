@@ -1,0 +1,23 @@
+{
+  "workbench_account_discovery": {
+    "target_date": {
+      "mode": "yesterday"
+    },
+    "account_pool_csv": "data/sources/accounts/roibangv2yztj.csv",
+    "product": "勇者突进",
+    "platforms": ["WECHAT_GAME"],
+    "min_spend": 0,
+    "workbench": {
+      "enabled": false,
+      "session_file": "data/secrets/oceanengine-workbench-session.local.json",
+      "keyword": "勇者突进-微小",
+      "limit": 100,
+      "stop_when_sorted_cost_reaches_zero": true,
+      "timeout_seconds": 20,
+      "max_retries": 2,
+      "retry_sleep_seconds": 1,
+      "retry_statuses": [429, 500, 502, 503, 504],
+      "response_audit_dir": "data/runs/workbench_account_discovery/readonly-validation"
+    }
+  }
+}

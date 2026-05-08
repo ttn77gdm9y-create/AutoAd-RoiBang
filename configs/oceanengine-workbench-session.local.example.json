@@ -1,0 +1,5 @@
+{
+  "cookie": "<paste browser Cookie header here>",
+  "csrf_token": "<paste x-csrftoken header here>",
+  "ebpid": "1851650746645060"
+}

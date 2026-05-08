@@ -1,0 +1,12 @@
+{
+  "product_source_material_rollup": {
+    "product": "勇者突进",
+    "source_advertiser_id": "1856647522964490",
+    "organization_id": "1851650746645060",
+    "date_range": {
+      "start": "2026-02-10",
+      "end": "2026-05-07"
+    },
+    "windows": [1, 3, 7, 15, 30, "all"]
+  }
+}

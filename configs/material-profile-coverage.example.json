@@ -1,0 +1,14 @@
+{
+  "material_profile_coverage": {
+    "date_range": {
+      "start": "2026-02-10",
+      "end": "2026-05-06"
+    },
+    "source_accounts": [
+      {
+        "source_advertiser_id": "1856647522964490"
+      }
+    ],
+    "top_missing_limit": 30
+  }
+}

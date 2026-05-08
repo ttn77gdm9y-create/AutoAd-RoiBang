@@ -1,0 +1,66 @@
+{
+  "material_history_backfill_batch": {
+    "batch": {
+      "size": 5,
+      "retry_failed": false
+    },
+    "material_history_backfill": {
+      "account_pool_csv": "data/sources/accounts/roibangv2yztj.csv",
+      "product": "勇者突进",
+      "platforms": ["WECHAT_GAME"],
+      "date_range": {
+        "start": "2026-02-10",
+        "end": "2026-05-06"
+      },
+      "active_account_discovery": {
+        "enabled": true,
+        "source": "workbench_account_list",
+        "min_spend": 0,
+        "workbench": {
+          "organization_id": "1851650746645060",
+          "keyword": "勇者突进-微小",
+          "limit": 100,
+          "max_pages": 20,
+          "stop_when_sorted_cost_reaches_zero": true,
+          "session_file": "data/secrets/oceanengine-workbench-session.local.json",
+          "response_audit_dir": "data/runs/workbench_account_discovery/material-history-backfill"
+        }
+      },
+      "material_fetch": {
+        "source": "openapi_http_execute",
+        "openapi": {
+          "endpoints": ["report_custom"],
+          "report_presets": ["material_daily"],
+          "page_size": 20
+        },
+        "openapi_http": {
+          "enabled": false,
+          "token_store": {
+            "enabled": true,
+            "store_file": "data/secrets/oceanengine-tokens.local.json",
+            "user_id": "default",
+            "auto_refresh": true,
+            "refresh_lead_seconds": 900,
+            "app_id": "",
+            "app_secret": ""
+          },
+          "timeout_seconds": 20,
+          "max_retries": 3,
+          "retry_api_codes": [50000],
+          "max_api_retries": 3,
+          "retry_sleep_seconds": 3,
+          "min_interval_seconds": 0.2,
+          "retry_statuses": [429, 500, 502, 503, 504],
+          "response_audit_dir": "data/runs/openapi_http/material-history-backfill"
+        },
+        "output": {
+          "snapshot_dir": "data/snapshots/report/material-history-backfill"
+        },
+        "execution": {
+          "status": "planned_only",
+          "external_api_enabled": false
+        }
+      }
+    }
+  }
+}

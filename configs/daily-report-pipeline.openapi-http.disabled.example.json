@@ -1,0 +1,50 @@
+{
+  "daily_report_pipeline": {
+    "target_date": {
+      "mode": "yesterday"
+    },
+    "active_account_discovery": {
+      "enabled": true,
+      "min_spend": 0,
+      "openapi": {
+        "page_size": 100
+      }
+    },
+    "report_fetch": {
+      "source": "openapi_http_execute",
+      "account_pool_csv": "data/sources/accounts/roibangv2yztj.csv",
+      "product": "勇者突进",
+      "platforms": ["WECHAT_GAME"],
+      "openapi": {
+        "endpoints": ["report_custom", "project_list", "promotion_list", "operation_log_search"],
+        "report_presets": ["promotion_daily"],
+        "page_size": 100
+      },
+      "openapi_http": {
+        "enabled": false,
+        "token_env": "OCEANENGINE_ACCESS_TOKEN",
+        "token_file": "",
+        "timeout_seconds": 20,
+        "max_retries": 2,
+        "retry_sleep_seconds": 1,
+        "min_interval_seconds": 0.2,
+        "retry_statuses": [429, 500, 502, 503, 504],
+        "response_audit_dir": "data/runs/openapi_http/daily-report-pipeline"
+      },
+      "output": {
+        "snapshot_dir": "data/snapshots/report/daily-openapi-http"
+      },
+      "execution": {
+        "status": "execute",
+        "external_api_enabled": false
+      }
+    },
+    "daily_learning": {
+      "min_cost_for_signal": 50,
+      "min_conversions_for_signal": 3,
+      "low_roi_threshold": 0.4,
+      "top_material_limit": 10,
+      "operation_log_limit": 20
+    }
+  }
+}
