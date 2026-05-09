@@ -1,0 +1,24 @@
+{
+  "yzt_create_preview": {
+    "template_name": "微小每付7R男",
+    "owner": "郭靖",
+    "target_date": "2026-05-09",
+    "batch_generated_at": "2026-05-09T14:10:00+08:00",
+    "defaults": {
+      "daily_budget": 1000,
+      "project_count": 1,
+      "units_per_project": 1
+    },
+    "roi_coefficient": 0.41,
+    "accounts": [
+      {
+        "advertiser_id": "target-advertiser-id",
+        "project_count": 1
+      },
+      {
+        "advertiser_id": "target-advertiser-id-2",
+        "project_count": 1
+      }
+    ]
+  }
+}

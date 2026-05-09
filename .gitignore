@@ -24,3 +24,5 @@ data/sources/**/*.csv
 !data/sources/accounts/.gitkeep
 
 data/secrets/
+
+configs/create/*.local.json

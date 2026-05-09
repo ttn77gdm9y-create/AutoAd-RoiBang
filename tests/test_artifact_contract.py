@@ -163,6 +163,7 @@ def test_validate_artifact_contract_accepts_create_approval_and_execute_outputs(
     manifest = tmp_path / "create_chain_manifest.json"
     field_map_check = tmp_path / "create_provider_field_map_check.json"
     review_pack = tmp_path / "create_field_mapping_review_pack.json"
+    phase2_mapping_prep = tmp_path / "create_phase2_provider_mapping_prep.json"
     template_pack = tmp_path / "create_template_slot_review_pack.json"
     readiness_matrix = tmp_path / "create_readiness_matrix.json"
     phase_gate = tmp_path / "create_live_execute_phase_gate.json"
@@ -607,6 +608,76 @@ def test_validate_artifact_contract_accepts_create_approval_and_execute_outputs(
         },
     )
     _write_json(
+        phase2_mapping_prep,
+        {
+            "ok": True,
+            "workflow": "create_phase2_provider_mapping_prep",
+            "phase": "phase2_preparation",
+            "execution_enabled": False,
+            "external_api_calls": 0,
+            "status": "needs_review",
+            "summary": {
+                "provider": "oceanengine",
+                "field_mapping_version": "phase2.oceanengine.create_payload.prep.v1",
+                "field_map_path": "configs/provider-field-maps/oceanengine.create.phase2-prep.example.json",
+                "operation_count": 3,
+                "field_count": 13,
+                "candidate_provider_field_count": 10,
+                "verified_field_count": 0,
+                "unresolved_field_count": 13,
+                "open_question_count": 7,
+                "ready_for_live_payload_development": False,
+                "ready_for_live_execute": False,
+            },
+            "phase2_preparation_contract": {
+                "review_only": True,
+                "live_payload_generation_enabled": False,
+                "create_execute_hard_block_required": True,
+                "next_required_reviews": [],
+            },
+            "payload_schema": {"version": "phase1.create_payload.v1", "mode": "schema_only"},
+            "provider_field_map": {
+                "provider": "oceanengine",
+                "field_mapping_version": "phase2.oceanengine.create_payload.prep.v1",
+                "mapping_verified": False,
+                "source": "phase2_preparation_example_no_live_execute",
+                "operations": {},
+            },
+            "provider_field_map_contract": {
+                "status": "unverified",
+                "provider": "oceanengine",
+                "operation_count": 3,
+                "field_count": 13,
+                "verified_field_count": 0,
+                "unverified_field_count": 13,
+                "missing_provider_field_count": 3,
+                "missing_required_field_count": 0,
+                "missing_required_fields": [],
+                "duplicate_internal_field_count": 0,
+                "duplicate_internal_fields": [],
+                "duplicate_provider_field_count": 0,
+                "duplicate_provider_fields": [],
+                "unknown_internal_field_count": 0,
+                "unknown_internal_fields": [],
+            },
+            "provider_field_map_digest": {
+                "algorithm": "sha256",
+                "value": "0" * 64,
+            },
+            "provider_readiness_contract": {
+                "status": "not_ready",
+                "ready_for_live_execute": False,
+                "provider": "oceanengine",
+                "checks": {},
+                "blocking_reasons": [],
+            },
+            "review_matrix": [],
+            "unresolved_mappings": [],
+            "violations": [],
+            "actions": [],
+        },
+    )
+    _write_json(
         template_pack,
         {
             "ok": True,
@@ -942,6 +1013,11 @@ def test_validate_artifact_contract_accepts_create_approval_and_execute_outputs(
         job_id="roibang-create-field-mapping-review-pack",
         artifact_path=review_pack,
     )
+    phase2_mapping_prep_result = validate_artifact_contract(
+        registry,
+        job_id="roibang-create-phase2-provider-mapping-prep",
+        artifact_path=phase2_mapping_prep,
+    )
     template_pack_result = validate_artifact_contract(
         registry,
         job_id="roibang-create-template-slot-review-pack",
@@ -1001,6 +1077,7 @@ def test_validate_artifact_contract_accepts_create_approval_and_execute_outputs(
     assert approval_result["ok"] is True
     assert field_map_check_result["ok"] is True
     assert review_pack_result["ok"] is True
+    assert phase2_mapping_prep_result["ok"] is True
     assert template_pack_result["ok"] is True
     assert dry_run_result["ok"] is True
     assert snapshot_result["ok"] is True

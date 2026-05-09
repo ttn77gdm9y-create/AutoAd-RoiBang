@@ -12,9 +12,9 @@ def test_scheduler_registry_has_no_ai_execution_prompts():
 
     assert result == {
         "ok": True,
-        "jobs": 31,
+        "jobs": 42,
         "enabled_jobs": 9,
-        "disabled_jobs": 22,
+        "disabled_jobs": 33,
         "violations": [],
     }
 
@@ -35,9 +35,53 @@ def test_scheduler_registry_includes_disabled_fixed_create_chain_jobs():
             "create_field_mapping_review_pack",
             "scripts/run_create_field_mapping_review_pack.py",
         ),
+        "roibang-create-phase2-provider-mapping-prep": (
+            "create_phase2_provider_mapping_prep",
+            "scripts/run_create_phase2_provider_mapping_prep.py",
+        ),
         "roibang-create-template-slot-review-pack": (
             "create_template_slot_review_pack",
             "scripts/run_create_template_slot_review_pack.py",
+        ),
+        "roibang-create-phase2-template-slot-prep": (
+            "create_phase2_template_slot_prep",
+            "scripts/run_create_phase2_template_slot_prep.py",
+        ),
+        "roibang-create-phase2-template-confirmation-pack": (
+            "create_phase2_template_confirmation_pack",
+            "scripts/run_create_phase2_template_confirmation_pack.py",
+        ),
+        "roibang-create-phase2-yzt-create-preview": (
+            "create_phase2_yzt_create_preview",
+            "scripts/run_create_phase2_yzt_create_preview.py",
+        ),
+        "roibang-create-phase2-yzt-config-check": (
+            "create_phase2_yzt_config_check",
+            "scripts/run_create_phase2_yzt_config_check.py",
+        ),
+        "roibang-create-phase2-yzt-account-pool-check": (
+            "create_phase2_yzt_account_pool_check",
+            "scripts/run_create_phase2_yzt_account_pool_check.py",
+        ),
+        "roibang-create-phase2-yzt-material-pool-check": (
+            "create_phase2_yzt_material_pool_check",
+            "scripts/run_create_phase2_yzt_material_pool_check.py",
+        ),
+        "roibang-create-phase2-yzt-preparation-check": (
+            "create_phase2_yzt_preparation_check",
+            "scripts/run_create_phase2_yzt_preparation_check.py",
+        ),
+        "roibang-create-phase2-yzt-dry-chain": (
+            "create_phase2_yzt_dry_chain",
+            "scripts/run_create_phase2_yzt_dry_chain.py",
+        ),
+        "roibang-create-phase2-project-naming-prep": (
+            "create_phase2_project_naming_prep",
+            "scripts/run_create_phase2_project_naming_prep.py",
+        ),
+        "roibang-create-phase2-preparation-summary": (
+            "create_phase2_preparation_summary",
+            "scripts/run_create_phase2_preparation_summary.py",
         ),
         "roibang-create-dry-run": ("create_dry_run", "scripts/run_create_dry_run.py"),
         "roibang-create-approval": ("create_approval", "scripts/run_create_approval.py"),
@@ -99,7 +143,13 @@ def test_scheduler_registry_phase1_contracts_pin_safe_execution_values():
         "roibang-create-preflight",
         "roibang-create-provider-field-map-check",
         "roibang-create-field-mapping-review-pack",
+        "roibang-create-phase2-provider-mapping-prep",
         "roibang-create-template-slot-review-pack",
+        "roibang-create-phase2-template-slot-prep",
+        "roibang-create-phase2-template-confirmation-pack",
+        "roibang-create-phase2-yzt-create-preview",
+        "roibang-create-phase2-project-naming-prep",
+        "roibang-create-phase2-preparation-summary",
         "roibang-create-dry-run",
         "roibang-create-approval",
         "roibang-create-plan-snapshot",
@@ -131,9 +181,175 @@ def test_scheduler_registry_phase1_contracts_pin_safe_execution_values():
     assert "review_contract" in jobs["roibang-create-field-mapping-review-pack"]["result_contract"]["must_include"]
     assert "review_sections" in jobs["roibang-create-field-mapping-review-pack"]["result_contract"]["must_include"]
     assert jobs["roibang-create-field-mapping-review-pack"]["result_contract"]["must_equal"]["required_user_input_now"] is False
+    assert "phase2_preparation_contract" in jobs[
+        "roibang-create-phase2-provider-mapping-prep"
+    ]["result_contract"]["must_include"]
+    assert "review_matrix" in jobs["roibang-create-phase2-provider-mapping-prep"]["result_contract"]["must_include"]
+    assert "unresolved_mappings" in jobs[
+        "roibang-create-phase2-provider-mapping-prep"
+    ]["result_contract"]["must_include"]
+    assert jobs["roibang-create-phase2-provider-mapping-prep"]["result_contract"]["must_equal"]["phase"] == "phase2_preparation"
     assert "template_contract" in jobs["roibang-create-template-slot-review-pack"]["result_contract"]["must_include"]
     assert "review_sections" in jobs["roibang-create-template-slot-review-pack"]["result_contract"]["must_include"]
     assert jobs["roibang-create-template-slot-review-pack"]["result_contract"]["must_equal"]["required_user_input_now"] is False
+    assert "phase2_preparation_contract" in jobs[
+        "roibang-create-phase2-template-slot-prep"
+    ]["result_contract"]["must_include"]
+    assert "template_slot_contract" in jobs[
+        "roibang-create-phase2-template-slot-prep"
+    ]["result_contract"]["must_include"]
+    assert "template_confirmation_groups" in jobs[
+        "roibang-create-phase2-template-slot-prep"
+    ]["result_contract"]["must_include"]
+    assert "template_confirmation_draft" in jobs[
+        "roibang-create-phase2-template-slot-prep"
+    ]["result_contract"]["must_include"]
+    assert "template_confirmation_checklist" in jobs[
+        "roibang-create-phase2-template-slot-prep"
+    ]["result_contract"]["must_include"]
+    assert "product_template_catalog" in jobs[
+        "roibang-create-phase2-template-slot-prep"
+    ]["result_contract"]["must_include"]
+    assert "review_matrix" in jobs["roibang-create-phase2-template-slot-prep"]["result_contract"]["must_include"]
+    assert "unresolved_slots" in jobs["roibang-create-phase2-template-slot-prep"]["result_contract"]["must_include"]
+    assert jobs["roibang-create-phase2-template-slot-prep"]["result_contract"]["must_equal"]["phase"] == "phase2_preparation"
+    assert "required_user_input_now" in jobs[
+        "roibang-create-phase2-template-confirmation-pack"
+    ]["result_contract"]["must_include"]
+    assert "confirmation_contract" in jobs[
+        "roibang-create-phase2-template-confirmation-pack"
+    ]["result_contract"]["must_include"]
+    assert "confirmation_records" in jobs[
+        "roibang-create-phase2-template-confirmation-pack"
+    ]["result_contract"]["must_include"]
+    assert jobs[
+        "roibang-create-phase2-template-confirmation-pack"
+    ]["result_contract"]["must_equal"]["phase"] == "phase2_preparation"
+    assert jobs[
+        "roibang-create-phase2-template-confirmation-pack"
+    ]["result_contract"]["must_equal"]["required_user_input_now"] is True
+    assert "fixed_script_fields" in jobs[
+        "roibang-create-phase2-yzt-create-preview"
+    ]["result_contract"]["must_include"]
+    assert "selected_template" in jobs[
+        "roibang-create-phase2-yzt-create-preview"
+    ]["result_contract"]["must_include"]
+    assert "preview_projects" in jobs[
+        "roibang-create-phase2-yzt-create-preview"
+    ]["result_contract"]["must_include"]
+    assert "standard_create_request" in jobs[
+        "roibang-create-phase2-yzt-create-preview"
+    ]["result_contract"]["must_include"]
+    assert "chain_handoff" in jobs[
+        "roibang-create-phase2-yzt-create-preview"
+    ]["result_contract"]["must_include"]
+    assert "config_contract" in jobs[
+        "roibang-create-phase2-yzt-create-preview"
+    ]["result_contract"]["must_include"]
+    assert "manual_config_contract" in jobs[
+        "roibang-create-phase2-yzt-create-preview"
+    ]["result_contract"]["must_include"]
+    assert "preview_checks" in jobs[
+        "roibang-create-phase2-yzt-create-preview"
+    ]["result_contract"]["must_include"]
+    assert jobs["roibang-create-phase2-yzt-create-preview"]["result_contract"]["must_equal"]["phase"] == "phase2_preparation"
+    assert "manual_config_contract" in jobs[
+        "roibang-create-phase2-yzt-config-check"
+    ]["result_contract"]["must_include"]
+    assert "human_next_steps" in jobs[
+        "roibang-create-phase2-yzt-config-check"
+    ]["result_contract"]["must_include"]
+    assert jobs["roibang-create-phase2-yzt-config-check"]["result_contract"]["must_equal"]["phase"] == "phase2_preparation"
+    assert "account_checks" in jobs[
+        "roibang-create-phase2-yzt-account-pool-check"
+    ]["result_contract"]["must_include"]
+    assert "human_next_steps" in jobs[
+        "roibang-create-phase2-yzt-account-pool-check"
+    ]["result_contract"]["must_include"]
+    assert jobs["roibang-create-phase2-yzt-account-pool-check"]["result_contract"]["must_equal"][
+        "phase"
+    ] == "phase2_preparation"
+    assert "material_pool" in jobs[
+        "roibang-create-phase2-yzt-material-pool-check"
+    ]["result_contract"]["must_include"]
+    assert "human_next_steps" in jobs[
+        "roibang-create-phase2-yzt-material-pool-check"
+    ]["result_contract"]["must_include"]
+    assert jobs["roibang-create-phase2-yzt-material-pool-check"]["result_contract"]["must_equal"][
+        "phase"
+    ] == "phase2_preparation"
+    assert "check_steps" in jobs[
+        "roibang-create-phase2-yzt-preparation-check"
+    ]["result_contract"]["must_include"]
+    assert "config_check" in jobs[
+        "roibang-create-phase2-yzt-preparation-check"
+    ]["result_contract"]["must_include"]
+    assert "account_pool_check" in jobs[
+        "roibang-create-phase2-yzt-preparation-check"
+    ]["result_contract"]["must_include"]
+    assert "material_pool_check" in jobs[
+        "roibang-create-phase2-yzt-preparation-check"
+    ]["result_contract"]["must_include"]
+    assert "operator_guide" in jobs[
+        "roibang-create-phase2-yzt-preparation-check"
+    ]["result_contract"]["must_include"]
+    assert jobs["roibang-create-phase2-yzt-preparation-check"]["result_contract"]["must_equal"][
+        "phase"
+    ] == "phase2_preparation"
+    assert "chain_steps" in jobs[
+        "roibang-create-phase2-yzt-dry-chain"
+    ]["result_contract"]["must_include"]
+    assert "artifacts" in jobs[
+        "roibang-create-phase2-yzt-dry-chain"
+    ]["result_contract"]["must_include"]
+    assert "dry_run_summary" in jobs[
+        "roibang-create-phase2-yzt-dry-chain"
+    ]["result_contract"]["must_include"]
+    assert "blocking_summary" in jobs[
+        "roibang-create-phase2-yzt-dry-chain"
+    ]["result_contract"]["must_include"]
+    assert "human_next_steps" in jobs[
+        "roibang-create-phase2-yzt-dry-chain"
+    ]["result_contract"]["must_include"]
+    assert jobs["roibang-create-phase2-yzt-dry-chain"]["result_contract"]["must_equal"]["phase"] == "phase2_preparation"
+    assert jobs["roibang-create-phase2-yzt-dry-chain"]["result_contract"]["must_equal"][
+        "approved_for_execute"
+    ] is False
+    assert "phase2_preparation_contract" in jobs[
+        "roibang-create-phase2-project-naming-prep"
+    ]["result_contract"]["must_include"]
+    assert "naming_rule_contract" in jobs[
+        "roibang-create-phase2-project-naming-prep"
+    ]["result_contract"]["must_include"]
+    assert "batch_code_contract" in jobs[
+        "roibang-create-phase2-project-naming-prep"
+    ]["result_contract"]["must_include"]
+    assert "sample_names" in jobs["roibang-create-phase2-project-naming-prep"]["result_contract"]["must_include"]
+    assert "old_project_reference" in jobs[
+        "roibang-create-phase2-project-naming-prep"
+    ]["result_contract"]["must_include"]
+    assert "unresolved_naming_items" in jobs[
+        "roibang-create-phase2-project-naming-prep"
+    ]["result_contract"]["must_include"]
+    assert jobs["roibang-create-phase2-project-naming-prep"]["result_contract"]["must_equal"]["phase"] == "phase2_preparation"
+    assert "preparation_checks" in jobs[
+        "roibang-create-phase2-preparation-summary"
+    ]["result_contract"]["must_include"]
+    assert "remaining_review_items" in jobs[
+        "roibang-create-phase2-preparation-summary"
+    ]["result_contract"]["must_include"]
+    assert "remaining_review_groups" in jobs[
+        "roibang-create-phase2-preparation-summary"
+    ]["result_contract"]["must_include"]
+    assert "recommended_next_steps" in jobs[
+        "roibang-create-phase2-preparation-summary"
+    ]["result_contract"]["must_include"]
+    assert jobs[
+        "roibang-create-phase2-preparation-summary"
+    ]["result_contract"]["must_equal"]["ready_for_live_payload_development"] is False
+    assert jobs[
+        "roibang-create-phase2-preparation-summary"
+    ]["result_contract"]["must_equal"]["ready_for_live_execute"] is False
     assert "provider_adapter_contract" in jobs["roibang-create-dry-run"]["result_contract"]["must_include"]
     assert "provider_field_map" in jobs["roibang-create-dry-run"]["result_contract"]["must_include"]
     assert "provider_field_map_contract" in jobs["roibang-create-dry-run"]["result_contract"]["must_include"]

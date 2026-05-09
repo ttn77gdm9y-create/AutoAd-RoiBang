@@ -8,6 +8,210 @@ active development target.
 
 ## Current Phase
 
+Phase 2 preparation has started. This stage is still review-only: it can add
+field mapping prep artifacts, template slot review artifacts, project naming
+rule checks, scripts, and tests, but it must not perform real creation or call
+creation APIs.
+
+Current Phase 2 preparation closeout notes live in
+`docs/phase-2-preparation-closeout.md`.
+
+Run the current provider field mapping preparation pack with:
+
+```bash
+PYTHONPATH=src scripts/run_create_phase2_provider_mapping_prep.py \
+  --config configs/runtime.example.json \
+  --policy policies/strategy.example.json
+```
+
+It writes a local `create_phase2_provider_mapping_prep` artifact with
+`execution_enabled=false`, `external_api_calls=0`, and `actions=[]`. More notes
+live in `docs/phase-2-preparation.md`.
+
+Run the current template slot preparation pack with:
+
+```bash
+PYTHONPATH=src scripts/run_create_phase2_template_slot_prep.py \
+  --config configs/runtime.example.json \
+  --request configs/requests/example.create-request.json \
+  --policy policies/strategy.example.json
+```
+
+It checks future create defaults, such as project type, budget, pricing,
+inventory, unit count, and material count, while still writing only a local
+review artifact. It also writes `product_template_catalog`, meaning the current
+勇者突进微信小游戏 template list has four project templates: `微小每付男`,
+`微小每付通投`, `微小每付7R男`, and `微小每付7R通投`. All four fix the
+optimization goal to 付费. The two `微小每付` templates do not choose a deep
+target and do not fill ROI, meaning 回本目标; the two `微小每付7R` templates
+choose 7日ROI and require an ROI value. 男 templates fix gender to 男; 通投
+templates fix gender to 不限. All four currently fix age to 不限. The front-end
+field named 深度优化方式 is recorded as `deep_optimization_method`, and its
+provider field is `deep_bid_type`, meaning the platform API field name. It also writes
+`template_confirmation_groups`, meaning the 12 template items are grouped into
+fixed defaults, per-account values, and fixed-strategy selections, so the next
+manual review is easier to read. It also writes `template_confirmation_draft`,
+meaning a 12-row confirmation draft with the current value, source, pending
+confirmation status, and suggested decision for each template item. It also
+writes `template_confirmation_checklist`, meaning the same 12 items in plain
+Chinese labels for manual review.
+
+Run the template confirmation record pack with:
+
+```bash
+PYTHONPATH=src scripts/run_create_phase2_template_confirmation_pack.py \
+  --config configs/runtime.example.json
+```
+
+It reads the latest template slot preparation artifact and writes
+`create_phase2_template_confirmation_pack`, meaning a local pending-confirmation
+record for the same 12 items. This pack sets `required_user_input_now=true`,
+meaning it is ready for manual confirmation, but it still keeps
+`execution_enabled=false`, `external_api_calls=0`, and `actions=[]`.
+
+Run the 勇者突进 manual create preview with:
+
+```bash
+PYTHONPATH=src python3 scripts/run_create_phase2_yzt_config_check.py \
+  --config configs/runtime.example.json \
+  --preview-config configs/create/yzt-wx-mini-game.preview.example.json \
+  --policy policies/strategy.example.json
+```
+
+This checks the manual config before preview. It catches missing accounts,
+placeholder accounts, budget outside the policy range, zero project or unit
+count, unknown templates, and missing ROI coefficient for 7R templates. It
+writes only a local
+`create_phase2_yzt_config_check` artifact with `execution_enabled=false`,
+`external_api_calls=0`, and `actions=[]`.
+The example config uses a safe local budget of `1000` so the quick check can
+pass the budget rule under the current policy. The quick check still stops on
+the placeholder accounts until they are replaced with real advertiser IDs.
+Full rehearsal may still stop later if the local material pool has not been
+synced.
+
+Check the configured accounts against the local account pool with:
+
+```bash
+PYTHONPATH=src python3 scripts/run_create_phase2_yzt_account_pool_check.py \
+  --config configs/runtime.example.json \
+  --preview-config configs/create/yzt-wx-mini-game.preview.example.json \
+  --policy policies/strategy.example.json
+```
+
+This reads only local SQLite and writes `create_phase2_yzt_account_pool_check`.
+It tells which configured accounts are found or missing for 勇者突进/WECHAT_GAME,
+and still keeps `execution_enabled=false`, `external_api_calls=0`, and
+`actions=[]`.
+
+Check the local material pool capacity with:
+
+```bash
+PYTHONPATH=src python3 scripts/run_create_phase2_yzt_material_pool_check.py \
+  --config configs/runtime.example.json \
+  --preview-config configs/create/yzt-wx-mini-game.preview.example.json \
+  --policy policies/strategy.example.json
+```
+
+This reads only local SQLite and writes `create_phase2_yzt_material_pool_check`.
+It compares required materials for the current config with usable local
+candidate materials, and still keeps `execution_enabled=false`,
+`external_api_calls=0`, and `actions=[]`.
+
+Run all preparation checks with one command:
+
+```bash
+PYTHONPATH=src python3 scripts/run_create_phase2_yzt_preparation_check.py \
+  --config configs/runtime.example.json \
+  --preview-config configs/create/yzt-wx-mini-game.preview.example.json \
+  --policy policies/strategy.example.json
+```
+
+This runs config check, account-pool check, and material-pool check in order. It
+writes `create_phase2_yzt_preparation_check`, keeps every sub-check local, and
+still has `execution_enabled=false`, `external_api_calls=0`, and `actions=[]`.
+It also writes `operator_guide`, meaning a direct operation guide: if checks
+fail, it lists the fix order; if checks pass, it prints the full dry-chain
+command to run next.
+
+For real operator use, copy the safe example config to a private local file:
+
+```bash
+cp configs/create/yzt-wx-mini-game.preview.example.json \
+  configs/create/yzt-wx-mini-game.preview.local.json
+```
+
+Then edit `configs/create/yzt-wx-mini-game.preview.local.json` and replace the
+placeholder accounts with real account IDs. This `*.local.json` path is ignored
+by git, meaning it is not meant to be committed. 不要提交真实账户.
+
+```bash
+PYTHONPATH=src python3 scripts/run_create_phase2_yzt_create_preview.py \
+  --config configs/runtime.example.json \
+  --preview-config configs/create/yzt-wx-mini-game.preview.example.json \
+  --policy policies/strategy.example.json
+```
+
+The preview config is the file a human can edit before live create development.
+It only keeps the fields that should be filled each time: project template,
+owner, target date, batch generated time, default budget, default project count,
+default unit count, ROI coefficient when the chosen template needs it, and
+target accounts. The script keeps the fixed 勇者突进 fields inside the preview
+result, including product, platform, source advertiser, material pool, material
+requirements, field defaults, marketing scene, optimization goal, age, and
+effective-touch URL source. It also writes `manual_config_contract`, meaning a
+Chinese field guide for the manual config, and `preview_checks`, meaning local
+checks for safety, template selection, target accounts, budget, ROI coefficient,
+unique project names, and fixed effective-touch URL. It also writes
+`standard_create_request`, meaning the normal create-request shape that can
+enter the fixed create chain, and `chain_handoff`, meaning the next safe steps:
+create request, strategy plan, preflight, and dry-run. It still writes only a
+local `create_phase2_yzt_create_preview` artifact with `execution_enabled=false`,
+`external_api_calls=0`, and `actions=[]`.
+
+Run the 勇者突进 full dry create chain with:
+
+```bash
+PYTHONPATH=src python3 scripts/run_create_phase2_yzt_dry_chain.py \
+  --config configs/runtime.example.json \
+  --preview-config configs/create/yzt-wx-mini-game.preview.example.json \
+  --policy policies/strategy.example.json
+```
+
+This is a complete local rehearsal, not real creation. It runs preview,
+create-request recording, strategy plan, preflight, provider field-map check,
+and dry-run in order. It writes `create_phase2_yzt_dry_chain`, including
+`chain_steps` for the step list, `artifacts` for the generated JSON files,
+`blocking_summary` for the plain blocked reason, and `human_next_steps` for the
+next manual fixes in Chinese. It still keeps `execution_enabled=false`,
+`external_api_calls=0`, `approved_for_execute=false`, and `actions=[]`.
+
+Run the current project naming preparation pack with:
+
+```bash
+PYTHONPATH=src scripts/run_create_phase2_project_naming_prep.py \
+  --config configs/runtime.example.json \
+  --request configs/requests/example.create-request.json \
+  --policy policies/strategy.example.json
+```
+
+It generates sample project names and compares the current v2 rule with the old
+project naming reference. It still writes only a local review artifact.
+
+Run the Phase 2 preparation summary with:
+
+```bash
+PYTHONPATH=src scripts/run_create_phase2_preparation_summary.py \
+  --config configs/runtime.example.json
+```
+
+It combines field mapping, template slots, and project naming into one local
+summary. It also writes `remaining_review_groups`, meaning the remaining items
+are split into “needs provider evidence”, which means platform field evidence
+still needs to be checked, and “needs human decision”, which means fixed rules
+or defaults still need manual confirmation. The summary still keeps real
+creation closed.
+
 Phase 1 only builds safe local capabilities:
 
 - data sync framework
@@ -523,9 +727,19 @@ context.
 Project names are generated by `create_strategy_plan.project_naming`, meaning
 the project-name rule in `policies/strategy.example.json`, and preflight can
 enforce `create_preflight.project_name_pattern`, meaning the required project
-name format. This keeps naming deterministic, meaning the same input always
-produces the same name, inside fixed scripts instead of relying on runtime AI
-choices, meaning AI decisions made while a business script is running.
+name format. The current rule is:
+
+```text
+月日_归属_游戏名_项目模板名_批次码_序号
+```
+
+The batch code is generated once from request id, create date, product, project
+type, account list, and second-level generated time. It uses a hash, meaning a
+fixed short code made from those fields, and then reuses that code through
+preflight, dry-run, approval, and execute. This keeps naming deterministic,
+meaning the same input always produces the same name, inside fixed scripts
+instead of relying on runtime AI choices, meaning AI decisions made while a
+business script is running.
 
 Record a create request with:
 

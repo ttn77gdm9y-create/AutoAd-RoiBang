@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sqlite3
@@ -153,6 +154,38 @@ def _target_date_compact(request: dict[str, Any]) -> str:
     return re.sub(r"\D+", "", str(request.get("target_date") or ""))
 
 
+def _target_date_mmdd(request: dict[str, Any]) -> str:
+    compact = _target_date_compact(request)
+    return compact[4:8] if len(compact) >= 8 else compact
+
+
+def _batch_generated_at(request: dict[str, Any]) -> str:
+    value = str(request.get("batch_generated_at") or "").strip()
+    if value:
+        return value
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _batch_code_source(request: dict[str, Any], *, generated_at: str) -> dict[str, Any]:
+    return {
+        "request_id": str(request.get("request_id") or ""),
+        "target_date": str(request.get("target_date") or ""),
+        "product": str(request.get("product") or ""),
+        "project_type": str(request.get("project_type") or ""),
+        "advertiser_ids": [
+            str(account.get("advertiser_id") or "")
+            for account in _target_accounts(request)
+            if str(account.get("advertiser_id") or "")
+        ],
+        "generated_at": generated_at,
+    }
+
+
+def _batch_code(source_fields: dict[str, Any]) -> str:
+    canonical = json.dumps(source_fields, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return "B" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:8].upper()
+
+
 def _normalize_project_name(name: str, *, replacement: str) -> str:
     normalized = _INVALID_PROJECT_NAME_CHARS.sub(replacement, name)
     normalized = re.sub(r"\s+", replacement, normalized)
@@ -171,16 +204,23 @@ def _project_name_entry(
 ) -> dict[str, Any]:
     naming = _project_naming_policy(policy)
     template, source = _project_name_template(request, policy)
-    index_width = max(_int_value(naming.get("index_width"), 3), 1)
+    index_width = max(_int_value(naming.get("index_width"), 2), 1)
     replacement = str(naming.get("invalid_char_replacement") or "-")
+    generated_at = _batch_generated_at(request)
+    batch_source = _batch_code_source(request, generated_at=generated_at)
+    batch_code = str(request.get("batch_code") or "").strip() or _batch_code(batch_source)
     values = {
+        "owner": str(request.get("owner") or request.get("belonging") or request.get("name_owner") or ""),
         "product": str(request.get("product") or ""),
         "platform": str(request.get("platform") or ""),
         "project_type": str(request.get("project_type") or ""),
+        "project_template_name": str(request.get("project_template_name") or request.get("project_type") or ""),
         "advertiser_id": advertiser_id,
         "index": f"{index:0{index_width}d}",
         "target_date": str(request.get("target_date") or ""),
         "target_date_compact": _target_date_compact(request),
+        "target_date_mmdd": _target_date_mmdd(request),
+        "batch_code": batch_code,
     }
     try:
         raw_name = template.format(**values)
@@ -197,6 +237,13 @@ def _project_name_entry(
             "template": template,
             "index_width": index_width,
             "invalid_char_replacement": replacement,
+            "batch_code": batch_code,
+            "batch_code_source": {
+                "algorithm": "sha256_first_8_uppercase",
+                "generated_at": generated_at,
+                "source_fields": batch_source,
+                "freeze_rule": "generate once in plan, then reuse through preflight, dry-run, approval, and execute",
+            },
         },
     }
 
@@ -262,13 +309,15 @@ def _build_projects(
     dedupe_scope = str(requirements.get("dedupe_scope") or "request")
     used_request_material_ids: set[str] = set()
     projects: list[dict[str, Any]] = []
+    global_project_index = 0
     for account in _target_accounts(request):
         advertiser_id = str(account.get("advertiser_id") or "")
         project_count = max(_int_value(account.get("project_count"), 1), 0)
         units_per_project = max(_int_value(account.get("units_per_project"), 1), 0)
-        for project_index in range(1, project_count + 1):
-            project_key = f"{advertiser_id}-p{project_index:03d}"
-            name_entry = _project_name_entry(request, policy, advertiser_id=advertiser_id, index=project_index)
+        for account_project_index in range(1, project_count + 1):
+            global_project_index += 1
+            project_key = f"{advertiser_id}-p{account_project_index:03d}"
+            name_entry = _project_name_entry(request, policy, advertiser_id=advertiser_id, index=global_project_index)
             units: list[dict[str, Any]] = []
             for unit_index in range(1, units_per_project + 1):
                 unit_key = f"{project_key}-u{unit_index:02d}"
@@ -298,7 +347,7 @@ def _build_projects(
                 {
                     "project_key": project_key,
                     "advertiser_id": advertiser_id,
-                    "project_index": project_index,
+                    "project_index": global_project_index,
                     "project_name": name_entry["project_name"],
                     "naming": name_entry["naming"],
                     "project_type": str(request.get("project_type") or ""),

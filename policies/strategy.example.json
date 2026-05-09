@@ -36,7 +36,7 @@
     "max_projects_per_account": 10,
     "max_units_per_project": 20,
     "project_naming": {
-      "template": "{target_date_compact}_{product}_{project_type}_{advertiser_id}_{index}",
+      "template": "{target_date_mmdd}_{owner}_{product}_{project_template_name}_{batch_code}_{index}",
       "index_width": 2,
       "invalid_char_replacement": "_"
     },
@@ -55,7 +55,7 @@
     "min_daily_budget": 100,
     "max_daily_budget": 1000,
     "max_project_name_length": 80,
-    "project_name_pattern": "^\\d{8}_.+_.+_.+_\\d{2}$",
+    "project_name_pattern": "^\\d{4}_.+_.+_.+_B[0-9A-F]{8}_\\d{2}$",
     "required_field_defaults": [
       "landing_type",
       "pricing",
@@ -70,6 +70,191 @@
       "field_mapping_version": "phase1.oceanengine.create_payload.draft.v1"
     },
     "provider_field_map_path": "configs/provider-field-maps/oceanengine.create.phase1.example.json"
+  },
+  "create_phase2_provider_mapping_prep": {
+    "provider_adapter": {
+      "provider": "oceanengine",
+      "field_mapping_version": "phase2.oceanengine.create_payload.prep.v1"
+    },
+    "provider_field_map_path": "configs/provider-field-maps/oceanengine.create.phase2-prep.example.json",
+    "live_api": {
+      "endpoints": {
+        "create_project": "/open_api/2/project/create/",
+        "create_unit": "/open_api/2/promotion/create/",
+        "bind_material": "/open_api/2/promotion/material/bind/"
+      }
+    }
+  },
+  "create_phase2_template_slot_prep": {
+    "product_template_catalog": {
+      "product": "勇者突进",
+      "platform": "WECHAT_GAME",
+      "script_scope": "勇者突进微信小游戏专用",
+      "templates": [
+        {
+          "template_key": "wx_pay_male",
+          "project_template_name": "微小每付男",
+          "optimize_goal": {
+            "frontend_label": "优化目标",
+            "value": "AD_CONVERT_TYPE_PAY",
+            "label": "付费"
+          },
+          "deep_external_action": {
+            "frontend_label": "深度优化目标",
+            "required": false,
+            "value": null,
+            "label": "不选择"
+          },
+          "deep_optimization_method": {
+            "frontend_label": "深度优化方式",
+            "value": "PAY_PER_ACTION",
+            "label": "每次付费",
+            "provider_field": "deep_bid_type"
+          },
+          "provider_deep_bid_type": {
+            "value": "BID_PER_ACTION",
+            "review_status": "needs_mapping_review"
+          },
+          "roi_goal": {
+            "frontend_label": "ROI系数",
+            "required": false,
+            "value": null,
+            "label": "不填"
+          },
+          "gender": {
+            "value": "1",
+            "label": "男",
+            "openapi_value": "GENDER_MALE"
+          },
+          "age": {
+            "value": [],
+            "label": "不限",
+            "openapi_value": []
+          }
+        },
+        {
+          "template_key": "wx_pay_general",
+          "project_template_name": "微小每付通投",
+          "optimize_goal": {
+            "frontend_label": "优化目标",
+            "value": "AD_CONVERT_TYPE_PAY",
+            "label": "付费"
+          },
+          "deep_external_action": {
+            "frontend_label": "深度优化目标",
+            "required": false,
+            "value": null,
+            "label": "不选择"
+          },
+          "deep_optimization_method": {
+            "frontend_label": "深度优化方式",
+            "value": "PAY_PER_ACTION",
+            "label": "每次付费",
+            "provider_field": "deep_bid_type"
+          },
+          "provider_deep_bid_type": {
+            "value": "BID_PER_ACTION",
+            "review_status": "needs_mapping_review"
+          },
+          "roi_goal": {
+            "frontend_label": "ROI系数",
+            "required": false,
+            "value": null,
+            "label": "不填"
+          },
+          "gender": {
+            "value": "NONE",
+            "label": "不限",
+            "openapi_value": "NONE"
+          },
+          "age": {
+            "value": [],
+            "label": "不限",
+            "openapi_value": []
+          }
+        },
+        {
+          "template_key": "wx_7r_male",
+          "project_template_name": "微小每付7R男",
+          "optimize_goal": {
+            "frontend_label": "优化目标",
+            "value": "AD_CONVERT_TYPE_PAY",
+            "label": "付费"
+          },
+          "deep_external_action": {
+            "frontend_label": "深度优化目标",
+            "required": true,
+            "value": "AD_CONVERT_TYPE_PURCHASE_ROI_7D",
+            "label": "7日ROI"
+          },
+          "deep_optimization_method": {
+            "frontend_label": "深度优化方式",
+            "value": "PAY_PER_ACTION",
+            "label": "每次付费",
+            "provider_field": "deep_bid_type"
+          },
+          "provider_deep_bid_type": {
+            "value": "PER_AND_SEVEN_PAY_ROI",
+            "review_status": "needs_mapping_review"
+          },
+          "roi_goal": {
+            "frontend_label": "ROI系数",
+            "required": true,
+            "label": "填写7日ROI目标"
+          },
+          "gender": {
+            "value": "1",
+            "label": "男",
+            "openapi_value": "GENDER_MALE"
+          },
+          "age": {
+            "value": [],
+            "label": "不限",
+            "openapi_value": []
+          }
+        },
+        {
+          "template_key": "wx_7r_general",
+          "project_template_name": "微小每付7R通投",
+          "optimize_goal": {
+            "frontend_label": "优化目标",
+            "value": "AD_CONVERT_TYPE_PAY",
+            "label": "付费"
+          },
+          "deep_external_action": {
+            "frontend_label": "深度优化目标",
+            "required": true,
+            "value": "AD_CONVERT_TYPE_PURCHASE_ROI_7D",
+            "label": "7日ROI"
+          },
+          "deep_optimization_method": {
+            "frontend_label": "深度优化方式",
+            "value": "PAY_PER_ACTION",
+            "label": "每次付费",
+            "provider_field": "deep_bid_type"
+          },
+          "provider_deep_bid_type": {
+            "value": "PER_AND_SEVEN_PAY_ROI",
+            "review_status": "needs_mapping_review"
+          },
+          "roi_goal": {
+            "frontend_label": "ROI系数",
+            "required": true,
+            "label": "填写7日ROI目标"
+          },
+          "gender": {
+            "value": "NONE",
+            "label": "不限",
+            "openapi_value": "NONE"
+          },
+          "age": {
+            "value": [],
+            "label": "不限",
+            "openapi_value": []
+          }
+        }
+      ]
+    }
   },
   "create_approval": {
     "auto_approve_phase1": true,

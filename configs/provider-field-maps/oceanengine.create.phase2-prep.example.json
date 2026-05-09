@@ -1,0 +1,197 @@
+{
+  "provider": "oceanengine",
+  "field_mapping_version": "phase2.oceanengine.create_payload.prep.v1",
+  "mapping_verified": false,
+  "source": "phase2_preparation_example_no_live_execute",
+  "operations": {
+    "create_project": [
+      {
+        "internal_field": "advertiser_id",
+        "provider_field": "advertiser_id",
+        "provider_object": "project_create_request",
+        "mapping_kind": "direct",
+        "value_source": "create_strategy_plan.strategy.projects[].advertiser_id",
+        "purpose": "target advertiser account id",
+        "verified": false,
+        "required": true,
+        "source": "phase2_preparation",
+        "evidence_refs": ["oceanengine_openapi_project_create_request"],
+        "open_questions": []
+      },
+      {
+        "internal_field": "project_name",
+        "provider_field": "name",
+        "provider_object": "project_create_request",
+        "mapping_kind": "direct",
+        "value_source": "create_strategy_plan.strategy.projects[].project_name",
+        "purpose": "planned project name",
+        "verified": false,
+        "required": true,
+        "source": "phase2_preparation",
+        "evidence_refs": ["oceanengine_openapi_project_create_request"],
+        "open_questions": []
+      },
+      {
+        "internal_field": "project_type",
+        "provider_field": "",
+        "provider_object": "project_create_request",
+        "mapping_kind": "",
+        "value_source": "create_strategy_plan.strategy.projects[].project_type",
+        "purpose": "internal project type",
+        "verified": false,
+        "required": true,
+        "source": "phase2_preparation",
+        "evidence_refs": [],
+        "open_questions": [
+          "Confirm whether internal project_type selects landing_type, delivery mode, or a fixed template branch."
+        ]
+      },
+      {
+        "internal_field": "daily_budget",
+        "provider_field": "budget",
+        "provider_object": "project_create_request",
+        "mapping_kind": "direct",
+        "value_source": "create_strategy_plan.strategy.projects[].daily_budget",
+        "purpose": "planned project daily budget",
+        "verified": false,
+        "required": true,
+        "source": "phase2_preparation",
+        "evidence_refs": ["oceanengine_openapi_project_create_request"],
+        "open_questions": []
+      },
+      {
+        "internal_field": "field_defaults",
+        "provider_field": "",
+        "provider_object": "project_create_request",
+        "mapping_kind": "",
+        "value_source": "create_strategy_plan.strategy.projects[].field_defaults",
+        "purpose": "project default fields",
+        "verified": false,
+        "required": true,
+        "source": "phase2_preparation",
+        "evidence_refs": [],
+        "open_questions": [
+          "Split field_defaults into explicit project API fields before live payload development."
+        ]
+      }
+    ],
+    "create_unit": [
+      {
+        "internal_field": "advertiser_id",
+        "provider_field": "advertiser_id",
+        "provider_object": "promotion_create_request",
+        "mapping_kind": "direct",
+        "value_source": "create_strategy_plan.strategy.projects[].advertiser_id",
+        "purpose": "target advertiser account id",
+        "verified": false,
+        "required": true,
+        "source": "phase2_preparation",
+        "evidence_refs": ["oceanengine_openapi_promotion_create_request"],
+        "open_questions": []
+      },
+      {
+        "internal_field": "project_key",
+        "provider_field": "project_id",
+        "provider_object": "promotion_create_request",
+        "mapping_kind": "created_id_lookup",
+        "value_source": "create_strategy_plan.strategy.projects[].project_key",
+        "purpose": "local planned project key",
+        "verified": false,
+        "required": true,
+        "source": "phase2_preparation",
+        "evidence_refs": ["oceanengine_openapi_promotion_create_request"],
+        "open_questions": [
+          "Confirm ledger lookup from local project_key to provider project_id after project creation."
+        ]
+      },
+      {
+        "internal_field": "unit_key",
+        "provider_field": "name",
+        "provider_object": "promotion_create_request",
+        "mapping_kind": "direct",
+        "value_source": "create_strategy_plan.strategy.projects[].units[].unit_key",
+        "purpose": "local planned unit key used as unit name candidate",
+        "verified": false,
+        "required": true,
+        "source": "phase2_preparation",
+        "evidence_refs": ["oceanengine_openapi_promotion_create_request"],
+        "open_questions": []
+      },
+      {
+        "internal_field": "field_defaults",
+        "provider_field": "",
+        "provider_object": "promotion_create_request",
+        "mapping_kind": "",
+        "value_source": "create_strategy_plan.strategy.projects[].field_defaults",
+        "purpose": "unit default fields",
+        "verified": false,
+        "required": true,
+        "source": "phase2_preparation",
+        "evidence_refs": [],
+        "open_questions": [
+          "Split field_defaults into explicit promotion API fields before live payload development."
+        ]
+      }
+    ],
+    "bind_material": [
+      {
+        "internal_field": "advertiser_id",
+        "provider_field": "advertiser_id",
+        "provider_object": "material_bind_request",
+        "mapping_kind": "direct",
+        "value_source": "create_strategy_plan.strategy.projects[].advertiser_id",
+        "purpose": "target advertiser account id",
+        "verified": false,
+        "required": true,
+        "source": "phase2_preparation",
+        "evidence_refs": ["oceanengine_openapi_material_binding_request"],
+        "open_questions": []
+      },
+      {
+        "internal_field": "project_key",
+        "provider_field": "project_id",
+        "provider_object": "material_bind_request",
+        "mapping_kind": "created_id_lookup",
+        "value_source": "create_strategy_plan.strategy.projects[].project_key",
+        "purpose": "local planned project key",
+        "verified": false,
+        "required": true,
+        "source": "phase2_preparation",
+        "evidence_refs": ["oceanengine_openapi_material_binding_request"],
+        "open_questions": [
+          "Confirm project_id is needed for material binding or inherited from promotion context."
+        ]
+      },
+      {
+        "internal_field": "unit_key",
+        "provider_field": "promotion_id",
+        "provider_object": "material_bind_request",
+        "mapping_kind": "created_id_lookup",
+        "value_source": "create_strategy_plan.strategy.projects[].units[].unit_key",
+        "purpose": "local planned unit key",
+        "verified": false,
+        "required": true,
+        "source": "phase2_preparation",
+        "evidence_refs": ["oceanengine_openapi_material_binding_request"],
+        "open_questions": [
+          "Confirm ledger lookup from local unit_key to provider promotion_id after unit creation."
+        ]
+      },
+      {
+        "internal_field": "material_id",
+        "provider_field": "material_id",
+        "provider_object": "material_bind_request",
+        "mapping_kind": "direct",
+        "value_source": "create_strategy_plan.strategy.projects[].units[].materials[].material_id",
+        "purpose": "source material identity",
+        "verified": false,
+        "required": true,
+        "source": "phase2_preparation",
+        "evidence_refs": ["oceanengine_openapi_material_binding_request"],
+        "open_questions": [
+          "Confirm whether provider expects material_id, video_material_id, or a nested material list for this operation."
+        ]
+      }
+    ]
+  }
+}
