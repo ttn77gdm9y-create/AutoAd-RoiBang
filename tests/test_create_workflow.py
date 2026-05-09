@@ -2611,6 +2611,12 @@ def test_create_phase2_yzt_dry_chain_runs_preview_to_dry_run_without_execute(tmp
     assert result["dry_run_summary"]["project_count"] == 1
     assert result["dry_run_summary"]["unit_count"] == 1
     assert result["approved_for_execute"] is False
+    assert result["blocking_summary"] == {
+        "blocked_reason_count": 0,
+        "plain_language": "完整本地预演已通过，但真实创建仍然关闭。",
+        "needs_real_create": False,
+    }
+    assert result["human_next_steps"] == ["人工复核完整预演产物里的项目名、账户、预算和素材分配。"]
     assert result["violations"] == []
     assert result["actions"] == []
 
@@ -3009,6 +3015,76 @@ def test_yzt_preview_local_config_path_is_ignored_and_documented():
     assert "configs/create/yzt-wx-mini-game.preview.local.json" in readme
     assert "configs/create/yzt-wx-mini-game.preview.local.json" in closeout
     assert "不要提交真实账户" in readme
+
+
+def test_prepare_yzt_local_preview_config_creates_private_copy(tmp_path: Path):
+    from roibang_v2.workflows.create_phase2_yzt_local_config_prepare import prepare_yzt_local_preview_config
+
+    example_path = tmp_path / "configs" / "create" / "yzt-wx-mini-game.preview.example.json"
+    local_path = tmp_path / "configs" / "create" / "yzt-wx-mini-game.preview.local.json"
+    example_path.parent.mkdir(parents=True)
+    example_path.write_text(
+        json.dumps(
+            {
+                "yzt_create_preview": {
+                    "template_name": "微小每付7R男",
+                    "accounts": [{"advertiser_id": "target-advertiser-id"}],
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = prepare_yzt_local_preview_config(example_path=example_path, local_path=local_path)
+
+    assert result["ok"] is True
+    assert result["workflow"] == "create_phase2_yzt_local_config_prepare"
+    assert result["phase"] == "phase2_preparation"
+    assert result["execution_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert result["status"] == "created"
+    assert result["summary"]["created"] is True
+    assert result["summary"]["local_config"] == str(local_path)
+    assert local_path.read_text(encoding="utf-8") == example_path.read_text(encoding="utf-8")
+    assert "configs/create/*.local.json" in result["safety_notes"][0]
+    assert "--preview-config" in result["operator_guide"]["next_commands"][0]
+    assert str(local_path) in result["operator_guide"]["next_commands"][0]
+    assert result["actions"] == []
+
+
+def test_prepare_yzt_local_preview_config_does_not_overwrite_existing_private_copy(tmp_path: Path):
+    from roibang_v2.workflows.create_phase2_yzt_local_config_prepare import prepare_yzt_local_preview_config
+
+    example_path = tmp_path / "example.json"
+    local_path = tmp_path / "local.json"
+    example_path.write_text('{"yzt_create_preview":{"template_name":"微小每付通投"}}', encoding="utf-8")
+    local_path.write_text('{"yzt_create_preview":{"accounts":[{"advertiser_id":"real-local-account"}]}}', encoding="utf-8")
+
+    result = prepare_yzt_local_preview_config(example_path=example_path, local_path=local_path)
+
+    assert result["ok"] is True
+    assert result["status"] == "already_exists"
+    assert result["summary"]["created"] is False
+    assert "real-local-account" in local_path.read_text(encoding="utf-8")
+    assert result["human_next_steps"][0] == "本地私有配置已存在；直接编辑它，不会自动覆盖。"
+
+
+def test_prepare_yzt_local_preview_config_cli_outputs_operator_guide(tmp_path: Path, capsys):
+    example_path = tmp_path / "example.json"
+    local_path = tmp_path / "local.json"
+    example_path.write_text('{"yzt_create_preview":{"template_name":"微小每付7R通投"}}', encoding="utf-8")
+
+    module = _load_script("run_create_phase2_yzt_local_config_prepare")
+    exit_code = module.run_from_args(["--example-config", str(example_path), "--local-config", str(local_path)])
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["workflow"] == "create_phase2_yzt_local_config_prepare"
+    assert output["status"] == "created"
+    assert output["operator_guide"]["editable_fields"][0]["field"] == "template_name"
+    assert output["operator_guide"]["editable_fields"][0]["english_meaning"] == "template name，模板名"
+    assert local_path.exists()
 
 
 def test_yzt_preview_example_config_blocks_placeholder_accounts():
@@ -3459,6 +3535,59 @@ def test_create_phase2_yzt_material_pool_check_blocks_short_pool(tmp_path: Path)
     assert result["human_next_steps"] == ["先同步或导入素材池，或减少本次项目数、单元数、每单元素材数。"]
 
 
+def test_create_phase2_yzt_material_pool_check_treats_platform_status_3_as_approved(tmp_path: Path):
+    from roibang_v2.workflows.create_phase2_yzt_material_pool_check import build_create_phase2_yzt_material_pool_check
+
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE product_source_material_candidates SET review_status = '3'")
+
+    result = build_create_phase2_yzt_material_pool_check(
+        preview_config={
+            "template_name": "微小每付7R男",
+            "owner": "郭靖",
+            "target_date": "2026-05-09",
+            "batch_generated_at": "2026-05-09T14:10:00+08:00",
+            "source_advertiser_id": "source-1",
+            "organization_id": "org-1",
+            "pool_key": "pool-yzt-wx-7r",
+            "defaults": {"daily_budget": 300, "project_count": 1, "units_per_project": 1},
+            "roi_coefficient": 0.41,
+            "material_requirements": {
+                "material_type": "video",
+                "materials_per_unit": 2,
+                "dedupe_scope": "request",
+            },
+            "accounts": [{"advertiser_id": "target-1"}],
+        },
+        policy={
+            "create_strategy_plan": {"candidate_filters": {"allowed_review_statuses": ["APPROVED"]}},
+            "create_phase2_template_slot_prep": {
+                "product_template_catalog": {
+                    "product": "勇者突进",
+                    "platform": "WECHAT_GAME",
+                    "script_scope": "勇者突进微信小游戏专用",
+                    "templates": [
+                        {
+                            "template_key": "wx_7r_male",
+                            "project_template_name": "微小每付7R男",
+                            "roi_goal": {"frontend_label": "ROI系数", "required": True},
+                            "gender": {"value": "1", "label": "男"},
+                            "age": {"value": [], "label": "不限"},
+                        }
+                    ],
+                }
+            },
+        },
+        db_path=db_path,
+    )
+
+    assert result["ok"] is True
+    assert result["summary"]["usable_material_count"] == 4
+    assert result["violations"] == []
+
+
 def test_create_phase2_yzt_material_pool_check_cli_uses_manual_config(tmp_path: Path, capsys):
     db_path = tmp_path / "roibang.sqlite3"
     _seed_create_db(db_path)
@@ -3794,6 +3923,7 @@ def test_create_phase2_yzt_preparation_check_cli_uses_manual_config(tmp_path: Pa
     assert output["check_steps"][-1]["step"] == "material_pool_check"
     assert output["operator_guide"]["status"] == "ready_for_dry_chain"
     assert "run_create_phase2_yzt_dry_chain.py" in output["operator_guide"]["next_command"]
+    assert str(preview_path) in output["operator_guide"]["next_command"]
     assert output["execution_enabled"] is False
     assert output["external_api_calls"] == 0
 

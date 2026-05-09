@@ -186,10 +186,18 @@ the fixed create chain, and `chain_handoff`, meaning the next safe steps: create
 request, strategy plan, preflight, and dry-run. The output still has
 `execution_enabled=false`, `external_api_calls=0`, and `actions=[]`.
 
-For real operator use, copy the example config to
-`configs/create/yzt-wx-mini-game.preview.local.json` and edit that local file.
-The path `configs/create/*.local.json` is ignored by git, so real account IDs
-must stay there instead of in the example config.
+For real operator use, run the local config prepare helper:
+
+```bash
+PYTHONPATH=src python3 scripts/run_create_phase2_yzt_local_config_prepare.py
+```
+
+The helper copies the example config to
+`configs/create/yzt-wx-mini-game.preview.local.json` only when the local file
+does not already exist, then prints an `operator_guide`. `example` means 示例配置,
+`local` means 本地私有配置, and `operator_guide` means 操作员填写指南. The path
+`configs/create/*.local.json` is ignored by git, so real account IDs must stay
+there instead of in the example config.
 
 Phase 2 preparation also has a 勇者突进 full dry create chain. It is a local
 complete rehearsal, not real creation.

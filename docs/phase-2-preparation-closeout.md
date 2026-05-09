@@ -144,13 +144,14 @@ use, for example:
 configs/create/yzt-wx-mini-game.preview.local.json
 ```
 
-Create it by copying the safe example config:
+Create it with the local config prepare helper:
 
 ```bash
-cp configs/create/yzt-wx-mini-game.preview.example.json \
-  configs/create/yzt-wx-mini-game.preview.local.json
+PYTHONPATH=src python3 scripts/run_create_phase2_yzt_local_config_prepare.py
 ```
 
-That local file is ignored by git through `configs/create/*.local.json`, so real
-account IDs are not committed. The example config should remain safe and
-shareable.
+The helper copies the safe example config only when the local file does not
+already exist, so it does not overwrite real account IDs already filled by the
+operator. `example` means 示例配置, and `local` means 本地私有配置. That local file
+is ignored by git through `configs/create/*.local.json`, so real account IDs are
+not committed. The example config should remain safe and shareable.

@@ -65,6 +65,11 @@ def _allowed_review_statuses(filters: dict[str, Any]) -> set[str]:
     return {str(item).strip() for item in value if str(item).strip()}
 
 
+def _normalized_review_status(value: Any) -> str:
+    raw = str(value or "").strip()
+    return {"3": "APPROVED"}.get(raw, raw)
+
+
 def _filter_candidate_rows(rows: list[dict[str, Any]], *, policy: dict[str, Any]) -> list[dict[str, Any]]:
     filters = _candidate_filters(policy)
     allowed_statuses = _allowed_review_statuses(filters)
@@ -72,7 +77,7 @@ def _filter_candidate_rows(rows: list[dict[str, Any]], *, policy: dict[str, Any]
     min_stat_cost = _float_value(filters.get("min_candidate_stat_cost"), 0)
     filtered: list[dict[str, Any]] = []
     for row in rows:
-        if allowed_statuses and str(row.get("review_status") or "") not in allowed_statuses:
+        if allowed_statuses and _normalized_review_status(row.get("review_status")) not in allowed_statuses:
             continue
         if float(row.get("score") or 0) < min_score:
             continue

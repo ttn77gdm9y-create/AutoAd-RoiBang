@@ -29,6 +29,7 @@ def run_from_args(argv: list[str] | None = None) -> int:
         {
             "create_phase2_yzt_preparation_check": {
                 "preview_config": preview_config,
+                "preview_config_path": args.preview_config,
                 "policy": policy,
             }
         },

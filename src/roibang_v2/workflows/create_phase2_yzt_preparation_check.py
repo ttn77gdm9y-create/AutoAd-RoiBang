@@ -38,25 +38,28 @@ def _dedupe(rows: list[str]) -> list[str]:
     return result
 
 
-def _preparation_command() -> str:
+DEFAULT_PREVIEW_CONFIG_PATH = "configs/create/yzt-wx-mini-game.preview.example.json"
+
+
+def _preparation_command(*, preview_config_path: str = DEFAULT_PREVIEW_CONFIG_PATH) -> str:
     return (
         "PYTHONPATH=src python3 scripts/run_create_phase2_yzt_preparation_check.py "
         "--config configs/runtime.example.json "
-        "--preview-config configs/create/yzt-wx-mini-game.preview.example.json "
+        f"--preview-config {preview_config_path} "
         "--policy policies/strategy.example.json"
     )
 
 
-def _dry_chain_command() -> str:
+def _dry_chain_command(*, preview_config_path: str = DEFAULT_PREVIEW_CONFIG_PATH) -> str:
     return (
         "PYTHONPATH=src python3 scripts/run_create_phase2_yzt_dry_chain.py "
         "--config configs/runtime.example.json "
-        "--preview-config configs/create/yzt-wx-mini-game.preview.example.json "
+        f"--preview-config {preview_config_path} "
         "--policy policies/strategy.example.json"
     )
 
 
-def _operator_guide(*, ok: bool, next_steps: list[str]) -> dict[str, Any]:
+def _operator_guide(*, ok: bool, next_steps: list[str], preview_config_path: str = DEFAULT_PREVIEW_CONFIG_PATH) -> dict[str, Any]:
     if ok:
         return {
             "status": "ready_for_dry_chain",
@@ -65,13 +68,13 @@ def _operator_guide(*, ok: bool, next_steps: list[str]) -> dict[str, Any]:
                 "运行完整预演命令。",
                 "检查完整预演产物里的项目名、账户、素材数量。",
             ],
-            "next_command": _dry_chain_command(),
+            "next_command": _dry_chain_command(preview_config_path=preview_config_path),
         }
     return {
         "status": "needs_fix",
         "title": "当前不能进入完整预演",
         "ordered_steps": [*next_steps, "修完后重新运行一键准备检查。"],
-        "next_command": _preparation_command(),
+        "next_command": _preparation_command(preview_config_path=preview_config_path),
     }
 
 
@@ -80,6 +83,7 @@ def build_create_phase2_yzt_preparation_check(
     preview_config: dict[str, Any],
     policy: dict[str, Any],
     db_path: str | Path,
+    preview_config_path: str = DEFAULT_PREVIEW_CONFIG_PATH,
 ) -> dict[str, Any]:
     config_check = build_create_phase2_yzt_config_check(preview_config=preview_config, policy=policy)
     account_pool_check = build_create_phase2_yzt_account_pool_check(
@@ -103,7 +107,7 @@ def build_create_phase2_yzt_preparation_check(
     next_steps = _dedupe([str(item) for check in checks for item in (check.get("human_next_steps") or [])])
     if ok:
         next_steps = ["准备检查都通过；下一步可以跑完整预演。"]
-    operator_guide = _operator_guide(ok=ok, next_steps=next_steps)
+    operator_guide = _operator_guide(ok=ok, next_steps=next_steps, preview_config_path=preview_config_path)
     return {
         "ok": ok,
         "workflow": "create_phase2_yzt_preparation_check",
@@ -139,6 +143,7 @@ def run_create_phase2_yzt_preparation_check_request(
         preview_config=cfg.get("preview_config") if isinstance(cfg.get("preview_config"), dict) else {},
         policy=cfg.get("policy") if isinstance(cfg.get("policy"), dict) else {},
         db_path=db_path,
+        preview_config_path=str(cfg.get("preview_config_path") or DEFAULT_PREVIEW_CONFIG_PATH),
     )
     artifact_path = write_run_artifact(runs_dir, "create_phase2_yzt_preparation_check", payload)
     return {**payload, "artifact_path": str(artifact_path)}

@@ -68,6 +68,8 @@ def _dedupe(values: list[str]) -> list[str]:
 
 
 def _human_next_steps(violations: list[str]) -> list[str]:
+    if not violations:
+        return ["人工复核完整预演产物里的项目名、账户、预算和素材分配。"]
     joined = "\n".join(violations)
     steps: list[str] = []
     if "daily budget" in joined:
@@ -82,6 +84,12 @@ def _human_next_steps(violations: list[str]) -> list[str]:
 
 
 def _blocking_summary(violations: list[str]) -> dict[str, Any]:
+    if not violations:
+        return {
+            "blocked_reason_count": 0,
+            "plain_language": "完整本地预演已通过，但真实创建仍然关闭。",
+            "needs_real_create": False,
+        }
     return {
         "blocked_reason_count": len(violations),
         "plain_language": "完整预演被本地检查拦住，没有进入真实创建。",

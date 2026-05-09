@@ -134,12 +134,17 @@ It also writes `operator_guide`, meaning a direct operation guide: if checks
 fail, it lists the fix order; if checks pass, it prints the full dry-chain
 command to run next.
 
-For real operator use, copy the safe example config to a private local file:
+For real operator use, prepare a private local config with the helper script:
 
 ```bash
-cp configs/create/yzt-wx-mini-game.preview.example.json \
-  configs/create/yzt-wx-mini-game.preview.local.json
+PYTHONPATH=src python3 scripts/run_create_phase2_yzt_local_config_prepare.py
 ```
+
+The helper copies the safe `example` config to
+`configs/create/yzt-wx-mini-game.preview.local.json` only when the local file
+does not already exist. `example` means 示例配置; `local` means 本地私有配置.
+It prints `operator_guide`, meaning 操作员填写指南, including field meanings and
+the next preparation, preview, and dry-chain commands.
 
 Then edit `configs/create/yzt-wx-mini-game.preview.local.json` and replace the
 placeholder accounts with real account IDs. This `*.local.json` path is ignored
