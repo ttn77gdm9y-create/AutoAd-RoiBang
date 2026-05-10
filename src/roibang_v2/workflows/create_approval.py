@@ -15,6 +15,9 @@ from roibang_v2.workflows.create_lineage import (
 from roibang_v2.workflows.create_provider_readiness import not_ready_provider_readiness_contract
 
 
+_PAYLOAD_REVIEW_OPERATIONS = ("create_project", "create_unit", "bind_material")
+
+
 def _approval_config(request: dict[str, Any]) -> dict[str, Any]:
     value = request.get("create_approval")
     return dict(value) if isinstance(value, dict) else dict(request)
@@ -103,6 +106,73 @@ def _provider_id_ledger_requirements(dry_run: dict[str, Any]) -> dict[str, Any]:
 def _provider_payload_drafts(dry_run: dict[str, Any]) -> list[dict[str, Any]]:
     drafts = dry_run.get("provider_payload_drafts")
     return [draft for draft in drafts if isinstance(draft, dict)] if isinstance(drafts, list) else []
+
+
+def _lookup_placeholder_count(value: Any) -> int:
+    if isinstance(value, str):
+        return 1 if value.startswith("<lookup:") and value.endswith(">") else 0
+    if isinstance(value, dict):
+        return sum(_lookup_placeholder_count(item) for item in value.values())
+    if isinstance(value, list):
+        return sum(_lookup_placeholder_count(item) for item in value)
+    return 0
+
+
+def _draft_live_payload_count(draft: dict[str, Any]) -> int:
+    return 1 if bool(draft.get("live_api_payload", False)) or bool(draft.get("live_payload", False)) else 0
+
+
+def _payload_operation_summary(drafts: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "payload_count": len(drafts),
+        "executable_true_count": sum(1 for draft in drafts if bool(draft.get("executable", False))),
+        "live_payload_count": sum(_draft_live_payload_count(draft) for draft in drafts),
+        "candidate_draft_count": sum(1 for draft in drafts if str(draft.get("field_mapping_mode") or "") == "candidate"),
+        "candidate_unverified_field_count": sum(int(draft.get("candidate_unverified_field_count") or 0) for draft in drafts),
+        "unresolved_lookup_placeholder_count": sum(
+            _lookup_placeholder_count(draft.get("payload") if isinstance(draft.get("payload"), dict) else {})
+            for draft in drafts
+        ),
+    }
+
+
+def _payload_review(dry_run: dict[str, Any]) -> dict[str, Any]:
+    drafts = _provider_payload_drafts(dry_run)
+    drafts_by_operation = {
+        operation: [draft for draft in drafts if str(draft.get("operation") or "") == operation]
+        for operation in _PAYLOAD_REVIEW_OPERATIONS
+    }
+    by_operation = {
+        operation: _payload_operation_summary(operation_drafts)
+        for operation, operation_drafts in drafts_by_operation.items()
+    }
+    total_summary = _payload_operation_summary(drafts)
+    payload_counts = {operation: int(summary["payload_count"]) for operation, summary in by_operation.items()}
+    payload_counts["total"] = int(total_summary["payload_count"])
+    return {
+        "drafts_by_operation": drafts_by_operation,
+        "manual_review_summary": {
+            "status": "record_only_not_execute_switch",
+            "plain_language": "approve 只是批准记录，不是执行开关；create_execute 仍然 hard-block。",
+            "payload_counts": payload_counts,
+            "checks": {
+                "all_payloads_executable_false": int(total_summary["executable_true_count"]) == 0,
+                "live_payload_count_zero": int(total_summary["live_payload_count"]) == 0,
+                "candidate_payloads_present": int(total_summary["candidate_draft_count"])
+                + int(total_summary["candidate_unverified_field_count"])
+                > 0,
+                "unresolved_lookup_placeholders_present": int(total_summary["unresolved_lookup_placeholder_count"]) > 0,
+                "create_execute_hard_block_required": True,
+                "approve_is_execute_switch": False,
+                "external_api_calls_zero": True,
+            },
+            "counts": total_summary,
+            "by_operation": by_operation,
+            "execution_enabled": False,
+            "external_api_calls": 0,
+            "actions": [],
+        },
+    }
 
 
 def _actual_provider_payload_draft_digest(drafts: list[dict[str, Any]]) -> dict[str, Any]:
@@ -264,6 +334,7 @@ def build_create_approval(
         "provider_payload_draft_digest": _provider_payload_draft_digest(create_dry_run_artifact),
         "payload_digest_contract": _payload_digest_contract(create_dry_run_artifact),
         "provider_payload_review_summary": _provider_payload_review_summary(create_dry_run_artifact),
+        "payload_review": _payload_review(create_dry_run_artifact),
         "provider_payload_drafts": _provider_payload_drafts(create_dry_run_artifact),
         "provider_readiness_contract": _provider_readiness(create_dry_run_artifact),
         "provider_id_ledger_requirements": _provider_id_ledger_requirements(create_dry_run_artifact),

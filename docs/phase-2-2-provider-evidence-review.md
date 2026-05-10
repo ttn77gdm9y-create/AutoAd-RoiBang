@@ -203,3 +203,25 @@ configs/provider-evidence/oceanengine.create.phase2-review.example.json
 4. 之后再进入 execute 边界设计，但仍不执行真实业务动作。
 
 `approve` 的意思是“批准记录”，只表示人工看过并记录同意进入下一道检查；它不是执行真实创建的开关。
+
+## approve 复核边界增强
+
+`create_approval` 现在会输出 `payload_review` 人工复核视图。
+
+`payload_review.drafts_by_operation` 按三类操作展示 payload 草稿：
+
+- `create_project`：项目创建请求体草稿。
+- `create_unit`：单元创建请求体草稿。
+- `bind_material`：素材推送请求体草稿。
+
+`payload_review.manual_review_summary` 会汇总：
+
+- 每类 payload 数量。
+- 所有 payload 是否仍为 `executable=false`。
+- `live_payload_count` 是否仍为 0。
+- 是否还有 candidate 草稿或 candidate 字段。
+- 是否还有 `<lookup:...>` 占位符。
+- `create_execute` 是否仍需 hard-block。
+- `external_api_calls` 是否仍为 0。
+
+这份摘要只服务人工复核，不是执行开关。即使 approve 记录为 `would_approve`，真实创建也仍必须继续停在 `create_execute` 的硬阻断边界。

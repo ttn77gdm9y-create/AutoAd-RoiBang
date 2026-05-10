@@ -7156,6 +7156,100 @@ def test_create_approval_and_execute_preserve_candidate_payload_boundaries(tmp_p
     assert execute["actions"] == []
 
 
+def test_create_approval_exposes_manual_payload_review_boundary(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    plan = build_create_strategy_plan(request=_create_request()["create_request"], db_path=db_path, policy={})
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+    dry_run = build_create_dry_run(
+        create_strategy_plan_artifact=plan,
+        create_preflight_artifact=preflight,
+        policy={
+            "provider_adapter": {
+                "provider": "oceanengine",
+                "field_mapping_version": "phase2.oceanengine.create_payload.prep.v1",
+                "mapping_verified": False,
+            },
+            "provider_field_map_path": "configs/provider-field-maps/oceanengine.create.phase2-prep.example.json",
+        },
+    )
+
+    approval = build_create_approval(create_dry_run_artifact=dry_run, policy={"auto_approve_phase1": True})
+
+    review = approval["payload_review"]
+    assert set(review["drafts_by_operation"]) == {"create_project", "create_unit", "bind_material"}
+    assert len(review["drafts_by_operation"]["create_project"]) == 1
+    assert len(review["drafts_by_operation"]["create_unit"]) == 2
+    assert len(review["drafts_by_operation"]["bind_material"]) == 4
+    assert review["manual_review_summary"] == {
+        "status": "record_only_not_execute_switch",
+        "plain_language": "approve 只是批准记录，不是执行开关；create_execute 仍然 hard-block。",
+        "payload_counts": {
+            "create_project": 1,
+            "create_unit": 2,
+            "bind_material": 4,
+            "total": 7,
+        },
+        "checks": {
+            "all_payloads_executable_false": True,
+            "live_payload_count_zero": True,
+            "candidate_payloads_present": True,
+            "unresolved_lookup_placeholders_present": True,
+            "create_execute_hard_block_required": True,
+            "approve_is_execute_switch": False,
+            "external_api_calls_zero": True,
+        },
+        "counts": {
+            "payload_count": 7,
+            "executable_true_count": 0,
+            "live_payload_count": 0,
+            "candidate_draft_count": 7,
+            "candidate_unverified_field_count": 0,
+            "unresolved_lookup_placeholder_count": 2,
+        },
+        "by_operation": {
+            "create_project": {
+                "payload_count": 1,
+                "executable_true_count": 0,
+                "live_payload_count": 0,
+                "candidate_draft_count": 1,
+                "candidate_unverified_field_count": 0,
+                "unresolved_lookup_placeholder_count": 0,
+            },
+            "create_unit": {
+                "payload_count": 2,
+                "executable_true_count": 0,
+                "live_payload_count": 0,
+                "candidate_draft_count": 2,
+                "candidate_unverified_field_count": 0,
+                "unresolved_lookup_placeholder_count": 2,
+            },
+            "bind_material": {
+                "payload_count": 4,
+                "executable_true_count": 0,
+                "live_payload_count": 0,
+                "candidate_draft_count": 4,
+                "candidate_unverified_field_count": 0,
+                "unresolved_lookup_placeholder_count": 0,
+            },
+        },
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "actions": [],
+    }
+    material_payload = review["drafts_by_operation"]["bind_material"][0]["payload"]
+    assert material_payload == {
+        "advertiser_id": "source-1",
+        "target_advertiser_ids": ["target-1"],
+        "video_ids": ["source-video-1"],
+    }
+    assert "project_id" not in material_payload
+    assert "promotion_id" not in material_payload
+    assert approval["execute_allowed"] is False
+    assert approval["approved_for_execute"] is False
+    assert approval["external_api_calls"] == 0
+
+
 def test_create_approval_blocks_tampered_provider_payload_digest(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     _seed_create_db(db_path)

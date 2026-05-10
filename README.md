@@ -25,6 +25,8 @@ request -> strategy -> preflight -> dry-run -> approve -> execute
 - `approve`：批准记录，目前仍不是允许真实执行。
 - `execute`：执行阶段，目前必须硬阻断。
 
+`approve` 产物会输出 `payload_review` 人工复核视图。这个视图按 `create_project`、`create_unit`、`bind_material` 三类操作展示 payload 草稿，并汇总 payload 数量、是否仍为 `executable=false`、`live_payload_count` 是否为 0、是否还有 candidate 草稿、是否还有 `<lookup:...>` 占位符，以及 `create_execute` 是否仍需硬阻断。`payload_review` 只方便人工复核，不会打开真实执行。
+
 ## 核心原则
 
 业务动作必须由固定脚本确定性执行。脚本只能读取 JSON 配置、JSON 策略和 SQLite 状态。
@@ -251,7 +253,7 @@ PYTHONPATH=src scripts/run_create_plan_snapshot.py --config configs/runtime.exam
 PYTHONPATH=src scripts/run_create_execute.py --config configs/runtime.example.json --policy policies/strategy.example.json
 ```
 
-这些脚本必须保持本地化和可复盘，不能越过安全开关。
+这些脚本必须保持本地化和可复盘，不能越过安全开关。`run_create_approval.py` 只记录批准复核结果；即使 `policy_decision=would_approve`，也不代表允许真实创建，后续 `run_create_execute.py` 仍必须 hard-block。
 
 ## 定时任务
 
