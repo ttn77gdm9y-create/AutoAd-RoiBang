@@ -2,10 +2,12 @@ import json
 from pathlib import Path
 
 from roibang_v2.config import load_runtime_config
+from roibang_v2.workflows.create_provider_field_map import provider_field_map_contract
 
 
 LIVE_RUNTIME_TEMPLATE = Path("configs/runtime.create-live.local.example.json")
 LIVE_POLICY_TEMPLATE = Path("policies/create-live-execute.local.example.json")
+PHASE2_FIELD_MAP_TEMPLATE = Path("configs/provider-field-maps/oceanengine.create.phase2-prep.example.json")
 SCHEDULER_TEMPLATE = Path("configs/scheduler/roibang-v2.jobs.example.json")
 
 
@@ -55,3 +57,22 @@ def test_live_create_templates_are_not_scheduler_defaults():
 
     assert str(LIVE_RUNTIME_TEMPLATE) not in scheduler
     assert str(LIVE_POLICY_TEMPLATE) not in scheduler
+
+
+def test_phase2_field_map_can_be_marked_verified_with_local_only_confirmations():
+    field_map = _load_json(PHASE2_FIELD_MAP_TEMPLATE)
+    field_map["mapping_verified"] = True
+
+    contract = provider_field_map_contract(
+        field_map,
+        policy={
+            "provider_adapter": {
+                "provider": "oceanengine",
+                "field_mapping_version": "phase2.oceanengine.create_payload.prep.v1",
+            }
+        },
+    )
+
+    assert contract["status"] == "verified"
+    assert contract["missing_required_fields"] == []
+    assert contract["missing_provider_field_count"] == 0

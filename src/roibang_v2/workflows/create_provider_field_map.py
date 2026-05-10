@@ -137,12 +137,13 @@ def provider_field_map_contract(field_map: dict[str, Any], policy: dict[str, Any
     unknown_internal_fields = _unknown_internal_fields(operations)
     provider_mismatches = _provider_mismatches(field_map, policy)
     version_mismatches = _field_mapping_version_mismatches(field_map, policy)
+    effectively_verified_count = sum(1 for entry in entries if _is_effectively_verified(entry))
     status = (
         "verified"
         if (
             entries
             and mapping_verified
-            and verified_count == len(entries)
+            and effectively_verified_count == len(entries)
             and missing_provider_count == 0
             and not missing_required_fields
             and not duplicate_internal_fields
@@ -273,6 +274,14 @@ def _duplicate_provider_fields(operations: dict[str, Any]) -> list[dict[str, Any
 
 def _is_local_only(entry: dict[str, Any]) -> bool:
     return str(entry.get("mapping_kind") or "").strip() in {"local_lookup_key", "local_only"}
+
+
+def _is_effectively_verified(entry: dict[str, Any]) -> bool:
+    return bool(entry.get("verified", False)) or (
+        _is_local_only(entry)
+        and bool(entry.get("local_only_confirmed", False))
+        and bool(str(entry.get("local_only_confirmation_note") or "").strip())
+    )
 
 
 def _unknown_internal_fields(operations: dict[str, Any]) -> list[dict[str, str]]:
