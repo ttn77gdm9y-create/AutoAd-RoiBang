@@ -6688,6 +6688,73 @@ def test_create_approval_blocks_failed_dry_run_and_policy_limit(tmp_path: Path):
     assert "dry-run unit count exceeds policy limit" in result["violations"]
 
 
+def test_create_execute_plan_carries_provider_id_ledger_gate(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    plan = build_create_strategy_plan(request=_create_request()["create_request"], db_path=db_path, policy={})
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+    dry_run = build_create_dry_run(create_strategy_plan_artifact=plan, create_preflight_artifact=preflight, policy={})
+    approval = build_create_approval(create_dry_run_artifact=dry_run, policy={"auto_approve_phase1": True})
+
+    result = build_create_execute(create_approval_artifact=approval, policy={})
+
+    assert dry_run["provider_id_ledger_requirements"]["status"] == "planned"
+    assert dry_run["provider_id_ledger_requirements"]["produced_by_create_project"] == [
+        {"entity_type": "project", "local_key": "target-1-p001", "provider_id_source": "create_project_response"}
+    ]
+    assert dry_run["provider_id_ledger_requirements"]["produced_by_create_unit"] == [
+        {
+            "entity_type": "promotion",
+            "local_key": "target-1-p001-u01",
+            "parent_local_key": "target-1-p001",
+            "provider_id_source": "create_unit_response",
+        },
+        {
+            "entity_type": "promotion",
+            "local_key": "target-1-p001-u02",
+            "parent_local_key": "target-1-p001",
+            "provider_id_source": "create_unit_response",
+        },
+    ]
+    assert dry_run["provider_id_ledger_requirements"]["required_before_create_unit"] == [
+        {"field": "project_id", "entity_type": "project", "local_key": "target-1-p001", "placeholder": "<lookup:target-1-p001>"}
+    ]
+    assert dry_run["provider_id_ledger_requirements"]["required_before_bind_material"] == [
+        {"field": "project_id", "entity_type": "project", "local_key": "target-1-p001", "placeholder": "<lookup:target-1-p001>"},
+        {
+            "field": "promotion_id",
+            "entity_type": "promotion",
+            "local_key": "target-1-p001-u01",
+            "placeholder": "<lookup:target-1-p001-u01>",
+        },
+        {
+            "field": "promotion_id",
+            "entity_type": "promotion",
+            "local_key": "target-1-p001-u02",
+            "placeholder": "<lookup:target-1-p001-u02>",
+        },
+    ]
+    assert approval["provider_id_ledger_requirements"] == dry_run["provider_id_ledger_requirements"]
+    assert result["provider_id_ledger_gate"] == {
+        "status": "hard_blocked_phase1",
+        "ready_for_live_execute": False,
+        "required_before_create_unit_count": 1,
+        "required_before_bind_material_count": 3,
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "actions": [],
+    }
+    assert result["execution_plan"]["provider_id_ledger_gate"] == result["provider_id_ledger_gate"]
+    assert result["execution_plan"]["steps"][1]["requires_provider_id_ledger"] == {
+        "status": "required",
+        "required_count": 1,
+    }
+    assert result["execution_plan"]["steps"][2]["requires_provider_id_ledger"] == {
+        "status": "required",
+        "required_count": 3,
+    }
+
+
 def test_create_execute_is_hard_blocked_in_phase1_even_after_recorded_approval(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     _seed_create_db(db_path)
@@ -6740,12 +6807,20 @@ def test_create_execute_is_hard_blocked_in_phase1_even_after_recorded_approval(t
                 "order": 2,
                 "planned_count": 2,
                 "status": "blocked_in_phase1",
+                "requires_provider_id_ledger": {
+                    "status": "required",
+                    "required_count": 1,
+                },
             },
             {
                 "step": "bind_material",
                 "order": 3,
                 "planned_count": 4,
                 "status": "blocked_in_phase1",
+                "requires_provider_id_ledger": {
+                    "status": "required",
+                    "required_count": 3,
+                },
             },
         ],
         "failure_policy": {
@@ -6796,6 +6871,15 @@ def test_create_execute_is_hard_blocked_in_phase1_even_after_recorded_approval(t
                 "create_unit": "create_strategy_plan.strategy.projects[].units[]",
                 "bind_material": "create_strategy_plan.strategy.projects[].units[].materials[]",
             },
+        },
+        "provider_id_ledger_gate": {
+            "status": "hard_blocked_phase1",
+            "ready_for_live_execute": False,
+            "required_before_create_unit_count": 1,
+            "required_before_bind_material_count": 3,
+            "execution_enabled": False,
+            "external_api_calls": 0,
+            "actions": [],
         },
         "live_api_payloads": [],
     }

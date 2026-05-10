@@ -268,6 +268,96 @@ def _provider_payload_draft_digest(provider_payload_drafts: list[dict[str, Any]]
     }
 
 
+def _unique_rows(rows: list[dict[str, str]], key_fields: tuple[str, ...]) -> list[dict[str, str]]:
+    seen: set[tuple[str, ...]] = set()
+    result: list[dict[str, str]] = []
+    for row in rows:
+        key = tuple(str(row.get(field) or "") for field in key_fields)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(row)
+    return result
+
+
+def _provider_id_ledger_requirements(tasks: list[dict[str, Any]]) -> dict[str, Any]:
+    produced_projects: list[dict[str, str]] = []
+    produced_units: list[dict[str, str]] = []
+    required_before_units: list[dict[str, str]] = []
+    required_before_materials: list[dict[str, str]] = []
+    for task in tasks:
+        project_key = str(task.get("project_key") or "")
+        if not project_key:
+            continue
+        produced_projects.append(
+            {
+                "entity_type": "project",
+                "local_key": project_key,
+                "provider_id_source": "create_project_response",
+            }
+        )
+        units = task.get("units") if isinstance(task.get("units"), list) else []
+        for unit in [row for row in units if isinstance(row, dict)]:
+            unit_key = str(unit.get("unit_key") or "")
+            project_placeholder = str(unit.get("project_id") or "")
+            if project_placeholder:
+                required_before_units.append(
+                    {
+                        "field": "project_id",
+                        "entity_type": "project",
+                        "local_key": project_key,
+                        "placeholder": project_placeholder,
+                    }
+                )
+            if unit_key:
+                produced_units.append(
+                    {
+                        "entity_type": "promotion",
+                        "local_key": unit_key,
+                        "parent_local_key": project_key,
+                        "provider_id_source": "create_unit_response",
+                    }
+                )
+            materials = unit.get("materials") if isinstance(unit.get("materials"), list) else []
+            for material in [row for row in materials if isinstance(row, dict)]:
+                material_project_placeholder = str(material.get("project_id") or "")
+                material_promotion_placeholder = str(material.get("promotion_id") or "")
+                if material_project_placeholder:
+                    required_before_materials.append(
+                        {
+                            "field": "project_id",
+                            "entity_type": "project",
+                            "local_key": project_key,
+                            "placeholder": material_project_placeholder,
+                        }
+                    )
+                if unit_key and material_promotion_placeholder:
+                    required_before_materials.append(
+                        {
+                            "field": "promotion_id",
+                            "entity_type": "promotion",
+                            "local_key": unit_key,
+                            "placeholder": material_promotion_placeholder,
+                        }
+                    )
+    return {
+        "status": "planned",
+        "produced_by_create_project": _unique_rows(produced_projects, ("entity_type", "local_key")),
+        "produced_by_create_unit": _unique_rows(produced_units, ("entity_type", "local_key")),
+        "required_before_create_unit": _unique_rows(
+            required_before_units,
+            ("field", "entity_type", "local_key", "placeholder"),
+        ),
+        "required_before_bind_material": _unique_rows(
+            required_before_materials,
+            ("field", "entity_type", "local_key", "placeholder"),
+        ),
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "actions": [],
+    }
+
+
 def _provider_field_map_check_ref(artifact: dict[str, Any] | None) -> dict[str, Any]:
     if not isinstance(artifact, dict):
         return {}
@@ -544,6 +634,7 @@ def build_create_dry_run(
         "provider_field_map_contract": field_map_contract,
         "provider_field_map_digest": field_map_digest,
         "provider_readiness_contract": provider_readiness,
+        "provider_id_ledger_requirements": _provider_id_ledger_requirements(candidate_tasks),
         "provider_payload_draft_digest": _provider_payload_draft_digest(emitted_provider_payload_drafts),
         "provider_payload_drafts": emitted_provider_payload_drafts,
         "redacted_payload_drafts": redacted_payload_drafts if not violations else [],

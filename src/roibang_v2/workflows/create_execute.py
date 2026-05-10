@@ -34,7 +34,45 @@ def _summary(approval: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _execution_plan(summary: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
+def _provider_id_ledger_requirements(approval: dict[str, Any]) -> dict[str, Any]:
+    requirements = approval.get("provider_id_ledger_requirements")
+    if isinstance(requirements, dict):
+        return requirements
+    return {
+        "status": "missing",
+        "produced_by_create_project": [],
+        "produced_by_create_unit": [],
+        "required_before_create_unit": [],
+        "required_before_bind_material": [],
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "actions": [],
+    }
+
+
+def _provider_id_ledger_gate(requirements: dict[str, Any]) -> dict[str, Any]:
+    required_before_create_unit = requirements.get("required_before_create_unit")
+    required_before_bind_material = requirements.get("required_before_bind_material")
+    return {
+        "status": "hard_blocked_phase1",
+        "ready_for_live_execute": False,
+        "required_before_create_unit_count": len(required_before_create_unit)
+        if isinstance(required_before_create_unit, list)
+        else 0,
+        "required_before_bind_material_count": len(required_before_bind_material)
+        if isinstance(required_before_bind_material, list)
+        else 0,
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "actions": [],
+    }
+
+
+def _execution_plan(
+    summary: dict[str, Any],
+    policy: dict[str, Any],
+    provider_id_ledger_gate: dict[str, Any],
+) -> dict[str, Any]:
     return {
         "mode": "phase1_skeleton_only",
         "steps": [
@@ -49,12 +87,20 @@ def _execution_plan(summary: dict[str, Any], policy: dict[str, Any]) -> dict[str
                 "order": 2,
                 "planned_count": int(summary.get("unit_count") or 0),
                 "status": "blocked_in_phase1",
+                "requires_provider_id_ledger": {
+                    "status": "required",
+                    "required_count": int(provider_id_ledger_gate.get("required_before_create_unit_count") or 0),
+                },
             },
             {
                 "step": "bind_material",
                 "order": 3,
                 "planned_count": int(summary.get("material_count") or 0),
                 "status": "blocked_in_phase1",
+                "requires_provider_id_ledger": {
+                    "status": "required",
+                    "required_count": int(provider_id_ledger_gate.get("required_before_bind_material_count") or 0),
+                },
             },
         ],
         "failure_policy": {
@@ -64,6 +110,7 @@ def _execution_plan(summary: dict[str, Any], policy: dict[str, Any]) -> dict[str
             "retry_enabled": False,
         },
         "payload_schema": disabled_create_payload_schema(policy),
+        "provider_id_ledger_gate": provider_id_ledger_gate,
         "live_api_payloads": [],
     }
 
@@ -194,6 +241,8 @@ def build_create_execute(
     violations = _violations(create_approval_artifact, policy)
     summary = _summary(create_approval_artifact)
     payload_schema = disabled_create_payload_schema(policy)
+    provider_id_requirements = _provider_id_ledger_requirements(create_approval_artifact)
+    provider_id_gate = _provider_id_ledger_gate(provider_id_requirements)
     return {
         "ok": not violations,
         "workflow": "create_execute",
@@ -215,10 +264,12 @@ def build_create_execute(
         },
         "candidate_task_digest": _candidate_task_digest(create_approval_artifact),
         "payload_schema": payload_schema,
-        "execution_plan": _execution_plan(summary, policy),
+        "execution_plan": _execution_plan(summary, policy, provider_id_gate),
         "provider_field_map_digest": _provider_field_map_digest(create_approval_artifact),
         "provider_payload_draft_digest": _provider_payload_draft_digest(create_approval_artifact),
         "provider_readiness_contract": _provider_readiness(create_approval_artifact),
+        "provider_id_ledger_requirements": provider_id_requirements,
+        "provider_id_ledger_gate": provider_id_gate,
         "audit": _audit_config(policy),
         "violations": violations,
         "approved_for_execute": False,

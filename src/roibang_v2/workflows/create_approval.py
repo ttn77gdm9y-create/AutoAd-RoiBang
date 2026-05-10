@@ -84,6 +84,22 @@ def _provider_payload_draft_digest(dry_run: dict[str, Any]) -> dict[str, Any]:
     return {"algorithm": "sha256", "value": "", "provider_payload_draft_count": 0}
 
 
+def _provider_id_ledger_requirements(dry_run: dict[str, Any]) -> dict[str, Any]:
+    requirements = dry_run.get("provider_id_ledger_requirements")
+    if isinstance(requirements, dict):
+        return requirements
+    return {
+        "status": "missing",
+        "produced_by_create_project": [],
+        "produced_by_create_unit": [],
+        "required_before_create_unit": [],
+        "required_before_bind_material": [],
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "actions": [],
+    }
+
+
 def _violations(dry_run: dict[str, Any], policy: dict[str, Any]) -> list[str]:
     violations: list[str] = []
     dry_run_ref = create_ref(workflow="create_dry_run", artifact=dry_run)
@@ -178,6 +194,7 @@ def build_create_approval(
         "provider_field_map_digest": _provider_field_map_digest(create_dry_run_artifact),
         "provider_payload_draft_digest": _provider_payload_draft_digest(create_dry_run_artifact),
         "provider_readiness_contract": _provider_readiness(create_dry_run_artifact),
+        "provider_id_ledger_requirements": _provider_id_ledger_requirements(create_dry_run_artifact),
         "policy": {
             "auto_approve_phase1": bool(policy.get("auto_approve_phase1", False)),
             "max_projects_per_approval": _policy_limit(policy, "max_projects_per_approval", 50),
