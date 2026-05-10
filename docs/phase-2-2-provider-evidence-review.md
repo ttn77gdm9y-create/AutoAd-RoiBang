@@ -397,23 +397,28 @@ PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_live_approva
 PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_live_execution_pack.py --config configs/runtime.example.json --policy policies/strategy.example.json
 ```
 
-当前示例 runtime（运行时配置）和 policy（策略配置）默认关闭真实执行，所以固定脚本会输出 blocked（阻断）状态；这符合预期。下一阶段才会做受控真实执行固定脚本，读取这个 execution pack 后构造真实 HTTP transport（HTTP 请求发送层）。
+当前示例 runtime（运行时配置）和 policy（策略配置）默认关闭真实执行，所以固定脚本会输出 blocked（阻断）状态；这符合预期。`create_live_execution_pack` 现在只是辅助复核包，不是主执行路径的必需输入。
 
 ## one-shot first live execute
 
-`create_live_execute_once` 是首单一次性真实执行边界。它读取 `create_live_execution_pack`（执行包）、`create_execute`（创建执行复核产物）、`create_first_live_runbook`（首单手册）、`create_live_payload_adapter_scaffold`（真实请求适配闸门）和 `create_live_approval`（批准产物）。
+`create_live_execute_once` 是首单一次性真实执行边界。主路径只读取 `create_execute`（创建执行复核产物）、runtime（运行时配置）、policy（策略配置）和 SQLite 本地台账。`create_live_execution_pack`（执行包）、`create_first_live_runbook`（首单手册）和 `create_live_approval`（批准产物）只在命令行显式传入时作为兼容复核输入，不会被默认自动捡取。
 
 默认情况下它仍然 blocked（阻断），不会构造 `create_http_transport`（真实 HTTP 请求发送层），因此也不会读取 token（访问令牌）或调用真实创建接口。只有同时满足以下条件时，固定脚本才会构造真实发送层：
 
-- `create_live_execution_pack.status=ready_for_live_execute`：执行包已经通过最终执行前检查。
 - `runtime.execution_enabled=true`：运行时执行开关显式打开。
 - `runtime.external_api_enabled=true`：运行时外部接口开关显式打开。
-- policy（策略配置）和 approval（批准记录）都允许 `create_http_transport`。
+- `policy.create_execute.live_api.enabled=true`：策略允许真实创建接口。
+- `policy.create_execute.payload_schema.live_payload_generation_enabled=true`：策略允许生成真实 payload（请求体）。
+- `policy.create_live_execute_runner.allow_create_http_transport=true`：策略允许 HTTP transport（HTTP 请求发送层）。
+- `policy.create_live_execute_runner.create_http_transport.enabled=true` 且 `allow_mutation=true`：真实发送层显式打开。
 
 固定脚本入口：
 
 ```bash
-PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_live_execute_once.py --config configs/runtime.example.json --policy policies/strategy.example.json
+PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_live_execute_once.py \
+  --config configs/runtime.create-live.local.json \
+  --policy policies/create-live-execute.local.json \
+  --create-execute-artifact data/runs/create_execute/<artifact>.json
 ```
 
 在真实执行尝试发生后，artifact（运行产物）会如实记录：
@@ -444,7 +449,7 @@ PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_live_execute
 
 ## first live prepare pack
 
-`create_first_live_prepare_pack` 是真实首单创建前的本地交接包。它不是小批量执行包，也不是 execute switch（执行开关）；它只读取 `create_live_execution_pack`（执行包），把是否可以进入人工最终核对说清楚。
+`create_first_live_prepare_pack` 是真实首单创建前的本地交接包。它不是小批量执行包，也不是 execute switch（执行开关）；它只读取 `create_live_execution_pack`（执行包），把是否可以进入人工最终核对说清楚。主执行路径不依赖这个产物。
 
 固定脚本入口：
 

@@ -23,12 +23,10 @@ def _artifact_path(value: str, runs_dir: Path, workflow: str) -> Path:
     return Path(value) if str(value or "").strip() else _latest_artifact(runs_dir, workflow)
 
 
-def _optional_artifact_path(value: str, runs_dir: Path, workflow: str) -> Path | None:
+def _explicit_artifact_path(value: str) -> Path | None:
     if str(value or "").strip():
         return Path(value)
-    workflow_dir = runs_dir / workflow
-    candidates = sorted(workflow_dir.glob("*.json"))
-    return candidates[-1] if candidates else None
+    return None
 
 
 def _load_artifact(path: Path) -> dict:
@@ -128,7 +126,7 @@ def _print_result(result: dict) -> None:
 
 
 def run_from_args(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Run one-shot first live create only after execution pack is ready.")
+    parser = argparse.ArgumentParser(description="Run one-shot live create from create_execute artifact and local config.")
     parser.add_argument("--config", default="configs/runtime.example.json")
     parser.add_argument("--policy", default="policies/strategy.example.json")
     parser.add_argument("--create-live-execution-pack-artifact", default="")
@@ -146,22 +144,10 @@ def run_from_args(argv: list[str] | None = None) -> int:
         result = _blocked_missing_artifact(runs_dir=config.runs_dir, message=str(exc))
         _print_result(result)
         return 0
-    execution_pack_path = _optional_artifact_path(
-        args.create_live_execution_pack_artifact,
-        config.runs_dir,
-        "create_live_execution_pack",
-    )
-    runbook_path = _optional_artifact_path(
-        args.create_first_live_runbook_artifact,
-        config.runs_dir,
-        "create_first_live_runbook",
-    )
-    scaffold_path = _optional_artifact_path(
-        args.create_live_payload_adapter_scaffold_artifact,
-        config.runs_dir,
-        "create_live_payload_adapter_scaffold",
-    )
-    approval_path = _optional_artifact_path(args.create_live_approval_artifact, config.runs_dir, "create_live_approval")
+    execution_pack_path = _explicit_artifact_path(args.create_live_execution_pack_artifact)
+    runbook_path = _explicit_artifact_path(args.create_first_live_runbook_artifact)
+    scaffold_path = _explicit_artifact_path(args.create_live_payload_adapter_scaffold_artifact)
+    approval_path = _explicit_artifact_path(args.create_live_approval_artifact)
     execution_pack = _load_artifact(execution_pack_path) if execution_pack_path is not None else None
     runbook = _load_artifact(runbook_path) if runbook_path is not None else None
     scaffold = _load_artifact(scaffold_path) if scaffold_path is not None else {}

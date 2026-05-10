@@ -724,6 +724,35 @@ def test_create_live_execute_once_fixed_script_keeps_default_runtime_blocked(tmp
     assert artifact["actions"] == []
 
 
+def test_create_live_execute_once_fixed_script_ignores_legacy_packs_by_default(tmp_path: Path, capsys):
+    runtime_path = _runtime_config(tmp_path)
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_text(json.dumps(_policy(), ensure_ascii=False), encoding="utf-8")
+    runs_dir = tmp_path / "runs"
+    artifacts = {
+        "create_execute": _execute_artifact(),
+        "create_live_payload_adapter_scaffold": _scaffold_artifact(),
+        "create_live_execution_pack": _execution_pack_artifact(ready=False),
+        "create_first_live_runbook": _runbook_artifact(),
+        "create_live_approval": _approval_artifact(),
+    }
+    for workflow, artifact in artifacts.items():
+        path = runs_dir / workflow / "20260510T000000Z.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(artifact, ensure_ascii=False), encoding="utf-8")
+    module = _load_script("run_create_live_execute_once")
+
+    exit_code = module.run_from_args(["--config", str(runtime_path), "--policy", str(policy_path)])
+
+    output = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert output["workflow"] == "create_live_execute_once"
+    assert output["status"] == "blocked"
+    assert output["source_execution_pack_status"] == "not_required_direct_create_execute"
+    assert "execution pack is not ready_for_live_execute" not in output["blocking_reasons"]
+    assert "runtime.execution_enabled is false" in output["blocking_reasons"]
+
+
 def test_create_live_execute_once_fixed_script_reports_missing_artifacts_as_blocked(tmp_path: Path, capsys):
     runtime_path = _runtime_config(tmp_path)
     policy_path = tmp_path / "policy.json"
