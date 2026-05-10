@@ -46,7 +46,6 @@ def disabled_create_payload_schema(policy: dict[str, Any] | None = None) -> dict
                 "unit_key",
                 "promotion_id",
                 "material_id",
-                "source_video_id",
             ],
         },
         "field_sources": {

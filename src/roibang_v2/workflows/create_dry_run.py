@@ -187,7 +187,6 @@ def _task_payload_drafts(project: dict[str, Any], *, payload_schema: dict[str, A
                         "unit_key": str(unit.get("unit_key") or ""),
                         "promotion_id": str(material.get("promotion_id") or ""),
                         "material_id": str(material.get("material_id") or ""),
-                        "source_video_id": str(material.get("source_video_id") or ""),
                     },
                 }
             )

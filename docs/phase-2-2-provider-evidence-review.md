@@ -91,14 +91,14 @@ configs/provider-evidence/oceanengine.create.phase2-review.example.json
 
 当前预期结果：
 
-- 检查 18 个映射字段。
+- 检查 22 个映射字段。
 - 载入 3 条证据目录项。
 - 已复核证据数为 0。
-- 未解决字段数为 18。
+- 未解决字段数为 22。
 - `operator_guide.status=needs_review`。
-- `evidence_worksheet.summary.row_count=18`。
-- `provider_field_gap_report.summary.gap_count=4`。
-- `provider_field_gap_resolution_plan.summary.gap_count=4`。
+- `evidence_worksheet.summary.row_count=22`。
+- `provider_field_gap_report.summary.gap_count=6`。
+- `provider_field_gap_resolution_plan.summary.gap_count=6`。
 - 真实请求体开发仍未就绪。
 - 真实执行仍未就绪。
 
@@ -119,7 +119,7 @@ configs/provider-evidence/oceanengine.create.phase2-review.example.json
 
 `provider_field_gap_report` 会单独列出 `provider_field` 仍为空的字段。它比完整填写清单更窄，只用于聚焦缺字段问题。
 
-当前剩余问题已经从 3 个粗粒度缺口拆成 7 个可逐项复核的字段缺口：
+当前剩余问题已经从 3 个粗粒度缺口拆成 6 个可逐项复核的字段缺口：
 
 - `create_project.field_defaults.landing_type`
 - `create_project.field_defaults.pricing`
@@ -127,9 +127,10 @@ configs/provider-evidence/oceanengine.create.phase2-review.example.json
 - `create_unit.field_defaults.landing_type`
 - `create_unit.field_defaults.pricing`
 - `create_unit.field_defaults.inventory_type`
-- `bind_material.source_video_id`
 
 `create_project.project_type` 已改为 `local_only` 候选字段。它仍需要人工确认 `local_only_confirmed=true`，但不再算缺平台字段。
+
+`bind_material.source_video_id` 也已改为 `local_only` 候选字段。它继续保留在本地材料对象里，用于追溯素材来自哪个源视频；但已从禁用版请求体 schema 和 dry-run 请求参数中移除，所以不再算缺平台字段。
 
 不要猜剩余字段。每个缺口都必须通过平台证据确认，或者明确决定该本地字段需要改名，或者不进入未来平台请求体草稿。
 
@@ -147,7 +148,6 @@ configs/provider-evidence/oceanengine.create.phase2-review.example.json
 当前建议动作：
 
 - `map_field_default_subfield_to_provider_field`：给每个 `field_defaults` 子字段单独确认平台字段，不能把默认字段集合整包塞进平台请求体。
-- `confirm_material_identifier_or_local_provenance`：确认 `source_video_id` 是平台素材绑定字段，还是只用于本地素材来源追溯。
 
 ## project_type 本地用途复核
 
@@ -175,13 +175,13 @@ configs/provider-evidence/oceanengine.create.phase2-review.example.json
 
 - `project_type`：已准备好进入人工本地字段确认，但不会自动确认。
 - `field_defaults`：项目和单元各拆成 `landing_type`、`pricing`、`inventory_type` 三个子字段。
-- `source_video_id`：需要确认它是平台素材绑定字段，还是只用于本地素材来源追溯。
+- `source_video_id`：已从平台字段缺口里移出，作为本地素材来源追溯字段等待人工确认。
 
 当前状态：
 
-- `remaining_provider_field_gap_count=7`。
+- `remaining_provider_field_gap_count=6`。
 - `field_defaults_split_item_count=6`。
-- `source_video_id_review_required=true`。
+- `source_video_id_review_required=false`。
 - `ready_for_live_payload_development=false`。
 
 这个计划仍然只读、只复核，不会打开真实请求体开发，也不会打开 `create_execute`。
@@ -194,6 +194,7 @@ configs/provider-evidence/oceanengine.create.phase2-review.example.json
 2. 单元创建请求字段。
 3. 素材绑定请求字段。
 4. 本地键是否确实不进入平台请求体。
-5. `material_id` 和 `source_video_id` 在素材绑定里各自是否需要。
+5. `material_id` 是否是素材绑定请求的真实平台字段。
+6. `source_video_id` 是否确认只用于本地素材来源追溯。
 
 只有复核完成后，才能更新证据目录 JSON。

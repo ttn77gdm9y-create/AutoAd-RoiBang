@@ -326,7 +326,9 @@
         "internal_field": "source_video_id",
         "provider_field": "",
         "provider_object": "material_bind_request",
-        "mapping_kind": "",
+        "mapping_kind": "local_only",
+        "local_only_confirmed": false,
+        "local_only_confirmation_note": "",
         "value_source": "create_strategy_plan.strategy.projects[].units[].materials[].source_video_id",
         "purpose": "source video identity",
         "verified": false,
@@ -334,7 +336,7 @@
         "source": "phase2_preparation",
         "evidence_refs": [],
         "open_questions": [
-          "Confirm whether source_video_id is needed directly or only as local material provenance."
+          "Confirm source_video_id is only local material provenance before setting local_only_confirmed=true."
         ]
       }
     ]

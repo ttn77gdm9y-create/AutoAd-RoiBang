@@ -787,7 +787,6 @@ def test_create_dry_run_outputs_non_executable_project_unit_material_combination
         "unit_key",
         "promotion_id",
         "material_id",
-        "source_video_id",
     ]
     assert result["payload_contract"] == {
         "status": "passed",
@@ -1182,7 +1181,8 @@ def test_create_dry_run_can_load_provider_field_map_from_json_config(tmp_path: P
     assert material_draft["payload"]["local_unit_key"] == "target-1-p001-u01"
     assert material_draft["payload"]["promotion_id"] == "<lookup:target-1-p001-u01>"
     assert material_draft["payload"]["material_id"] == "m-high"
-    assert material_draft["payload"]["source_video_id"] == "source-video-1"
+    assert "source_video_id" not in material_draft["payload"]
+    assert result["candidate_tasks"][0]["units"][0]["materials"][0]["source_video_id"] == "source-video-1"
     assert "unit_key" not in material_draft["payload"]
     assert result["actions"] == []
 
@@ -1208,7 +1208,8 @@ def test_create_dry_run_generates_promotion_name_and_lookup_placeholders(tmp_pat
     material_draft = next(draft for draft in task["redacted_payload_drafts"] if draft["operation"] == "bind_material")
     assert material_draft["payload"]["project_id"] == "<lookup:target-1-p001>"
     assert material_draft["payload"]["promotion_id"] == "<lookup:target-1-p001-u01>"
-    assert material_draft["payload"]["source_video_id"] == "source-video-1"
+    assert "source_video_id" not in material_draft["payload"]
+    assert first_unit["materials"][0]["source_video_id"] == "source-video-1"
     assert result["payload_contract"]["status"] == "passed"
     assert result["execution_enabled"] is False
     assert result["external_api_calls"] == 0
@@ -1907,9 +1908,9 @@ def test_create_provider_evidence_review_flags_unreviewed_phase2_evidence():
         "ready_field_count": 0,
         "unresolved_field_count": 22,
         "evidence_status_counts": {
-            "local_only_needs_confirmation": 5,
+            "local_only_needs_confirmation": 6,
             "needs_evidence_review": 10,
-            "needs_provider_field": 7,
+            "needs_provider_field": 6,
         },
         "ready_for_live_payload_development": False,
         "ready_for_live_execute": False,
@@ -1966,8 +1967,8 @@ def test_create_provider_evidence_review_flags_unreviewed_phase2_evidence():
         "worksheet_version": "phase2.provider_evidence_worksheet.v1",
         "row_count": 22,
         "requires_evidence_review_count": 10,
-        "requires_local_confirmation_count": 5,
-        "requires_provider_field_count": 7,
+        "requires_local_confirmation_count": 6,
+        "requires_provider_field_count": 6,
         "ready_row_count": 0,
     }
     assert result["evidence_worksheet"]["rows"][0] == {
@@ -2000,9 +2001,8 @@ def test_create_provider_evidence_review_flags_unreviewed_phase2_evidence():
         "set_local_only_confirmed_true_after_manual_check",
     ]
     assert result["provider_field_gap_report"]["summary"] == {
-        "gap_count": 7,
+        "gap_count": 6,
         "operation_counts": {
-            "bind_material": 1,
             "create_project": 3,
             "create_unit": 3,
         },
@@ -2025,7 +2025,7 @@ def test_create_provider_evidence_review_flags_unreviewed_phase2_evidence():
     }
     assert result["provider_field_gap_resolution_plan"]["summary"] == {
         "plan_version": "phase2.provider_field_gap_resolution.v1",
-        "gap_count": 7,
+        "gap_count": 6,
         "manual_review_required": True,
         "ready_for_live_payload_development": False,
     }
@@ -2061,12 +2061,11 @@ def test_create_provider_evidence_review_flags_unreviewed_phase2_evidence():
         "要进入平台请求体时 provider_field 已确认",
         "provider_field 有已复核 evidence_refs",
     ]
-    source_video_item = [
+    assert [
         item
         for item in result["provider_field_gap_resolution_plan"]["items"]
         if item["operation"] == "bind_material" and item["internal_field"] == "source_video_id"
-    ][0]
-    assert source_video_item["recommended_action"] == "confirm_material_identifier_or_local_provenance"
+    ] == []
     assert result["project_type_local_usage_review"]["summary"] == {
         "review_version": "phase2.project_type_local_usage_review.v1",
         "internal_field": "project_type",
@@ -2084,9 +2083,9 @@ def test_create_provider_evidence_review_flags_unreviewed_phase2_evidence():
     assert result["field_gap_convergence_plan"]["summary"] == {
         "plan_version": "phase2.field_gap_convergence.v1",
         "project_type_ready_for_manual_local_only_confirmation": True,
-        "remaining_provider_field_gap_count": 7,
+        "remaining_provider_field_gap_count": 6,
         "field_defaults_split_item_count": 6,
-        "source_video_id_review_required": True,
+        "source_video_id_review_required": False,
         "ready_for_live_payload_development": False,
     }
     assert result["field_gap_convergence_plan"]["project_type_decision"] == {
@@ -2107,8 +2106,10 @@ def test_create_provider_evidence_review_flags_unreviewed_phase2_evidence():
     assert result["field_gap_convergence_plan"]["source_video_id_review"] == {
         "operation": "bind_material",
         "internal_field": "source_video_id",
-        "recommended_action": "confirm_provider_field_or_local_provenance",
-        "blocked_until": ["确认素材绑定是否需要 source_video_id", "确认后补 provider_field 或改为 local_only"],
+        "recommended_mapping_kind": "local_only",
+        "local_only_confirmed": False,
+        "reason": "保留在本地材料对象中用于源视频追溯，已从禁用请求体 schema 和 dry-run payload 移除。",
+        "blocked_until": ["人工确认 local_only_confirmed=true"],
     }
     assert result["violations"] == []
     assert result["actions"] == []
@@ -2151,18 +2152,18 @@ def test_create_provider_evidence_review_accepts_explicit_local_only_confirmatio
     )
 
     assert result["summary"]["evidence_status_counts"] == {
-        "local_only_confirmed": 5,
+        "local_only_confirmed": 6,
         "needs_evidence_review": 10,
-        "needs_provider_field": 7,
+        "needs_provider_field": 6,
     }
-    assert result["summary"]["unresolved_field_count"] == 17
+    assert result["summary"]["unresolved_field_count"] == 16
     assert result["evidence_worksheet"]["summary"]["requires_local_confirmation_count"] == 0
     confirmed_rows = [
         row
         for row in result["evidence_worksheet"]["rows"]
         if row["evidence_status"] == "local_only_confirmed"
     ]
-    assert len(confirmed_rows) == 5
+    assert len(confirmed_rows) == 6
     assert all(row["fill_required"] == [] for row in confirmed_rows)
     assert result["execution_enabled"] is False
     assert result["external_api_calls"] == 0
@@ -2207,10 +2208,10 @@ def test_create_provider_evidence_review_cli_uses_policy_config(tmp_path: Path, 
     assert artifact["summary"]["evidence_catalog_path"] == "configs/provider-evidence/oceanengine.create.phase2-review.example.json"
     assert output["operator_guide"]["status"] == "needs_review"
     assert output["evidence_worksheet_summary"]["row_count"] == 22
-    assert output["provider_field_gap_summary"]["gap_count"] == 7
-    assert output["provider_field_gap_resolution_summary"]["gap_count"] == 7
+    assert output["provider_field_gap_summary"]["gap_count"] == 6
+    assert output["provider_field_gap_resolution_summary"]["gap_count"] == 6
     assert output["project_type_local_usage_summary"]["ready_to_mark_local_only"] is True
-    assert output["field_gap_convergence_summary"]["remaining_provider_field_gap_count"] == 7
+    assert output["field_gap_convergence_summary"]["remaining_provider_field_gap_count"] == 6
     assert artifact["evidence_worksheet"]["summary"]["requires_evidence_review_count"] == 10
     assert artifact["provider_field_gap_report"]["summary"]["operation_counts"]["create_project"] == 3
     assert artifact["provider_field_gap_resolution_plan"]["summary"]["manual_review_required"] is True
@@ -7402,7 +7403,6 @@ def test_create_execute_is_hard_blocked_in_phase1_even_after_recorded_approval(t
                     "unit_key",
                     "promotion_id",
                     "material_id",
-                    "source_video_id",
                 ],
             },
             "field_sources": {

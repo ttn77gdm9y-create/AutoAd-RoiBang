@@ -592,8 +592,10 @@ def _field_gap_convergence_plan(gap_report: dict[str, Any]) -> dict[str, Any]:
     source_video_id_review = {
         "operation": "bind_material",
         "internal_field": "source_video_id",
-        "recommended_action": "confirm_provider_field_or_local_provenance",
-        "blocked_until": ["确认素材绑定是否需要 source_video_id", "确认后补 provider_field 或改为 local_only"],
+        "recommended_mapping_kind": "local_only",
+        "local_only_confirmed": False,
+        "reason": "保留在本地材料对象中用于源视频追溯，已从禁用请求体 schema 和 dry-run payload 移除。",
+        "blocked_until": ["人工确认 local_only_confirmed=true"],
     }
     return {
         "summary": {
