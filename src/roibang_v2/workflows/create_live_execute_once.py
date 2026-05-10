@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 from typing import Any, Callable
 
 from roibang_v2.runs import write_run_artifact
-from roibang_v2.workflows.create_live_execute_runner import build_create_live_execute_runner
+from roibang_v2.workflows.create_provider_id_ledger import (
+    record_create_provider_id,
+    resolve_provider_payload_drafts,
+)
 
 Transport = Callable[[dict[str, Any]], dict[str, Any]]
+OPERATION_ORDER = ["create_project", "create_unit", "bind_material"]
 
 
 def _once_config(request: dict[str, Any]) -> dict[str, Any]:
@@ -65,9 +70,369 @@ def _blocked_result(
         "ordered_steps": [],
         "provider_id_records": [],
         "transport_call_count": 0,
+        "idempotency": {
+            "status": "not_checked",
+            "skipped_existing_provider_id_count": 0,
+            "skipped_provider_id_records": [],
+        },
         "runner_result": None,
         "failure": None,
         "actions": [],
+    }
+
+
+def _rows(value: Any) -> list[dict[str, Any]]:
+    return [row for row in value if isinstance(row, dict)] if isinstance(value, list) else []
+
+
+def _create_execute_policy(policy: dict[str, Any]) -> dict[str, Any]:
+    value = policy.get("create_execute")
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _live_api_policy(policy: dict[str, Any]) -> dict[str, Any]:
+    value = _create_execute_policy(policy).get("live_api")
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _adapter_gate(scaffold: dict[str, Any]) -> dict[str, Any]:
+    value = scaffold.get("live_adapter_gate")
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _endpoints(policy: dict[str, Any], scaffold: dict[str, Any]) -> dict[str, str]:
+    scaffold_endpoints = _adapter_gate(scaffold).get("endpoints")
+    policy_endpoints = _live_api_policy(policy).get("endpoints")
+    source = scaffold_endpoints if isinstance(scaffold_endpoints, dict) else policy_endpoints
+    data = source if isinstance(source, dict) else {}
+    return {operation: str(data.get(operation) or "") for operation in OPERATION_ORDER}
+
+
+def _provider_payload_drafts(create_execute: dict[str, Any]) -> list[dict[str, Any]]:
+    drafts = _rows(create_execute.get("resolved_provider_payload_drafts"))
+    if drafts:
+        return drafts
+    return _rows(create_execute.get("provider_payload_drafts"))
+
+
+def _drafts_for_operation(create_execute: dict[str, Any], operation: str) -> list[dict[str, Any]]:
+    return [draft for draft in _provider_payload_drafts(create_execute) if str(draft.get("operation") or "") == operation]
+
+
+def _provider_id_requirements(create_execute: dict[str, Any]) -> dict[str, Any]:
+    value = create_execute.get("provider_id_ledger_requirements")
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _project_records(create_execute: dict[str, Any]) -> list[dict[str, Any]]:
+    return _rows(_provider_id_requirements(create_execute).get("produced_by_create_project"))
+
+
+def _unit_records(create_execute: dict[str, Any]) -> list[dict[str, Any]]:
+    return _rows(_provider_id_requirements(create_execute).get("produced_by_create_unit"))
+
+
+def _summary(create_execute: dict[str, Any]) -> dict[str, Any]:
+    value = create_execute.get("summary")
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _existing_provider_id(*, db_path: str | Path, entity_type: str, local_key: str) -> str:
+    if not str(local_key or "").strip():
+        return ""
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT provider_id
+            FROM create_provider_id_ledger
+            WHERE entity_type = ? AND local_key = ? AND status = 'active'
+            LIMIT 1
+            """,
+            (entity_type, local_key),
+        ).fetchone()
+    return str(row[0]) if row else ""
+
+
+def _record_for_operation(create_execute: dict[str, Any], operation: str, index: int) -> dict[str, Any]:
+    if operation == "create_project":
+        records = _project_records(create_execute)
+    elif operation == "create_unit":
+        records = _unit_records(create_execute)
+    else:
+        records = []
+    return records[index] if index < len(records) else {}
+
+
+def _entity_type(operation: str) -> str:
+    if operation == "create_project":
+        return "project"
+    if operation == "create_unit":
+        return "promotion"
+    return ""
+
+
+def _response_code(response: dict[str, Any]) -> int:
+    value = response.get("code", 0)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return -1
+
+
+def _response_message(response: dict[str, Any]) -> str:
+    return str(response.get("message") or response.get("msg") or "")
+
+
+def _response_data(response: dict[str, Any]) -> dict[str, Any]:
+    value = response.get("data")
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _project_id(response: dict[str, Any]) -> str:
+    data = _response_data(response)
+    return str(data.get("project_id") or response.get("project_id") or "")
+
+
+def _promotion_id(response: dict[str, Any]) -> str:
+    data = _response_data(response)
+    return str(data.get("promotion_id") or response.get("promotion_id") or "")
+
+
+def _safe_response(response: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "code": _response_code(response),
+        "message": _response_message(response),
+        "data_keys": sorted(str(key) for key in _response_data(response).keys()),
+    }
+
+
+def _failure(operation: str, index: int, response: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "operation": operation,
+        "index": index,
+        "message": _response_message(response),
+        "code": _response_code(response),
+    }
+
+
+def _record_provider_id(
+    *,
+    db_path: str | Path,
+    create_execute_artifact: dict[str, Any],
+    operation: str,
+    index: int,
+    response: dict[str, Any],
+) -> dict[str, Any] | None:
+    summary = _summary(create_execute_artifact)
+    if operation == "create_project":
+        provider_id = _project_id(response)
+        entity_type = "project"
+    elif operation == "create_unit":
+        provider_id = _promotion_id(response)
+        entity_type = "promotion"
+    else:
+        return None
+    row = _record_for_operation(create_execute_artifact, operation, index)
+    local_key = str(row.get("local_key") or "")
+    if not local_key or not provider_id:
+        return {
+            "status": "missing_provider_id",
+            "entity_type": entity_type,
+            "local_key": local_key,
+            "provider_id": provider_id,
+            "execution_enabled": False,
+            "external_api_calls": 0,
+            "actions": [],
+        }
+    return record_create_provider_id(
+        db_path=db_path,
+        entity_type=entity_type,
+        local_key=local_key,
+        provider_id=provider_id,
+        plan_id=str(summary.get("plan_id") or ""),
+        request_id=str(summary.get("request_id") or ""),
+        advertiser_id=str(row.get("advertiser_id") or ""),
+        parent_local_key=str(row.get("parent_local_key") or ""),
+        source_workflow="create_live_execute_once",
+        response_payload=_safe_response(response),
+    )
+
+
+def _split_existing_provider_ids(
+    *,
+    db_path: str | Path,
+    create_execute_artifact: dict[str, Any],
+    operation: str,
+    drafts: list[dict[str, Any]],
+) -> tuple[list[tuple[int, dict[str, Any]]], list[dict[str, Any]]]:
+    entity_type = _entity_type(operation)
+    if not entity_type:
+        return [(index, draft) for index, draft in enumerate(drafts)], []
+    pending: list[tuple[int, dict[str, Any]]] = []
+    skipped: list[dict[str, Any]] = []
+    for index, draft in enumerate(drafts):
+        record = _record_for_operation(create_execute_artifact, operation, index)
+        local_key = str(record.get("local_key") or "")
+        provider_id = _existing_provider_id(db_path=db_path, entity_type=entity_type, local_key=local_key)
+        if provider_id:
+            skipped.append(
+                {
+                    "operation": operation,
+                    "index": index,
+                    "entity_type": entity_type,
+                    "local_key": local_key,
+                    "provider_id": provider_id,
+                    "status": "skipped_existing_provider_id",
+                }
+            )
+        else:
+            pending.append((index, draft))
+    return pending, skipped
+
+
+def _resumable_create_http_run(
+    *,
+    create_execute_artifact: dict[str, Any],
+    create_live_payload_adapter_scaffold_artifact: dict[str, Any],
+    policy: dict[str, Any],
+    db_path: str | Path,
+    transport: Transport,
+) -> dict[str, Any]:
+    endpoints = _endpoints(policy, create_live_payload_adapter_scaffold_artifact)
+    provider_id_records: list[dict[str, Any]] = []
+    skipped_provider_id_records: list[dict[str, Any]] = []
+    ordered_steps: list[dict[str, Any]] = []
+    transport_call_count = 0
+    sequence = 0
+
+    for operation in OPERATION_ORDER:
+        drafts = _drafts_for_operation(create_execute_artifact, operation)
+        pending, skipped = _split_existing_provider_ids(
+            db_path=db_path,
+            create_execute_artifact=create_execute_artifact,
+            operation=operation,
+            drafts=drafts,
+        )
+        skipped_provider_id_records.extend(skipped)
+        if drafts and not pending:
+            ordered_steps.append(
+                {
+                    "operation": operation,
+                    "planned_count": len(drafts),
+                    "status": "skipped_existing_provider_id",
+                    "test_transport_call_count": 0,
+                }
+            )
+            continue
+
+        pending_drafts = [draft for _index, draft in pending]
+        resolution = resolve_provider_payload_drafts(db_path=db_path, provider_payload_drafts=pending_drafts)
+        if int(resolution.get("unresolved_count") or 0):
+            return {
+                "ok": False,
+                "status": "create_http_failed",
+                "blocking_reasons": ["lookup placeholders unresolved before operation"],
+                "ordered_steps": ordered_steps,
+                "provider_id_records": provider_id_records,
+                "transport_call_count": transport_call_count,
+                "external_api_calls": transport_call_count,
+                "failure": {
+                    "operation": operation,
+                    "index": 0,
+                    "message": "lookup placeholders unresolved before operation",
+                    "code": -1,
+                },
+                "idempotency": {
+                    "status": "checked",
+                    "skipped_existing_provider_id_count": len(skipped_provider_id_records),
+                    "skipped_provider_id_records": skipped_provider_id_records,
+                },
+            }
+
+        resolved_drafts = _rows(resolution.get("resolved_provider_payload_drafts"))
+        operation_call_count = 0
+        for offset, draft in enumerate(resolved_drafts):
+            original_index = pending[offset][0]
+            call = {
+                "sequence": sequence,
+                "operation": operation,
+                "endpoint": endpoints.get(operation, ""),
+                "payload": draft.get("payload") if isinstance(draft.get("payload"), dict) else {},
+                "transport_mode": "create_http",
+            }
+            response = transport(call)
+            sequence += 1
+            transport_call_count += 1
+            operation_call_count += 1
+            if _response_code(response) != 0:
+                return {
+                    "ok": False,
+                    "status": "create_http_failed",
+                    "blocking_reasons": [],
+                    "ordered_steps": ordered_steps,
+                    "provider_id_records": provider_id_records,
+                    "transport_call_count": transport_call_count,
+                    "external_api_calls": transport_call_count,
+                    "failure": _failure(operation, original_index, response),
+                    "idempotency": {
+                        "status": "checked",
+                        "skipped_existing_provider_id_count": len(skipped_provider_id_records),
+                        "skipped_provider_id_records": skipped_provider_id_records,
+                    },
+                }
+            record = _record_provider_id(
+                db_path=db_path,
+                create_execute_artifact=create_execute_artifact,
+                operation=operation,
+                index=original_index,
+                response=response,
+            )
+            if record is not None:
+                provider_id_records.append(record)
+                if str(record.get("status") or "") != "recorded":
+                    return {
+                        "ok": False,
+                        "status": "create_http_failed",
+                        "blocking_reasons": [],
+                        "ordered_steps": ordered_steps,
+                        "provider_id_records": provider_id_records,
+                        "transport_call_count": transport_call_count,
+                        "external_api_calls": transport_call_count,
+                        "failure": {
+                            "operation": operation,
+                            "index": original_index,
+                            "message": str(record.get("status") or "provider id record failed"),
+                            "code": -1,
+                        },
+                        "idempotency": {
+                            "status": "checked",
+                            "skipped_existing_provider_id_count": len(skipped_provider_id_records),
+                            "skipped_provider_id_records": skipped_provider_id_records,
+                        },
+                    }
+        ordered_steps.append(
+            {
+                "operation": operation,
+                "planned_count": len(drafts),
+                "status": "completed",
+                "test_transport_call_count": operation_call_count,
+            }
+        )
+
+    return {
+        "ok": True,
+        "status": "create_http_completed",
+        "blocking_reasons": [],
+        "ordered_steps": ordered_steps,
+        "provider_id_records": provider_id_records,
+        "transport_call_count": transport_call_count,
+        "external_api_calls": transport_call_count,
+        "failure": None,
+        "idempotency": {
+            "status": "checked",
+            "skipped_existing_provider_id_count": len(skipped_provider_id_records),
+            "skipped_provider_id_records": skipped_provider_id_records,
+        },
     }
 
 
@@ -100,16 +465,12 @@ def build_create_live_execute_once(
             create_live_execution_pack_artifact=create_live_execution_pack_artifact,
         )
 
-    runner_result = build_create_live_execute_runner(
+    runner_result = _resumable_create_http_run(
         create_execute_artifact=create_execute_artifact,
-        create_first_live_runbook_artifact=create_first_live_runbook_artifact,
         create_live_payload_adapter_scaffold_artifact=create_live_payload_adapter_scaffold_artifact,
-        create_live_approval_artifact=create_live_approval_artifact,
         policy=policy,
-        runtime=runtime,
         db_path=db_path,
         transport=transport,
-        transport_mode="create_http",
     )
     external_api_calls = int(runner_result.get("external_api_calls") or 0)
     execution_attempted = external_api_calls > 0
@@ -127,7 +488,14 @@ def build_create_live_execute_once(
         "blocking_reasons": list(runner_result.get("blocking_reasons") or []),
         "ordered_steps": list(runner_result.get("ordered_steps") or []),
         "provider_id_records": list(runner_result.get("provider_id_records") or []),
-        "transport_call_count": int(runner_result.get("test_transport_call_count") or 0),
+        "transport_call_count": int(runner_result.get("transport_call_count") or 0),
+        "idempotency": runner_result.get("idempotency")
+        if isinstance(runner_result.get("idempotency"), dict)
+        else {
+            "status": "not_checked",
+            "skipped_existing_provider_id_count": 0,
+            "skipped_provider_id_records": [],
+        },
         "runner_result": runner_result,
         "failure": runner_result.get("failure"),
         "actions": [],

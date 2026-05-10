@@ -381,3 +381,15 @@ PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_live_execute
 - `provider_id_records`：平台返回的 `project_id`（平台项目 ID）和 `promotion_id`（平台单元 ID）写入本地台账的记录。
 
 失败策略保持不变：创建项目失败就不创建单元；创建单元失败就不做素材推送；素材推送失败则停止并保留已创建的 ID 供人工复核。变更请求不自动 retry（重试），避免重复创建。
+
+## idempotency and resume
+
+`create_live_execute_once` 现在带 idempotency（幂等，避免重复创建）和 resume（断点续跑）边界：
+
+- 执行前先查 SQLite（本地数据库）里的 `create_provider_id_ledger`（平台 ID 台账）。
+- 如果某个 `create_project`（创建项目）已有 active（有效）`project_id`（平台项目 ID），就跳过这个项目创建，不再调用真实接口。
+- 如果某个 `create_unit`（创建单元）已有 active（有效）`promotion_id`（平台单元 ID），就跳过这个单元创建，不再调用真实接口。
+- 跳过记录会写入 `idempotency.skipped_provider_id_records`，便于人工复核。
+- 后续 payload（请求体）里的 lookup placeholder（本地占位符）会继续从 SQLite 台账解析成真实平台 ID。
+
+这意味着首单执行如果中途失败，下一次运行可以从已写入台账的位置继续，不会重复创建已经成功的平台项目或单元。当前幂等范围先覆盖项目和单元；`bind_material`（素材推送）后续进入小批量前还会补素材推送结果台账，进一步减少重复推送风险。

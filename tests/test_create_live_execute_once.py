@@ -4,6 +4,7 @@ import sqlite3
 from pathlib import Path
 
 from roibang_v2.db.bootstrap import bootstrap_database
+from roibang_v2.workflows.create_provider_id_ledger import record_create_provider_id
 from roibang_v2.workflows.create_live_execute_once import (
     build_create_live_execute_once,
     run_create_live_execute_once_request,
@@ -321,6 +322,127 @@ def test_create_live_execute_once_runs_create_http_transport_in_order(tmp_path: 
     assert rows == [
         ("project", "target-1-p001", "project-001"),
         ("promotion", "target-1-p001-u01", "promotion-001"),
+    ]
+
+
+def test_create_live_execute_once_skips_existing_project_and_resumes_unit(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+    record_create_provider_id(
+        db_path=db_path,
+        entity_type="project",
+        local_key="target-1-p001",
+        provider_id="project-existing",
+        plan_id="plan-1",
+        request_id="req-1",
+        advertiser_id="target-1",
+        source_workflow="create_live_execute_once",
+    )
+    calls: list[dict] = []
+
+    def fake_transport(call: dict) -> dict:
+        calls.append(call)
+        if call["operation"] == "create_project":
+            raise AssertionError("existing project must not be created again")
+        if call["operation"] == "create_unit":
+            assert call["payload"]["project_id"] == "project-existing"
+            return {"code": 0, "data": {"promotion_id": "promotion-001"}}
+        if call["operation"] == "bind_material":
+            return {"code": 0, "data": {"task_id": "bind-001"}}
+        raise AssertionError(call["operation"])
+
+    result = build_create_live_execute_once(
+        create_live_execution_pack_artifact=_execution_pack_artifact(ready=True),
+        create_execute_artifact=_execute_artifact(),
+        create_first_live_runbook_artifact=_runbook_artifact(),
+        create_live_payload_adapter_scaffold_artifact=_scaffold_artifact(),
+        create_live_approval_artifact=_approval_artifact(),
+        policy=_policy(),
+        runtime={"execution_enabled": True, "external_api_enabled": True},
+        db_path=db_path,
+        transport=fake_transport,
+    )
+
+    assert result["ok"] is True
+    assert result["status"] == "create_http_completed"
+    assert result["external_api_calls"] == 2
+    assert [call["operation"] for call in calls] == ["create_unit", "bind_material"]
+    assert result["idempotency"]["skipped_existing_provider_id_count"] == 1
+    assert result["ordered_steps"][0] == {
+        "operation": "create_project",
+        "planned_count": 1,
+        "status": "skipped_existing_provider_id",
+        "test_transport_call_count": 0,
+    }
+
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT entity_type, local_key, provider_id
+            FROM create_provider_id_ledger
+            ORDER BY entity_type, local_key
+            """
+        ).fetchall()
+    assert rows == [
+        ("project", "target-1-p001", "project-existing"),
+        ("promotion", "target-1-p001-u01", "promotion-001"),
+    ]
+
+
+def test_create_live_execute_once_skips_existing_project_and_unit_then_binds_material(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+    record_create_provider_id(
+        db_path=db_path,
+        entity_type="project",
+        local_key="target-1-p001",
+        provider_id="project-existing",
+        plan_id="plan-1",
+        request_id="req-1",
+        advertiser_id="target-1",
+        source_workflow="create_live_execute_once",
+    )
+    record_create_provider_id(
+        db_path=db_path,
+        entity_type="promotion",
+        local_key="target-1-p001-u01",
+        provider_id="promotion-existing",
+        plan_id="plan-1",
+        request_id="req-1",
+        advertiser_id="target-1",
+        parent_local_key="target-1-p001",
+        source_workflow="create_live_execute_once",
+    )
+    calls: list[dict] = []
+
+    def fake_transport(call: dict) -> dict:
+        calls.append(call)
+        if call["operation"] in {"create_project", "create_unit"}:
+            raise AssertionError(f"{call['operation']} must not be created again")
+        if call["operation"] == "bind_material":
+            return {"code": 0, "data": {"task_id": "bind-001"}}
+        raise AssertionError(call["operation"])
+
+    result = build_create_live_execute_once(
+        create_live_execution_pack_artifact=_execution_pack_artifact(ready=True),
+        create_execute_artifact=_execute_artifact(),
+        create_first_live_runbook_artifact=_runbook_artifact(),
+        create_live_payload_adapter_scaffold_artifact=_scaffold_artifact(),
+        create_live_approval_artifact=_approval_artifact(),
+        policy=_policy(),
+        runtime={"execution_enabled": True, "external_api_enabled": True},
+        db_path=db_path,
+        transport=fake_transport,
+    )
+
+    assert result["ok"] is True
+    assert result["external_api_calls"] == 1
+    assert [call["operation"] for call in calls] == ["bind_material"]
+    assert result["idempotency"]["skipped_existing_provider_id_count"] == 2
+    assert [step["status"] for step in result["ordered_steps"]] == [
+        "skipped_existing_provider_id",
+        "skipped_existing_provider_id",
+        "completed",
     ]
 
 
