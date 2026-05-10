@@ -1993,16 +1993,18 @@ def test_create_provider_evidence_review_flags_unreviewed_phase2_evidence():
     assert result["provider_field_gap_resolution_plan"]["items"][0] == {
         "operation": "create_project",
         "internal_field": "project_type",
-        "recommended_action": "decide_split_or_provider_field",
+        "recommended_action": "confirm_local_template_selector_or_split_to_provider_fields",
         "review_questions": [
-            "这个本地字段是否应该进入平台请求体？",
-            "如果进入平台请求体，它是单个字段还是需要拆成多个平台字段？",
+            "这个 project_type 是否只用于本地模板选择、项目命名和策略分支？",
+            "它是否已经被拆到 landing_type、pricing、inventory_type 等平台字段？",
+            "是否有官方文档或已捕获请求证明平台请求体不接收 project_type？",
             "复核证据来自官方文档还是已捕获请求？",
         ],
         "blocked_until": [
-            "provider_field 已确认",
+            "本地用途已复核",
             "mapping_kind 已确认",
-            "evidence_refs 已补充并复核",
+            "如果确认本地字段，local_only_confirmed 必须由人工确认",
+            "如果需要进入平台请求体，必须拆成明确 provider_field 并补证据",
         ],
         "do_not_do": [
             "不要猜 provider_field",
@@ -2010,6 +2012,23 @@ def test_create_provider_evidence_review_flags_unreviewed_phase2_evidence():
             "不要打开 create_execute",
         ],
     }
+    field_defaults_item = [
+        item
+        for item in result["provider_field_gap_resolution_plan"]["items"]
+        if item["operation"] == "create_project" and item["internal_field"] == "field_defaults"
+    ][0]
+    assert field_defaults_item["recommended_action"] == "split_field_defaults_into_explicit_provider_fields"
+    assert field_defaults_item["blocked_until"] == [
+        "field_defaults 的每个子字段都有去向",
+        "每个要进入平台请求体的子字段都有 provider_field",
+        "每个 provider_field 都有已复核 evidence_refs",
+    ]
+    source_video_item = [
+        item
+        for item in result["provider_field_gap_resolution_plan"]["items"]
+        if item["operation"] == "bind_material" and item["internal_field"] == "source_video_id"
+    ][0]
+    assert source_video_item["recommended_action"] == "confirm_material_identifier_or_local_provenance"
     assert result["violations"] == []
     assert result["actions"] == []
 

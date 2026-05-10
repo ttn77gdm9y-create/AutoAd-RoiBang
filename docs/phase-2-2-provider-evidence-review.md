@@ -131,12 +131,18 @@ configs/provider-evidence/oceanengine.create.phase2-review.example.json
 
 `provider_field_gap_resolution_plan` 是人工复核计划，不是批准产物。它会为每个缺口生成：
 
-- `recommended_action`：建议动作，目前是先判断字段是否要拆分或映射到平台字段。
+- `recommended_action`：建议动作，会按字段类型给出不同复核方向。
 - `review_questions`：人工复核时要回答的问题。
 - `blocked_until`：解除阻塞前必须完成的条件。
 - `do_not_do`：禁止事项，例如不要猜字段、不要打开 `create_execute`。
 
 这个计划的目标是让 4 个缺口逐个可复核，而不是让脚本替人判断平台字段。
+
+当前建议动作：
+
+- `confirm_local_template_selector_or_split_to_provider_fields`：确认 `project_type` 是不是只用于本地模板选择、项目命名和策略分支；如果不是本地字段，就必须拆成明确平台字段。
+- `split_field_defaults_into_explicit_provider_fields`：把 `field_defaults` 拆成明确平台字段，不能把默认字段集合整包塞进平台请求体。
+- `confirm_material_identifier_or_local_provenance`：确认 `source_video_id` 是平台素材绑定字段，还是只用于本地素材来源追溯。
 
 ## 下一步人工复核
 

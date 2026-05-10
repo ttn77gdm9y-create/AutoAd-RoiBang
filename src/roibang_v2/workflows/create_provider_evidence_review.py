@@ -422,27 +422,84 @@ def _provider_field_gap_report(field_map: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _gap_resolution_details(row: dict[str, Any]) -> dict[str, Any]:
+    operation = str(row.get("operation") or "")
+    internal_field = str(row.get("internal_field") or "")
+    if operation == "create_project" and internal_field == "project_type":
+        return {
+            "recommended_action": "confirm_local_template_selector_or_split_to_provider_fields",
+            "review_questions": [
+                "这个 project_type 是否只用于本地模板选择、项目命名和策略分支？",
+                "它是否已经被拆到 landing_type、pricing、inventory_type 等平台字段？",
+                "是否有官方文档或已捕获请求证明平台请求体不接收 project_type？",
+                "复核证据来自官方文档还是已捕获请求？",
+            ],
+            "blocked_until": [
+                "本地用途已复核",
+                "mapping_kind 已确认",
+                "如果确认本地字段，local_only_confirmed 必须由人工确认",
+                "如果需要进入平台请求体，必须拆成明确 provider_field 并补证据",
+            ],
+        }
+    if internal_field == "field_defaults":
+        return {
+            "recommended_action": "split_field_defaults_into_explicit_provider_fields",
+            "review_questions": [
+                "field_defaults 里的每个子字段分别对应哪个平台字段？",
+                "哪些子字段只用于本地模板，不应该进入平台请求体？",
+                "拆分后的每个 provider_field 是否都有官方文档或已捕获请求证据？",
+                "复核证据来自官方文档还是已捕获请求？",
+            ],
+            "blocked_until": [
+                "field_defaults 的每个子字段都有去向",
+                "每个要进入平台请求体的子字段都有 provider_field",
+                "每个 provider_field 都有已复核 evidence_refs",
+            ],
+        }
+    if operation == "bind_material" and internal_field == "source_video_id":
+        return {
+            "recommended_action": "confirm_material_identifier_or_local_provenance",
+            "review_questions": [
+                "平台素材绑定请求是否直接接收 source_video_id？",
+                "source_video_id 是否只用于本地追溯素材来源？",
+                "素材绑定应使用 material_id、source_video_id，还是嵌套素材列表？",
+                "复核证据来自官方文档还是已捕获请求？",
+            ],
+            "blocked_until": [
+                "素材绑定平台字段已确认",
+                "如果 source_video_id 只用于本地追溯，必须人工确认 local_only",
+                "如果 source_video_id 进入平台请求体，必须补 provider_field 和 evidence_refs",
+            ],
+        }
+    return {
+        "recommended_action": "decide_split_or_provider_field",
+        "review_questions": [
+            "这个本地字段是否应该进入平台请求体？",
+            "如果进入平台请求体，它是单个字段还是需要拆成多个平台字段？",
+            "复核证据来自官方文档还是已捕获请求？",
+        ],
+        "blocked_until": [
+            "provider_field 已确认",
+            "mapping_kind 已确认",
+            "evidence_refs 已补充并复核",
+        ],
+    }
+
+
 def _provider_field_gap_resolution_plan(gap_report: dict[str, Any]) -> dict[str, Any]:
     gap_rows = gap_report.get("rows") if isinstance(gap_report.get("rows"), list) else []
     items: list[dict[str, Any]] = []
     for row in gap_rows:
         if not isinstance(row, dict):
             continue
+        details = _gap_resolution_details(row)
         items.append(
             {
                 "operation": str(row.get("operation") or ""),
                 "internal_field": str(row.get("internal_field") or ""),
-                "recommended_action": "decide_split_or_provider_field",
-                "review_questions": [
-                    "这个本地字段是否应该进入平台请求体？",
-                    "如果进入平台请求体，它是单个字段还是需要拆成多个平台字段？",
-                    "复核证据来自官方文档还是已捕获请求？",
-                ],
-                "blocked_until": [
-                    "provider_field 已确认",
-                    "mapping_kind 已确认",
-                    "evidence_refs 已补充并复核",
-                ],
+                "recommended_action": details["recommended_action"],
+                "review_questions": details["review_questions"],
+                "blocked_until": details["blocked_until"],
                 "do_not_do": [
                     "不要猜 provider_field",
                     "不要把 field_defaults 整包塞进平台请求体",
