@@ -49,6 +49,7 @@ create_provider_evidence_review
 - `operator_guide`：操作员指南。
 - `evidence_worksheet`：证据填写清单，每个字段一行。
 - `provider_field_gap_report`：缺平台字段报告，只列出 `provider_field` 为空的字段。
+- `provider_field_gap_resolution_plan`：缺平台字段处理计划，只说明每个缺口该如何人工复核。
 
 ## 状态解释
 
@@ -96,6 +97,7 @@ configs/provider-evidence/oceanengine.create.phase2-review.example.json
 - `operator_guide.status=needs_review`。
 - `evidence_worksheet.summary.row_count=18`。
 - `provider_field_gap_report.summary.gap_count=4`。
+- `provider_field_gap_resolution_plan.summary.gap_count=4`。
 - 真实请求体开发仍未就绪。
 - 真实执行仍未就绪。
 
@@ -124,6 +126,17 @@ configs/provider-evidence/oceanengine.create.phase2-review.example.json
 - `bind_material.source_video_id`
 
 不要猜这些字段。每个缺口都必须通过平台证据确认，或者明确决定该本地字段需要拆分、改名，或者不进入未来平台请求体草稿。
+
+## 缺平台字段处理计划
+
+`provider_field_gap_resolution_plan` 是人工复核计划，不是批准产物。它会为每个缺口生成：
+
+- `recommended_action`：建议动作，目前是先判断字段是否要拆分或映射到平台字段。
+- `review_questions`：人工复核时要回答的问题。
+- `blocked_until`：解除阻塞前必须完成的条件。
+- `do_not_do`：禁止事项，例如不要猜字段、不要打开 `create_execute`。
+
+这个计划的目标是让 4 个缺口逐个可复核，而不是让脚本替人判断平台字段。
 
 ## 下一步人工复核
 

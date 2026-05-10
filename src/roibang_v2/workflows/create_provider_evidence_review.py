@@ -422,6 +422,50 @@ def _provider_field_gap_report(field_map: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _provider_field_gap_resolution_plan(gap_report: dict[str, Any]) -> dict[str, Any]:
+    gap_rows = gap_report.get("rows") if isinstance(gap_report.get("rows"), list) else []
+    items: list[dict[str, Any]] = []
+    for row in gap_rows:
+        if not isinstance(row, dict):
+            continue
+        items.append(
+            {
+                "operation": str(row.get("operation") or ""),
+                "internal_field": str(row.get("internal_field") or ""),
+                "recommended_action": "decide_split_or_provider_field",
+                "review_questions": [
+                    "这个本地字段是否应该进入平台请求体？",
+                    "如果进入平台请求体，它是单个字段还是需要拆成多个平台字段？",
+                    "复核证据来自官方文档还是已捕获请求？",
+                ],
+                "blocked_until": [
+                    "provider_field 已确认",
+                    "mapping_kind 已确认",
+                    "evidence_refs 已补充并复核",
+                ],
+                "do_not_do": [
+                    "不要猜 provider_field",
+                    "不要把 field_defaults 整包塞进平台请求体",
+                    "不要打开 create_execute",
+                ],
+            }
+        )
+    return {
+        "summary": {
+            "plan_version": "phase2.provider_field_gap_resolution.v1",
+            "gap_count": len(items),
+            "manual_review_required": bool(items),
+            "ready_for_live_payload_development": False,
+        },
+        "instructions": [
+            "逐项复核缺口，不要直接填写猜测值。",
+            "每项确认后先更新字段映射和证据目录，再重新运行证据复核。",
+            "这个计划不是批准产物，不能开启真实执行。",
+        ],
+        "items": items,
+    }
+
+
 def build_create_provider_evidence_review(*, policy: dict[str, Any]) -> dict[str, Any]:
     field_map = load_provider_field_map(policy)
     field_contract = provider_field_map_contract(field_map, policy)
@@ -437,6 +481,7 @@ def build_create_provider_evidence_review(*, policy: dict[str, Any]) -> dict[str
     if invalid_catalog:
         violations.append("provider evidence catalog config is missing or malformed")
     status = "invalid" if violations else "needs_review"
+    gap_report = _provider_field_gap_report(field_map)
     return {
         "ok": not violations,
         "workflow": "create_provider_evidence_review",
@@ -453,7 +498,8 @@ def build_create_provider_evidence_review(*, policy: dict[str, Any]) -> dict[str
         "evidence_review_sections": sections,
         "unresolved_evidence_items": _unresolved_items(sections),
         "evidence_worksheet": _evidence_worksheet(sections),
-        "provider_field_gap_report": _provider_field_gap_report(field_map),
+        "provider_field_gap_report": gap_report,
+        "provider_field_gap_resolution_plan": _provider_field_gap_resolution_plan(gap_report),
         "operator_guide": _operator_guide(status=status),
         "violations": violations,
         "actions": [],

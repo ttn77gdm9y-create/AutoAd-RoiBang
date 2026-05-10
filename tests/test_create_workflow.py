@@ -1984,6 +1984,32 @@ def test_create_provider_evidence_review_flags_unreviewed_phase2_evidence():
             "evidence_refs",
         ],
     }
+    assert result["provider_field_gap_resolution_plan"]["summary"] == {
+        "plan_version": "phase2.provider_field_gap_resolution.v1",
+        "gap_count": 4,
+        "manual_review_required": True,
+        "ready_for_live_payload_development": False,
+    }
+    assert result["provider_field_gap_resolution_plan"]["items"][0] == {
+        "operation": "create_project",
+        "internal_field": "project_type",
+        "recommended_action": "decide_split_or_provider_field",
+        "review_questions": [
+            "这个本地字段是否应该进入平台请求体？",
+            "如果进入平台请求体，它是单个字段还是需要拆成多个平台字段？",
+            "复核证据来自官方文档还是已捕获请求？",
+        ],
+        "blocked_until": [
+            "provider_field 已确认",
+            "mapping_kind 已确认",
+            "evidence_refs 已补充并复核",
+        ],
+        "do_not_do": [
+            "不要猜 provider_field",
+            "不要把 field_defaults 整包塞进平台请求体",
+            "不要打开 create_execute",
+        ],
+    }
     assert result["violations"] == []
     assert result["actions"] == []
 
@@ -2082,8 +2108,10 @@ def test_create_provider_evidence_review_cli_uses_policy_config(tmp_path: Path, 
     assert output["operator_guide"]["status"] == "needs_review"
     assert output["evidence_worksheet_summary"]["row_count"] == 18
     assert output["provider_field_gap_summary"]["gap_count"] == 4
+    assert output["provider_field_gap_resolution_summary"]["gap_count"] == 4
     assert artifact["evidence_worksheet"]["summary"]["requires_evidence_review_count"] == 10
     assert artifact["provider_field_gap_report"]["summary"]["operation_counts"]["create_project"] == 2
+    assert artifact["provider_field_gap_resolution_plan"]["summary"]["manual_review_required"] is True
     assert artifact["execution_enabled"] is False
     assert artifact["external_api_calls"] == 0
     assert artifact["actions"] == []
