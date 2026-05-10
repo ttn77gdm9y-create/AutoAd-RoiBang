@@ -82,7 +82,7 @@
       "endpoints": {
         "create_project": "/open_api/2/project/create/",
         "create_unit": "/open_api/2/promotion/create/",
-        "bind_material": "/open_api/2/promotion/material/bind/"
+        "bind_material": "/open_api/2/file/material/bind/"
       }
     }
   },

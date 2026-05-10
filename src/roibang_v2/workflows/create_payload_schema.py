@@ -40,12 +40,13 @@ def disabled_create_payload_schema(policy: dict[str, Any] | None = None) -> dict
                 "field_defaults.inventory_type",
             ],
             "bind_material": [
-                "advertiser_id",
+                "source_advertiser_id",
+                "target_advertiser_ids",
+                "source_video_ids",
                 "project_key",
-                "project_id",
                 "unit_key",
-                "promotion_id",
                 "material_id",
+                "source_video_id",
             ],
         },
         "field_sources": {

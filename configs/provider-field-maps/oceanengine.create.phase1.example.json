@@ -130,9 +130,25 @@
     ],
     "bind_material": [
       {
-        "internal_field": "advertiser_id",
+        "internal_field": "source_advertiser_id",
         "provider_field": "",
-        "purpose": "target advertiser account id",
+        "purpose": "source material advertiser account id",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
+        "internal_field": "target_advertiser_ids",
+        "provider_field": "",
+        "purpose": "target advertiser account ids for material push",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
+        "internal_field": "source_video_ids",
+        "provider_field": "",
+        "purpose": "source account video ids to push",
         "verified": false,
         "required": true,
         "source": "internal_phase1_schema"
@@ -146,25 +162,9 @@
         "source": "internal_phase1_schema"
       },
       {
-        "internal_field": "project_id",
-        "provider_field": "",
-        "purpose": "provider project id lookup placeholder",
-        "verified": false,
-        "required": true,
-        "source": "internal_phase1_schema"
-      },
-      {
         "internal_field": "unit_key",
         "provider_field": "",
         "purpose": "local planned unit key",
-        "verified": false,
-        "required": true,
-        "source": "internal_phase1_schema"
-      },
-      {
-        "internal_field": "promotion_id",
-        "provider_field": "",
-        "purpose": "provider promotion id lookup placeholder",
         "verified": false,
         "required": true,
         "source": "internal_phase1_schema"

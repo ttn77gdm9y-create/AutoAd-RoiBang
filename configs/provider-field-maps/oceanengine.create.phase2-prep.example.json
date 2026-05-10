@@ -219,15 +219,41 @@
     ],
     "bind_material": [
       {
-        "internal_field": "advertiser_id",
+        "internal_field": "source_advertiser_id",
         "provider_field": "advertiser_id",
         "provider_object": "material_bind_request",
         "mapping_kind": "direct",
-        "value_source": "create_strategy_plan.strategy.projects[].advertiser_id",
-        "purpose": "target advertiser account id",
-        "verified": false,
+        "value_source": "create_strategy_plan.strategy.source_advertiser_id",
+        "purpose": "source material advertiser account id",
+        "verified": true,
         "required": true,
-        "source": "phase2_preparation",
+        "source": "local_api_doc_review",
+        "evidence_refs": ["oceanengine_openapi_material_binding_request"],
+        "open_questions": []
+      },
+      {
+        "internal_field": "target_advertiser_ids",
+        "provider_field": "target_advertiser_ids",
+        "provider_object": "material_bind_request",
+        "mapping_kind": "direct",
+        "value_source": "create_dry_run.candidate_tasks[].units[].materials[].target_advertiser_ids",
+        "purpose": "target advertiser account ids for material push",
+        "verified": true,
+        "required": true,
+        "source": "local_api_doc_review",
+        "evidence_refs": ["oceanengine_openapi_material_binding_request"],
+        "open_questions": []
+      },
+      {
+        "internal_field": "source_video_ids",
+        "provider_field": "video_ids",
+        "provider_object": "material_bind_request",
+        "mapping_kind": "direct",
+        "value_source": "create_dry_run.candidate_tasks[].units[].materials[].source_video_ids",
+        "purpose": "source account video ids to push",
+        "verified": true,
+        "required": true,
+        "source": "local_api_doc_review",
         "evidence_refs": ["oceanengine_openapi_material_binding_request"],
         "open_questions": []
       },
@@ -237,7 +263,7 @@
         "provider_object": "material_bind_request",
         "mapping_kind": "local_lookup_key",
         "local_only_confirmed": true,
-        "local_only_confirmation_note": "本地查表键；平台素材请求不接收 project_key。",
+        "local_only_confirmation_note": "本地查表键；素材推送 API 不接收 project_key。",
         "value_source": "create_strategy_plan.strategy.projects[].project_key",
         "purpose": "local planned project key",
         "verified": false,
@@ -247,27 +273,12 @@
         "open_questions": []
       },
       {
-        "internal_field": "project_id",
-        "provider_field": "project_id",
-        "provider_object": "material_bind_request",
-        "mapping_kind": "created_id_lookup",
-        "value_source": "create_dry_run.candidate_tasks[].units[].materials[].project_id",
-        "purpose": "provider project id lookup placeholder",
-        "verified": false,
-        "required": true,
-        "source": "phase2_preparation",
-        "evidence_refs": ["oceanengine_openapi_material_binding_request"],
-        "open_questions": [
-          "Confirm project_id is needed for material binding or inherited from promotion context."
-        ]
-      },
-      {
         "internal_field": "unit_key",
         "provider_field": "",
         "provider_object": "material_bind_request",
         "mapping_kind": "local_lookup_key",
         "local_only_confirmed": true,
-        "local_only_confirmation_note": "本地查表键；平台素材请求不接收 unit_key。",
+        "local_only_confirmation_note": "本地查表键；素材推送 API 不接收 unit_key。",
         "value_source": "create_strategy_plan.strategy.projects[].units[].unit_key",
         "purpose": "local planned unit key",
         "verified": false,
@@ -277,34 +288,19 @@
         "open_questions": []
       },
       {
-        "internal_field": "promotion_id",
-        "provider_field": "promotion_id",
-        "provider_object": "material_bind_request",
-        "mapping_kind": "created_id_lookup",
-        "value_source": "create_dry_run.candidate_tasks[].units[].materials[].promotion_id",
-        "purpose": "provider promotion id lookup placeholder",
-        "verified": false,
-        "required": true,
-        "source": "phase2_preparation",
-        "evidence_refs": ["oceanengine_openapi_material_binding_request"],
-        "open_questions": [
-          "Confirm ledger lookup from local unit_key to provider promotion_id after unit creation."
-        ]
-      },
-      {
         "internal_field": "material_id",
-        "provider_field": "material_id",
+        "provider_field": "",
         "provider_object": "material_bind_request",
-        "mapping_kind": "direct",
+        "mapping_kind": "local_only",
+        "local_only_confirmed": true,
+        "local_only_confirmation_note": "本地素材全局身份字段；素材推送 API 使用源账户 video_ids，material_id 留给后续本地追溯和目标账户回查。",
         "value_source": "create_strategy_plan.strategy.projects[].units[].materials[].material_id",
         "purpose": "source material identity",
         "verified": false,
         "required": true,
-        "source": "phase2_preparation",
-        "evidence_refs": ["oceanengine_openapi_material_binding_request"],
-        "open_questions": [
-          "Confirm whether provider expects material_id, video_material_id, or a nested material list for this operation."
-        ]
+        "source": "local_api_doc_review",
+        "evidence_refs": [],
+        "open_questions": []
       },
       {
         "internal_field": "source_video_id",
@@ -312,7 +308,7 @@
         "provider_object": "material_bind_request",
         "mapping_kind": "local_only",
         "local_only_confirmed": true,
-        "local_only_confirmation_note": "本地素材来源追溯字段；平台素材请求使用 material_id 或视频素材字段，不直接接收 source_video_id。",
+        "local_only_confirmation_note": "本地单条源视频追溯字段；素材推送 API 接收列表字段 video_ids，dry-run 会由此生成 source_video_ids。",
         "value_source": "create_strategy_plan.strategy.projects[].units[].materials[].source_video_id",
         "purpose": "source video identity",
         "verified": false,

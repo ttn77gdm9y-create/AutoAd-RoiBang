@@ -58,6 +58,11 @@ def _projects(plan: dict[str, Any]) -> list[dict[str, Any]]:
     return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
 
 
+def _source_advertiser_id(plan: dict[str, Any]) -> str:
+    strategy = plan.get("strategy") if isinstance(plan.get("strategy"), dict) else {}
+    return str(strategy.get("source_advertiser_id") or "")
+
+
 def _idempotency_key(scope: str, source_fields: dict[str, Any]) -> dict[str, Any]:
     canonical = json.dumps(source_fields, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return {
@@ -76,6 +81,7 @@ def _with_idempotency(plan: dict[str, Any], project: dict[str, Any]) -> dict[str
         "advertiser_id": str(project.get("advertiser_id") or ""),
         "project_key": str(project.get("project_key") or ""),
     }
+    source_advertiser_id = _source_advertiser_id(plan)
     units: list[dict[str, Any]] = []
     for unit in project.get("units") if isinstance(project.get("units"), list) else []:
         if not isinstance(unit, dict):
@@ -93,8 +99,9 @@ def _with_idempotency(plan: dict[str, Any], project: dict[str, Any]) -> dict[str
             materials.append(
                 {
                     **material,
-                    "project_id": project_id_placeholder,
-                    "promotion_id": promotion_id_placeholder,
+                    "source_advertiser_id": source_advertiser_id,
+                    "target_advertiser_ids": [str(project.get("advertiser_id") or "")],
+                    "source_video_ids": [str(material.get("source_video_id") or "")],
                     "idempotency_key": _idempotency_key("bind_material", material_fields),
                 }
             )
@@ -181,11 +188,15 @@ def _task_payload_drafts(project: dict[str, Any], *, payload_schema: dict[str, A
                     "idempotency_key": str(material.get("idempotency_key", {}).get("value") or ""),
                     "endpoint": str(endpoints.get("bind_material") or ""),
                     "payload": {
-                        "advertiser_id": str(project.get("advertiser_id") or ""),
+                        "source_advertiser_id": str(material.get("source_advertiser_id") or ""),
+                        "target_advertiser_ids": material.get("target_advertiser_ids")
+                        if isinstance(material.get("target_advertiser_ids"), list)
+                        else [str(project.get("advertiser_id") or "")],
+                        "source_video_ids": material.get("source_video_ids")
+                        if isinstance(material.get("source_video_ids"), list)
+                        else [str(material.get("source_video_id") or "")],
                         "project_key": str(project.get("project_key") or ""),
-                        "project_id": str(material.get("project_id") or ""),
                         "unit_key": str(unit.get("unit_key") or ""),
-                        "promotion_id": str(material.get("promotion_id") or ""),
                         "material_id": str(material.get("material_id") or ""),
                     },
                 }

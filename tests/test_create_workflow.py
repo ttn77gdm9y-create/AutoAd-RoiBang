@@ -781,12 +781,13 @@ def test_create_dry_run_outputs_non_executable_project_unit_material_combination
         "field_defaults.inventory_type",
     ]
     assert result["payload_schema"]["required_fields"]["bind_material"] == [
-        "advertiser_id",
+        "source_advertiser_id",
+        "target_advertiser_ids",
+        "source_video_ids",
         "project_key",
-        "project_id",
         "unit_key",
-        "promotion_id",
         "material_id",
+        "source_video_id",
     ]
     assert result["payload_contract"] == {
         "status": "passed",
@@ -921,7 +922,7 @@ def test_create_dry_run_emits_non_executable_candidate_provider_payloads_for_pha
                 "endpoints": {
                     "create_project": "/open_api/2/project/create/",
                     "create_unit": "/open_api/2/promotion/create/",
-                    "bind_material": "/open_api/2/promotion/material/bind/",
+                    "bind_material": "/open_api/2/file/material/bind/",
                 }
             },
         },
@@ -958,11 +959,17 @@ def test_create_dry_run_emits_non_executable_candidate_provider_payloads_for_pha
 
     material_draft = next(draft for draft in result["provider_payload_drafts"] if draft["operation"] == "bind_material")
     assert material_draft["field_mapping_mode"] == "candidate"
-    assert material_draft["payload"]["project_id"] == "<lookup:target-1-p001>"
-    assert material_draft["payload"]["promotion_id"] == "<lookup:target-1-p001-u01>"
-    assert material_draft["payload"]["material_id"] == "m-high"
+    assert material_draft["endpoint"] == "/open_api/2/file/material/bind/"
+    assert material_draft["payload"] == {
+        "advertiser_id": "source-1",
+        "target_advertiser_ids": ["target-1"],
+        "video_ids": ["source-video-1"],
+    }
     assert "project_key" not in material_draft["payload"]
     assert "unit_key" not in material_draft["payload"]
+    assert "project_id" not in material_draft["payload"]
+    assert "promotion_id" not in material_draft["payload"]
+    assert "material_id" not in material_draft["payload"]
 
     assert result["provider_adapter_contract"]["executable_draft_count"] == 0
     assert result["provider_adapter_contract"]["unmapped_payload_field_count"] == 0
@@ -1114,60 +1121,64 @@ def test_create_dry_run_can_load_provider_field_map_from_json_config(tmp_path: P
                     ],
                     "bind_material": [
                         {
-                            "internal_field": "advertiser_id",
+                            "internal_field": "source_advertiser_id",
                             "provider_field": "advertiser_id",
-                            "purpose": "target advertiser account id",
+                            "purpose": "source material advertiser account id",
+                            "verified": True,
+                            "required": True,
+                            "source": "unit_test",
+                        },
+                        {
+                            "internal_field": "target_advertiser_ids",
+                            "provider_field": "target_advertiser_ids",
+                            "purpose": "target advertiser account ids for material push",
+                            "verified": True,
+                            "required": True,
+                            "source": "unit_test",
+                        },
+                        {
+                            "internal_field": "source_video_ids",
+                            "provider_field": "video_ids",
+                            "purpose": "source account video ids to push",
                             "verified": True,
                             "required": True,
                             "source": "unit_test",
                         },
                         {
                             "internal_field": "project_key",
-                            "provider_field": "local_project_key",
+                            "provider_field": "",
                             "purpose": "local planned project key",
                             "verified": True,
                             "required": True,
                             "source": "unit_test",
-                        },
-                        {
-                            "internal_field": "project_id",
-                            "provider_field": "project_id",
-                            "purpose": "provider project id lookup placeholder",
-                            "verified": True,
-                            "required": True,
-                            "source": "unit_test",
+                            "mapping_kind": "local_lookup_key",
                         },
                         {
                             "internal_field": "unit_key",
-                            "provider_field": "local_unit_key",
+                            "provider_field": "",
                             "purpose": "local planned unit key",
                             "verified": True,
                             "required": True,
                             "source": "unit_test",
-                        },
-                        {
-                            "internal_field": "promotion_id",
-                            "provider_field": "promotion_id",
-                            "purpose": "provider promotion id lookup placeholder",
-                            "verified": True,
-                            "required": True,
-                            "source": "unit_test",
+                            "mapping_kind": "local_lookup_key",
                         },
                         {
                             "internal_field": "material_id",
-                            "provider_field": "material_id",
+                            "provider_field": "",
                             "purpose": "source material identity",
                             "verified": True,
                             "required": True,
                             "source": "unit_test",
+                            "mapping_kind": "local_only",
                         },
                         {
                             "internal_field": "source_video_id",
-                            "provider_field": "source_video_id",
+                            "provider_field": "",
                             "purpose": "source video identity",
                             "verified": True,
                             "required": True,
                             "source": "unit_test",
+                            "mapping_kind": "local_only",
                         },
                     ],
                 },
@@ -1247,11 +1258,11 @@ def test_create_dry_run_can_load_provider_field_map_from_json_config(tmp_path: P
     assert "unit_key" not in unit_draft["payload"]
     material_draft = next(draft for draft in result["provider_payload_drafts"] if draft["operation"] == "bind_material")
     assert material_draft["field_mapping_applied"] is True
-    assert material_draft["payload"]["local_project_key"] == "target-1-p001"
-    assert material_draft["payload"]["project_id"] == "<lookup:target-1-p001>"
-    assert material_draft["payload"]["local_unit_key"] == "target-1-p001-u01"
-    assert material_draft["payload"]["promotion_id"] == "<lookup:target-1-p001-u01>"
-    assert material_draft["payload"]["material_id"] == "m-high"
+    assert material_draft["payload"] == {
+        "advertiser_id": "source-1",
+        "target_advertiser_ids": ["target-1"],
+        "video_ids": ["source-video-1"],
+    }
     assert "source_video_id" not in material_draft["payload"]
     assert result["candidate_tasks"][0]["units"][0]["materials"][0]["source_video_id"] == "source-video-1"
     assert "unit_key" not in material_draft["payload"]
@@ -1277,8 +1288,9 @@ def test_create_dry_run_generates_promotion_name_and_lookup_placeholders(tmp_pat
     assert unit_draft["payload"]["project_id"] == "<lookup:target-1-p001>"
 
     material_draft = next(draft for draft in task["redacted_payload_drafts"] if draft["operation"] == "bind_material")
-    assert material_draft["payload"]["project_id"] == "<lookup:target-1-p001>"
-    assert material_draft["payload"]["promotion_id"] == "<lookup:target-1-p001-u01>"
+    assert material_draft["payload"]["source_advertiser_id"] == "source-1"
+    assert material_draft["payload"]["target_advertiser_ids"] == ["target-1"]
+    assert material_draft["payload"]["source_video_ids"] == ["source-video-1"]
     assert "source_video_id" not in material_draft["payload"]
     assert first_unit["materials"][0]["source_video_id"] == "source-video-1"
     assert result["payload_contract"]["status"] == "passed"
@@ -1836,7 +1848,7 @@ def test_create_phase2_provider_mapping_prep_builds_review_matrix_without_execut
                 "endpoints": {
                     "create_project": "/open_api/2/project/create/",
                     "create_unit": "/open_api/2/promotion/create/",
-                    "bind_material": "/open_api/2/promotion/material/bind/",
+                    "bind_material": "/open_api/2/file/material/bind/",
                 }
             },
         }
@@ -1854,10 +1866,10 @@ def test_create_phase2_provider_mapping_prep_builds_review_matrix_without_execut
         "field_map_path": "configs/provider-field-maps/oceanengine.create.phase2-prep.example.json",
         "operation_count": 3,
         "field_count": 22,
-        "candidate_provider_field_count": 13,
-        "verified_field_count": 9,
-        "unresolved_field_count": 4,
-        "open_question_count": 4,
+        "candidate_provider_field_count": 12,
+        "verified_field_count": 12,
+        "unresolved_field_count": 0,
+        "open_question_count": 1,
         "ready_for_live_payload_development": False,
         "ready_for_live_execute": False,
     }
@@ -1966,13 +1978,12 @@ def test_create_provider_evidence_review_flags_unreviewed_phase2_evidence():
         "evidence_catalog_path": "configs/provider-evidence/oceanengine.create.phase2-review.example.json",
         "field_count": 22,
         "catalog_evidence_count": 3,
-        "reviewed_evidence_count": 2,
-        "ready_field_count": 9,
-        "unresolved_field_count": 4,
+        "reviewed_evidence_count": 3,
+        "ready_field_count": 12,
+        "unresolved_field_count": 0,
         "evidence_status_counts": {
-            "local_only_confirmed": 9,
-            "needs_evidence_review": 4,
-            "verified": 9,
+            "local_only_confirmed": 10,
+            "verified": 12,
         },
         "ready_for_live_payload_development": False,
         "ready_for_live_execute": False,
@@ -2020,10 +2031,10 @@ def test_create_provider_evidence_review_flags_unreviewed_phase2_evidence():
     assert result["evidence_worksheet"]["summary"] == {
         "worksheet_version": "phase2.provider_evidence_worksheet.v1",
         "row_count": 22,
-        "requires_evidence_review_count": 4,
+        "requires_evidence_review_count": 0,
         "requires_local_confirmation_count": 0,
         "requires_provider_field_count": 0,
-        "ready_row_count": 18,
+        "ready_row_count": 22,
     }
     assert result["evidence_worksheet"]["rows"][0] == {
         "operation": "create_project",
@@ -2043,33 +2054,14 @@ def test_create_provider_evidence_review_flags_unreviewed_phase2_evidence():
         "workbench_version": "phase2.manual_review_workbench.v1",
         "candidate_field_count": 0,
         "local_only_confirmation_count": 0,
-        "evidence_review_count": 4,
+        "evidence_review_count": 0,
         "ready_to_edit_json": True,
         "execution_enabled": False,
         "external_api_calls": 0,
     }
     assert result["manual_review_workbench"]["candidate_fields"] == []
     assert result["manual_review_workbench"]["local_only_confirmations"] == []
-    assert result["manual_review_workbench"]["evidence_reviews"][0] == {
-        "evidence_ref": "oceanengine_openapi_material_binding_request",
-        "operation": "bind_material",
-        "provider_fields": [
-            "advertiser_id",
-            "project_id",
-            "promotion_id",
-            "material_id",
-        ],
-        "edit_file": "configs/provider-evidence/oceanengine.create.phase2-review.example.json",
-        "after_review_set": {
-            "reviewed": True,
-            "reviewed_by": "人工填写",
-            "reviewed_at": "人工填写 ISO 时间",
-        },
-        "blocked_until": [
-            "补 source_url 或 captured_request_ref",
-            "人工核对 provider_fields 与证据一致",
-        ],
-    }
+    assert result["manual_review_workbench"]["evidence_reviews"] == []
     local_only_row = [
         row
         for row in result["evidence_worksheet"]["rows"]
@@ -2174,18 +2166,17 @@ def test_create_provider_evidence_review_accepts_explicit_local_only_confirmatio
     )
 
     assert result["summary"]["evidence_status_counts"] == {
-        "local_only_confirmed": 9,
-        "needs_evidence_review": 4,
-        "verified": 9,
+        "local_only_confirmed": 10,
+        "verified": 12,
     }
-    assert result["summary"]["unresolved_field_count"] == 4
+    assert result["summary"]["unresolved_field_count"] == 0
     assert result["evidence_worksheet"]["summary"]["requires_local_confirmation_count"] == 0
     confirmed_rows = [
         row
         for row in result["evidence_worksheet"]["rows"]
         if row["evidence_status"] == "local_only_confirmed"
     ]
-    assert len(confirmed_rows) == 9
+    assert len(confirmed_rows) == 10
     assert all(row["fill_required"] == [] for row in confirmed_rows)
     assert result["execution_enabled"] is False
     assert result["external_api_calls"] == 0
@@ -2238,7 +2229,7 @@ def test_create_provider_evidence_review_cli_uses_policy_config(tmp_path: Path, 
         "workbench_version": "phase2.manual_review_workbench.v1",
         "candidate_field_count": 0,
         "local_only_confirmation_count": 0,
-        "evidence_review_count": 4,
+        "evidence_review_count": 0,
         "ready_to_edit_json": True,
         "execution_enabled": False,
         "external_api_calls": 0,
@@ -2246,15 +2237,9 @@ def test_create_provider_evidence_review_cli_uses_policy_config(tmp_path: Path, 
     assert output["manual_review_next_items"] == {
         "candidate_fields": [],
         "local_only_confirmations": [],
-        "evidence_reviews": [
-            {
-                "evidence_ref": "oceanengine_openapi_material_binding_request",
-                "operation": "bind_material",
-                "edit_file": "configs/provider-evidence/oceanengine.create.phase2-review.example.json",
-            }
-        ],
+        "evidence_reviews": [],
     }
-    assert artifact["evidence_worksheet"]["summary"]["requires_evidence_review_count"] == 4
+    assert artifact["evidence_worksheet"]["summary"]["requires_evidence_review_count"] == 0
     assert artifact["provider_field_gap_report"]["summary"]["operation_counts"] == {}
     assert artifact["provider_field_gap_resolution_plan"]["summary"]["manual_review_required"] is False
     assert artifact["project_type_local_usage_review"]["summary"]["blocking_item_count"] == 0
@@ -7136,7 +7121,7 @@ def test_create_approval_and_execute_preserve_candidate_payload_boundaries(tmp_p
         "verified_draft_count": 0,
         "executable_draft_count": 0,
         "live_payload_count": 0,
-        "candidate_unverified_field_count": 16,
+            "candidate_unverified_field_count": 0,
         "unmapped_payload_field_count": 0,
         "ready_for_execute": False,
         "blocking_reasons": [
@@ -7246,27 +7231,13 @@ def test_create_execute_plan_carries_provider_id_ledger_gate(tmp_path: Path):
     assert dry_run["provider_id_ledger_requirements"]["required_before_create_unit"] == [
         {"field": "project_id", "entity_type": "project", "local_key": "target-1-p001", "placeholder": "<lookup:target-1-p001>"}
     ]
-    assert dry_run["provider_id_ledger_requirements"]["required_before_bind_material"] == [
-        {"field": "project_id", "entity_type": "project", "local_key": "target-1-p001", "placeholder": "<lookup:target-1-p001>"},
-        {
-            "field": "promotion_id",
-            "entity_type": "promotion",
-            "local_key": "target-1-p001-u01",
-            "placeholder": "<lookup:target-1-p001-u01>",
-        },
-        {
-            "field": "promotion_id",
-            "entity_type": "promotion",
-            "local_key": "target-1-p001-u02",
-            "placeholder": "<lookup:target-1-p001-u02>",
-        },
-    ]
+    assert dry_run["provider_id_ledger_requirements"]["required_before_bind_material"] == []
     assert approval["provider_id_ledger_requirements"] == dry_run["provider_id_ledger_requirements"]
     assert result["provider_id_ledger_gate"] == {
         "status": "hard_blocked_phase1",
         "ready_for_live_execute": False,
         "required_before_create_unit_count": 1,
-        "required_before_bind_material_count": 3,
+        "required_before_bind_material_count": 0,
         "execution_enabled": False,
         "external_api_calls": 0,
         "actions": [],
@@ -7278,7 +7249,7 @@ def test_create_execute_plan_carries_provider_id_ledger_gate(tmp_path: Path):
     }
     assert result["execution_plan"]["steps"][2]["requires_provider_id_ledger"] == {
         "status": "required",
-        "required_count": 3,
+        "required_count": 0,
     }
 
 
@@ -7317,8 +7288,8 @@ def test_create_execute_resolves_provider_payload_drafts_from_id_ledger(tmp_path
     assert result["provider_payload_resolution"] == {
         "status": "resolved",
         "draft_count": 7,
-        "lookup_count": 10,
-        "resolved_count": 10,
+        "lookup_count": 2,
+        "resolved_count": 2,
         "unresolved_count": 0,
         "unresolved_placeholders": [],
         "execution_enabled": False,
@@ -7370,9 +7341,14 @@ def test_create_execute_resolves_provider_payload_drafts_from_id_ledger(tmp_path
     material_drafts = [
         draft for draft in result["resolved_provider_payload_drafts"] if draft["operation"] == "bind_material"
     ]
-    assert material_drafts[0]["payload"]["project_id"] == "project_123"
-    assert material_drafts[0]["payload"]["promotion_id"] == "promotion_456"
-    assert material_drafts[2]["payload"]["promotion_id"] == "promotion_789"
+    assert material_drafts[0]["payload"] == {
+        "source_advertiser_id": "source-1",
+        "target_advertiser_ids": ["target-1"],
+        "source_video_ids": ["source-video-1"],
+        "project_key": "target-1-p001",
+        "unit_key": "target-1-p001-u01",
+        "material_id": "m-high",
+    }
     assert result["execution_enabled"] is False
     assert result["external_api_calls"] == 0
     assert result["actions"] == []
@@ -7392,7 +7368,7 @@ def test_create_execute_resolved_payload_contract_blocks_unresolved_lookups(tmp_
     assert result["resolved_payload_contract"] == {
         "status": "blocked",
         "checked_draft_count": 7,
-        "unresolved_lookup_count": 10,
+        "unresolved_lookup_count": 2,
         "executable_draft_count": 0,
         "live_payload_count": 0,
         "violation_count": 1,
@@ -7403,7 +7379,7 @@ def test_create_execute_resolved_payload_contract_blocks_unresolved_lookups(tmp_
     }
     assert result["execute_review_summary"] == {
         "status": "blocked_missing_provider_ids",
-        "plain_language": "真实创建仍然硬阻断；已解析草稿仍有 10 个 lookup 占位未解析，需要先登记平台返回的 project_id/promotion_id。",
+        "plain_language": "真实创建仍然硬阻断；已解析草稿仍有 2 个 lookup 占位未解析，需要先登记平台返回的 project_id/promotion_id。",
         "checks": {
             "execute_hard_blocked": True,
             "external_api_calls_zero": True,
@@ -7416,7 +7392,7 @@ def test_create_execute_resolved_payload_contract_blocks_unresolved_lookups(tmp_
             "unit_count": 2,
             "material_count": 4,
             "resolved_draft_count": 7,
-            "unresolved_lookup_count": 10,
+            "unresolved_lookup_count": 2,
         },
         "human_next_steps": [
             "先确认项目和单元真实创建返回的 project_id/promotion_id 已写入本地 ID 台账。",
@@ -7496,7 +7472,7 @@ def test_create_execute_is_hard_blocked_in_phase1_even_after_recorded_approval(t
                 "status": "blocked_in_phase1",
                 "requires_provider_id_ledger": {
                     "status": "required",
-                    "required_count": 3,
+                    "required_count": 0,
                 },
             },
         ],
@@ -7537,12 +7513,13 @@ def test_create_execute_is_hard_blocked_in_phase1_even_after_recorded_approval(t
                     "field_defaults.inventory_type",
                 ],
                 "bind_material": [
-                    "advertiser_id",
+                    "source_advertiser_id",
+                    "target_advertiser_ids",
+                    "source_video_ids",
                     "project_key",
-                    "project_id",
                     "unit_key",
-                    "promotion_id",
                     "material_id",
+                    "source_video_id",
                 ],
             },
             "field_sources": {
@@ -7555,7 +7532,7 @@ def test_create_execute_is_hard_blocked_in_phase1_even_after_recorded_approval(t
             "status": "hard_blocked_phase1",
             "ready_for_live_execute": False,
             "required_before_create_unit_count": 1,
-            "required_before_bind_material_count": 3,
+            "required_before_bind_material_count": 0,
             "execution_enabled": False,
             "external_api_calls": 0,
             "actions": [],

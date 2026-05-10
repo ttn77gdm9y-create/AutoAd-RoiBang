@@ -40,20 +40,19 @@
     },
     "oceanengine_openapi_material_binding_request": {
       "title": "OceanEngine material binding request schema",
-      "source_type": "official_doc_pending",
-      "source_url": "",
+      "source_type": "local_official_api_doc",
+      "source_url": "docs/api/MiniGameApi/素材管理/升级版巨量引擎工作台素材管理/素材推送.md",
       "operation": "bind_material",
       "provider_object": "material_bind_request",
       "provider_fields": [
         "advertiser_id",
-        "project_id",
-        "promotion_id",
-        "material_id"
+        "target_advertiser_ids",
+        "video_ids"
       ],
-      "reviewed": false,
-      "reviewed_by": "",
-      "reviewed_at": "",
-      "notes": "Pending official documentation or captured request evidence review."
+      "reviewed": true,
+      "reviewed_by": "codex_local_api_doc_review",
+      "reviewed_at": "2026-05-10T09:50:00Z",
+      "notes": "本地 MiniGameApi 文档已核对：素材推送 API 路径为 /open_api/2/file/material/bind/；advertiser_id 表示素材归属客户，也就是源素材账户；target_advertiser_ids 是目标账户列表；视频素材用源账户 video_ids 推送。"
     }
   }
 }
