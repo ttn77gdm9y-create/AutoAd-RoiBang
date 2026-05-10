@@ -34,6 +34,7 @@ def run_from_args(argv: list[str] | None = None) -> int:
     parser.add_argument("--create-execute-artifact", default="")
     parser.add_argument("--create-first-live-runbook-artifact", default="")
     parser.add_argument("--create-live-payload-adapter-scaffold-artifact", default="")
+    parser.add_argument("--now-iso", default="")
     args = parser.parse_args(argv)
 
     config = load_runtime_config(args.config)
@@ -58,6 +59,7 @@ def run_from_args(argv: list[str] | None = None) -> int:
                 "create_execute_artifact": _load_artifact(execute_path),
                 "create_first_live_runbook_artifact": _load_artifact(runbook_path),
                 "create_live_payload_adapter_scaffold_artifact": _load_artifact(scaffold_path),
+                "now_iso": args.now_iso,
             }
         },
         runs_dir=config.runs_dir,

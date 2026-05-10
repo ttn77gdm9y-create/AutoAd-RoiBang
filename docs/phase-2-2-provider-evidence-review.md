@@ -266,14 +266,14 @@ create_project -> create_unit -> bind_material
 
 `create_live_execute_runner` 是下一层真实执行器边界，但当前只开放 blocked review mode（阻断复核模式）和 injected test transport（测试注入发送层）：
 
-- 默认命令行入口不注入 transport，所以只会生成 blocked artifact（阻断产物）。
+- 默认固定脚本入口不注入 transport（请求发送层），所以只会生成 blocked artifact（阻断产物）。
 - `approve` 仍只是 approval record（批准记录），不是 execute switch（执行开关）。
 - 只有 runtime、policy、phase gate、runbook、人工批准记录和测试 transport 全部满足时，单元测试才会进入 `test_transport_completed`。
 - 单元测试里的 transport 是假的本地函数，不是 HTTP 请求；因此 `external_api_calls` 仍必须是 0。
 - 执行顺序固定为 `create_project -> create_unit -> bind_material`。
 - 任一步失败立即停止，`auto_retry_enabled=false`，不自动重试。
 
-当前 runner 的 CLI（命令行入口）用途：
+当前 runner 的固定脚本入口用途：
 
 ```bash
 PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_live_execute_runner.py --config configs/runtime.example.json --policy policies/strategy.example.json
@@ -283,7 +283,7 @@ PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_live_execute
 
 ## create HTTP transport 边界
 
-`create_http_transport` 是真实创建接口的 HTTP transport（HTTP 请求发送层），目前只作为受控模块存在，不接入普通 CLI：
+`create_http_transport` 是真实创建接口的 HTTP transport（HTTP 请求发送层），目前只作为受控模块存在，不接入普通固定脚本：
 
 - 默认 `enabled=false`，无法构造。
 - 必须显式设置 `allow_mutation=true`，mutation 是变更操作，表示可能创建或修改线上对象。
@@ -331,3 +331,27 @@ PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_live_approva
 ```
 
 `create_live_execute_runner` 现在必须看到 `create_live_approval` artifact 才会认为 `human_approval_record_present=true`。只在 policy（策略配置）里写 `human_approval.approved=true` 不再能开闸。
+
+## first live execution pack
+
+`create_live_execution_pack` 是首单真实创建前的 execution pack（执行包）和 final preflight（最终执行前检查）。它仍是本地复核产物，不是执行开关：
+
+- `execution_enabled=false`
+- `live_execute_enabled=false`
+- `external_api_calls=0`
+- `actions=[]`
+
+它会把以下信息集中到一个 artifact（运行产物）：
+
+- `final_preflight`：最终执行前检查，列出 runtime（运行时配置）、policy（策略配置）、phase gate（阶段闸门）、runbook（首单手册）、approval artifact（批准产物）、payload（请求体）安全边界。
+- `execution_pack`：执行包，按 `create_project`、`create_unit`、`bind_material` 三类展示 payload drafts（请求体草稿）、endpoint（接口地址）、scope（首单范围）和 approval（批准记录）。
+- `ready_for_live_enablement`：表示本地安全边界已通过，只差真实启用项。
+- `ready_for_live_execute`：表示真实启用项也全部显式打开，但这个 artifact 本身仍不执行。
+
+固定脚本入口：
+
+```bash
+PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_live_execution_pack.py --config configs/runtime.example.json --policy policies/strategy.example.json
+```
+
+当前示例 runtime（运行时配置）和 policy（策略配置）默认关闭真实执行，所以固定脚本会输出 blocked（阻断）状态；这符合预期。下一阶段才会做受控真实执行固定脚本，读取这个 execution pack 后构造真实 HTTP transport（HTTP 请求发送层）。

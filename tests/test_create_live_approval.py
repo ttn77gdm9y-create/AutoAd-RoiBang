@@ -195,7 +195,16 @@ def test_create_live_approval_cli_uses_latest_artifacts_and_approval_file(tmp_pa
     approval_file.write_text(json.dumps(_approval_request(), ensure_ascii=False), encoding="utf-8")
     module = _load_script("run_create_live_approval")
 
-    exit_code = module.run_from_args(["--config", str(runtime_path), "--approval-file", str(approval_file)])
+    exit_code = module.run_from_args(
+        [
+            "--config",
+            str(runtime_path),
+            "--approval-file",
+            str(approval_file),
+            "--now-iso",
+            "2026-05-10T11:30:00+00:00",
+        ]
+    )
 
     output = json.loads(capsys.readouterr().out)
     artifact = json.loads(Path(output["artifact_path"]).read_text(encoding="utf-8"))
