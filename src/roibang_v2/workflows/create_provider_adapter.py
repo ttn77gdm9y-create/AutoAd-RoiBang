@@ -114,7 +114,12 @@ def _provider_payload(
     if not field_mapping_applied or not isinstance(provider_field_map, dict):
         return dict(payload)
     operation_map = _operation_field_map(provider_field_map=provider_field_map, operation=operation)
-    return {operation_map.get(key, key): value for key, value in payload.items()}
+    provider_payload: dict[str, Any] = {}
+    for internal_field, provider_field in operation_map.items():
+        value = _payload_value(payload, internal_field)
+        if value is not None:
+            provider_payload[provider_field] = value
+    return provider_payload
 
 
 def _unmapped_payload_fields(
@@ -129,8 +134,8 @@ def _unmapped_payload_fields(
     operation_map = _operation_field_map(provider_field_map=provider_field_map, operation=operation)
     return [
         {"operation": operation, "internal_field": str(field)}
-        for field in payload
-        if str(field) not in operation_map
+        for field in _payload_field_paths(payload)
+        if field not in operation_map
     ]
 
 
@@ -169,3 +174,24 @@ def _operation_field_map(*, provider_field_map: dict[str, Any], operation: str) 
         if internal_field and provider_field and bool(row.get("verified", False)):
             mapping[internal_field] = provider_field
     return mapping
+
+
+def _payload_value(payload: dict[str, Any], field: str) -> Any:
+    value: Any = payload
+    for part in field.split("."):
+        if not isinstance(value, dict):
+            return None
+        value = value.get(part)
+    return value
+
+
+def _payload_field_paths(payload: dict[str, Any]) -> list[str]:
+    paths: list[str] = []
+    for key, value in payload.items():
+        key_text = str(key)
+        if isinstance(value, dict):
+            for subkey in value:
+                paths.append(f"{key_text}.{subkey}")
+        else:
+            paths.append(key_text)
+    return paths

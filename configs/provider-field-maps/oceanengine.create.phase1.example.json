@@ -38,9 +38,25 @@
         "source": "internal_phase1_schema"
       },
       {
-        "internal_field": "field_defaults",
+        "internal_field": "field_defaults.landing_type",
         "provider_field": "",
-        "purpose": "project and unit default fields",
+        "purpose": "default landing type",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
+        "internal_field": "field_defaults.pricing",
+        "provider_field": "",
+        "purpose": "default pricing type",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
+        "internal_field": "field_defaults.inventory_type",
+        "provider_field": "",
+        "purpose": "default inventory type",
         "verified": false,
         "required": true,
         "source": "internal_phase1_schema"
@@ -88,9 +104,25 @@
         "source": "internal_phase1_schema"
       },
       {
-        "internal_field": "field_defaults",
+        "internal_field": "field_defaults.landing_type",
         "provider_field": "",
-        "purpose": "project and unit default fields",
+        "purpose": "default landing type",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
+        "internal_field": "field_defaults.pricing",
+        "provider_field": "",
+        "purpose": "default pricing type",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
+        "internal_field": "field_defaults.inventory_type",
+        "provider_field": "",
+        "purpose": "default inventory type",
         "verified": false,
         "required": true,
         "source": "internal_phase1_schema"

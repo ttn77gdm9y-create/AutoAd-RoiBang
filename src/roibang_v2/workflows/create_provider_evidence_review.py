@@ -441,19 +441,19 @@ def _gap_resolution_details(row: dict[str, Any]) -> dict[str, Any]:
                 "如果需要进入平台请求体，必须拆成明确 provider_field 并补证据",
             ],
         }
-    if internal_field == "field_defaults":
+    if internal_field == "field_defaults" or internal_field.startswith("field_defaults."):
         return {
-            "recommended_action": "split_field_defaults_into_explicit_provider_fields",
+            "recommended_action": "map_field_default_subfield_to_provider_field",
             "review_questions": [
-                "field_defaults 里的每个子字段分别对应哪个平台字段？",
-                "哪些子字段只用于本地模板，不应该进入平台请求体？",
-                "拆分后的每个 provider_field 是否都有官方文档或已捕获请求证据？",
+                "这个 field_defaults 子字段对应哪个平台字段？",
+                "这个子字段是否只用于本地模板，不应该进入平台请求体？",
+                "该 provider_field 是否有官方文档或已捕获请求证据？",
                 "复核证据来自官方文档还是已捕获请求？",
             ],
             "blocked_until": [
-                "field_defaults 的每个子字段都有去向",
-                "每个要进入平台请求体的子字段都有 provider_field",
-                "每个 provider_field 都有已复核 evidence_refs",
+                "子字段去向已确认",
+                "要进入平台请求体时 provider_field 已确认",
+                "provider_field 有已复核 evidence_refs",
             ],
         }
     if operation == "bind_material" and internal_field == "source_video_id":
@@ -581,13 +581,13 @@ def _field_gap_convergence_plan(gap_report: dict[str, Any]) -> dict[str, Any]:
     field_defaults_items = [
         {
             "operation": str(row.get("operation") or ""),
-            "internal_field": "field_defaults",
-            "subfields": ["landing_type", "pricing", "inventory_type"],
-            "recommended_action": "split_into_explicit_provider_fields",
-            "blocked_until": ["每个子字段都有 provider_field", "每个 provider_field 都有已复核证据"],
+            "internal_field": str(row.get("internal_field") or ""),
+            "subfield": str(row.get("internal_field") or "").split(".")[-1],
+            "recommended_action": "map_to_explicit_provider_field",
+            "blocked_until": ["子字段有 provider_field", "provider_field 有已复核证据"],
         }
         for row in gap_rows
-        if isinstance(row, dict) and str(row.get("internal_field") or "") == "field_defaults"
+        if isinstance(row, dict) and str(row.get("internal_field") or "").startswith("field_defaults.")
     ]
     source_video_id_review = {
         "operation": "bind_material",

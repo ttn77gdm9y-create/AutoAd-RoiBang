@@ -14,6 +14,9 @@ _FIELD_PURPOSES = {
     "project_type": "internal project type",
     "daily_budget": "planned project daily budget",
     "field_defaults": "project and unit default fields",
+    "field_defaults.landing_type": "default landing type",
+    "field_defaults.pricing": "default pricing type",
+    "field_defaults.inventory_type": "default inventory type",
     "project_key": "local planned project key",
     "project_id": "provider project id lookup placeholder",
     "unit_key": "local planned unit key",
@@ -23,9 +26,15 @@ _FIELD_PURPOSES = {
     "source_video_id": "source video identity",
 }
 
+_FIELD_DEFAULT_SUBFIELDS = [
+    "field_defaults.landing_type",
+    "field_defaults.pricing",
+    "field_defaults.inventory_type",
+]
+
 _REQUIRED_FIELDS_BY_OPERATION = {
-    "create_project": ["advertiser_id", "project_name", "project_type", "daily_budget", "field_defaults"],
-    "create_unit": ["advertiser_id", "project_key", "project_id", "unit_key", "promotion_name", "field_defaults"],
+    "create_project": ["advertiser_id", "project_name", "project_type", "daily_budget", *_FIELD_DEFAULT_SUBFIELDS],
+    "create_unit": ["advertiser_id", "project_key", "project_id", "unit_key", "promotion_name", *_FIELD_DEFAULT_SUBFIELDS],
     "bind_material": [
         "advertiser_id",
         "project_key",
@@ -80,7 +89,9 @@ def provider_field_map_contract(field_map: dict[str, Any], policy: dict[str, Any
     ]
     mapping_verified = bool(field_map.get("mapping_verified", False))
     verified_count = sum(1 for entry in entries if bool(entry.get("verified", False)))
-    missing_provider_count = sum(1 for entry in entries if not str(entry.get("provider_field") or "").strip())
+    missing_provider_count = sum(
+        1 for entry in entries if not str(entry.get("provider_field") or "").strip() and not _is_local_only(entry)
+    )
     missing_required_fields = _missing_required_fields(operations)
     duplicate_internal_fields = _duplicate_internal_fields(operations)
     duplicate_provider_fields = _duplicate_provider_fields(operations)
@@ -220,6 +231,10 @@ def _duplicate_provider_fields(operations: dict[str, Any]) -> list[dict[str, Any
                     }
                 )
     return duplicates
+
+
+def _is_local_only(entry: dict[str, Any]) -> bool:
+    return str(entry.get("mapping_kind") or "").strip() in {"local_lookup_key", "local_only"}
 
 
 def _unknown_internal_fields(operations: dict[str, Any]) -> list[dict[str, str]]:

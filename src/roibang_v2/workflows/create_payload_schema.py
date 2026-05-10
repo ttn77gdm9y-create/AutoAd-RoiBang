@@ -25,7 +25,9 @@ def disabled_create_payload_schema(policy: dict[str, Any] | None = None) -> dict
                 "advertiser_id",
                 "project_name",
                 "daily_budget",
-                "field_defaults",
+                "field_defaults.landing_type",
+                "field_defaults.pricing",
+                "field_defaults.inventory_type",
             ],
             "create_unit": [
                 "advertiser_id",
@@ -33,7 +35,9 @@ def disabled_create_payload_schema(policy: dict[str, Any] | None = None) -> dict
                 "project_id",
                 "unit_key",
                 "promotion_name",
-                "field_defaults",
+                "field_defaults.landing_type",
+                "field_defaults.pricing",
+                "field_defaults.inventory_type",
             ],
             "bind_material": [
                 "advertiser_id",
@@ -96,7 +100,7 @@ def validate_create_payload_contract(
 
 
 def _has_payload_value(scope: dict[str, Any], field: str) -> bool:
-    value = scope.get(field)
+    value = _payload_value(scope, field)
     if isinstance(value, dict):
         return bool(value)
     if isinstance(value, list):
@@ -104,6 +108,15 @@ def _has_payload_value(scope: dict[str, Any], field: str) -> bool:
     if isinstance(value, (int, float)):
         return value > 0
     return bool(str(value or "").strip())
+
+
+def _payload_value(scope: dict[str, Any], field: str) -> Any:
+    value: Any = scope
+    for part in field.split("."):
+        if not isinstance(value, dict):
+            return None
+        value = value.get(part)
+    return value
 
 
 def _unit_label(*, project_key: str, unit: dict[str, Any]) -> str:
