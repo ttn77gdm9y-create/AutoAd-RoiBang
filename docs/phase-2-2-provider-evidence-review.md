@@ -355,3 +355,29 @@ PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_live_executi
 ```
 
 当前示例 runtime（运行时配置）和 policy（策略配置）默认关闭真实执行，所以固定脚本会输出 blocked（阻断）状态；这符合预期。下一阶段才会做受控真实执行固定脚本，读取这个 execution pack 后构造真实 HTTP transport（HTTP 请求发送层）。
+
+## one-shot first live execute
+
+`create_live_execute_once` 是首单一次性真实执行边界。它读取 `create_live_execution_pack`（执行包）、`create_execute`（创建执行复核产物）、`create_first_live_runbook`（首单手册）、`create_live_payload_adapter_scaffold`（真实请求适配闸门）和 `create_live_approval`（批准产物）。
+
+默认情况下它仍然 blocked（阻断），不会构造 `create_http_transport`（真实 HTTP 请求发送层），因此也不会读取 token（访问令牌）或调用真实创建接口。只有同时满足以下条件时，固定脚本才会构造真实发送层：
+
+- `create_live_execution_pack.status=ready_for_live_execute`：执行包已经通过最终执行前检查。
+- `runtime.execution_enabled=true`：运行时执行开关显式打开。
+- `runtime.external_api_enabled=true`：运行时外部接口开关显式打开。
+- policy（策略配置）和 approval（批准记录）都允许 `create_http_transport`。
+
+固定脚本入口：
+
+```bash
+PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_live_execute_once.py --config configs/runtime.example.json --policy policies/strategy.example.json
+```
+
+在真实执行尝试发生后，artifact（运行产物）会如实记录：
+
+- `execution_enabled=true`：本次确实进入执行尝试。
+- `live_execute_enabled=true`：本次确实进入真实执行路径。
+- `external_api_calls`：真实发送层调用次数。
+- `provider_id_records`：平台返回的 `project_id`（平台项目 ID）和 `promotion_id`（平台单元 ID）写入本地台账的记录。
+
+失败策略保持不变：创建项目失败就不创建单元；创建单元失败就不做素材推送；素材推送失败则停止并保留已创建的 ID 供人工复核。变更请求不自动 retry（重试），避免重复创建。

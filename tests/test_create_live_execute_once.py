@@ -1,0 +1,380 @@
+import importlib.util
+import json
+import sqlite3
+from pathlib import Path
+
+from roibang_v2.db.bootstrap import bootstrap_database
+from roibang_v2.workflows.create_live_execute_once import (
+    build_create_live_execute_once,
+    run_create_live_execute_once_request,
+)
+
+
+def _load_script(name: str):
+    script_path = Path(f"scripts/{name}.py")
+    spec = importlib.util.spec_from_file_location(name, script_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(module)
+    return module
+
+
+def _runtime_config(tmp_path: Path, *, execution_enabled: bool = False, external_api_enabled: bool = False) -> Path:
+    path = tmp_path / "runtime.json"
+    path.write_text(
+        json.dumps(
+            {
+                "environment": "test",
+                "phase": "phase2",
+                "database_path": str(tmp_path / "roibang.sqlite3"),
+                "runs_dir": str(tmp_path / "runs"),
+                "fixtures_dir": "data/fixtures",
+                "external_api_enabled": external_api_enabled,
+                "execution_enabled": execution_enabled,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _execute_artifact() -> dict:
+    return {
+        "workflow": "create_execute",
+        "ok": True,
+        "phase": "phase1",
+        "status": "blocked",
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "summary": {
+            "plan_id": "plan-1",
+            "request_id": "req-1",
+            "target_date": "2026-05-10",
+            "project_count": 1,
+            "unit_count": 1,
+            "material_count": 1,
+        },
+        "resolved_provider_payload_drafts": [
+            {
+                "operation": "create_project",
+                "payload": {"advertiser_id": "target-1", "name": "首单项目"},
+                "executable": False,
+                "live_api_payload": False,
+            },
+            {
+                "operation": "create_unit",
+                "payload": {"advertiser_id": "target-1", "project_id": "<lookup:target-1-p001>"},
+                "executable": False,
+                "live_api_payload": False,
+            },
+            {
+                "operation": "bind_material",
+                "payload": {
+                    "source_advertiser_id": "source-1",
+                    "target_advertiser_ids": ["target-1"],
+                    "source_video_ids": ["video-1"],
+                },
+                "executable": False,
+                "live_api_payload": False,
+            },
+        ],
+        "resolved_payload_contract": {
+            "status": "passed",
+            "checked_draft_count": 3,
+            "unresolved_lookup_count": 0,
+            "executable_draft_count": 0,
+            "live_payload_count": 0,
+        },
+        "provider_id_ledger_requirements": {
+            "produced_by_create_project": [
+                {
+                    "local_key": "target-1-p001",
+                    "advertiser_id": "target-1",
+                    "parent_local_key": "",
+                }
+            ],
+            "produced_by_create_unit": [
+                {
+                    "local_key": "target-1-p001-u01",
+                    "advertiser_id": "target-1",
+                    "parent_local_key": "target-1-p001",
+                }
+            ],
+            "required_before_create_unit": [{"local_key": "target-1-p001"}],
+            "required_before_bind_material": [{"local_key": "target-1-p001-u01"}],
+        },
+    }
+
+
+def _runbook_artifact() -> dict:
+    return {
+        "workflow": "create_first_live_runbook",
+        "ok": True,
+        "status": "ready_for_human_approval",
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "scope": {
+            "advertiser_id": "target-1",
+            "project_count": 1,
+            "unit_count": 1,
+            "material_count": 1,
+            "max_project_count": 1,
+            "max_unit_count": 2,
+            "max_material_count": 4,
+        },
+    }
+
+
+def _scaffold_artifact() -> dict:
+    return {
+        "workflow": "create_live_payload_adapter_scaffold",
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "live_adapter_gate": {
+            "ready_for_live_execute": True,
+            "required_gates": {"phase_gate_allows_live_execute": True},
+            "endpoints": {
+                "create_project": "/open_api/2/project/create/",
+                "create_unit": "/open_api/2/promotion/create/",
+                "bind_material": "/open_api/2/file/material/bind/",
+            },
+        },
+    }
+
+
+def _approval_artifact() -> dict:
+    return {
+        "workflow": "create_live_approval",
+        "ok": True,
+        "status": "approved",
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "scope": _runbook_artifact()["scope"],
+        "approval": {
+            "approved": True,
+            "approval_id": "live-approval-001",
+            "approved_by": "operator",
+            "approved_at": "2026-05-10T11:00:00+00:00",
+            "expires_at": "2026-05-10T12:00:00+00:00",
+            "target_workflow": "create_live_execute_runner",
+            "allow_create_http_transport": True,
+        },
+    }
+
+
+def _policy() -> dict:
+    return {
+        "create_execute": {
+            "live_api": {
+                "enabled": True,
+                "endpoints": {
+                    "create_project": "/open_api/2/project/create/",
+                    "create_unit": "/open_api/2/promotion/create/",
+                    "bind_material": "/open_api/2/file/material/bind/",
+                },
+            },
+            "payload_schema": {"live_payload_generation_enabled": True},
+        },
+        "create_live_execute_runner": {
+            "allow_create_http_transport": True,
+            "create_http_transport": {
+                "enabled": True,
+                "allow_mutation": True,
+                "approval_id": "live-approval-001",
+                "approved_by": "operator",
+                "token_env": "ROIBANG_TEST_ACCESS_TOKEN",
+            },
+            "human_approval": {
+                "approved": True,
+                "approval_id": "live-approval-001",
+                "approved_by": "operator",
+            },
+        },
+    }
+
+
+def _execution_pack_artifact(*, ready: bool) -> dict:
+    return {
+        "workflow": "create_live_execution_pack",
+        "ok": ready,
+        "phase": "phase2_preparation",
+        "execution_enabled": False,
+        "live_execute_enabled": False,
+        "external_api_calls": 0,
+        "status": "ready_for_live_execute" if ready else "blocked",
+        "final_preflight": {
+            "ready_for_live_execute": ready,
+            "blocking_reasons": [] if ready else ["runtime.execution_enabled is false"],
+        },
+        "execution_pack": {
+            "transport": {
+                "mode": "create_http",
+                "create_http_transport_allowed": ready,
+                "external_api_calls_in_pack": 0,
+            }
+        },
+        "actions": [],
+    }
+
+
+def test_create_live_execute_once_blocks_before_execution_pack_is_ready(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+
+    result = build_create_live_execute_once(
+        create_live_execution_pack_artifact=_execution_pack_artifact(ready=False),
+        create_execute_artifact=_execute_artifact(),
+        create_first_live_runbook_artifact=_runbook_artifact(),
+        create_live_payload_adapter_scaffold_artifact=_scaffold_artifact(),
+        create_live_approval_artifact=_approval_artifact(),
+        policy=_policy(),
+        runtime={"execution_enabled": True, "external_api_enabled": True},
+        db_path=db_path,
+    )
+
+    assert result["ok"] is False
+    assert result["workflow"] == "create_live_execute_once"
+    assert result["status"] == "blocked"
+    assert result["execution_enabled"] is False
+    assert result["live_execute_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert result["transport_call_count"] == 0
+    assert "execution pack is not ready_for_live_execute" in result["blocking_reasons"]
+    assert result["actions"] == []
+
+
+def test_create_live_execute_once_requires_transport_after_pack_is_ready(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+
+    result = build_create_live_execute_once(
+        create_live_execution_pack_artifact=_execution_pack_artifact(ready=True),
+        create_execute_artifact=_execute_artifact(),
+        create_first_live_runbook_artifact=_runbook_artifact(),
+        create_live_payload_adapter_scaffold_artifact=_scaffold_artifact(),
+        create_live_approval_artifact=_approval_artifact(),
+        policy=_policy(),
+        runtime={"execution_enabled": True, "external_api_enabled": True},
+        db_path=db_path,
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "blocked"
+    assert result["execution_enabled"] is False
+    assert result["live_execute_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert result["transport_call_count"] == 0
+    assert "create_http transport is not constructed" in result["blocking_reasons"]
+
+
+def test_create_live_execute_once_runs_create_http_transport_in_order(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+    calls: list[dict] = []
+
+    def fake_transport(call: dict) -> dict:
+        calls.append(call)
+        if call["operation"] == "create_project":
+            return {"code": 0, "data": {"project_id": "project-001"}}
+        if call["operation"] == "create_unit":
+            assert call["payload"]["project_id"] == "project-001"
+            return {"code": 0, "data": {"promotion_id": "promotion-001"}}
+        if call["operation"] == "bind_material":
+            return {"code": 0, "data": {"task_id": "bind-001"}}
+        raise AssertionError(call["operation"])
+
+    result = build_create_live_execute_once(
+        create_live_execution_pack_artifact=_execution_pack_artifact(ready=True),
+        create_execute_artifact=_execute_artifact(),
+        create_first_live_runbook_artifact=_runbook_artifact(),
+        create_live_payload_adapter_scaffold_artifact=_scaffold_artifact(),
+        create_live_approval_artifact=_approval_artifact(),
+        policy=_policy(),
+        runtime={"execution_enabled": True, "external_api_enabled": True},
+        db_path=db_path,
+        transport=fake_transport,
+    )
+
+    assert result["ok"] is True
+    assert result["status"] == "create_http_completed"
+    assert result["execution_enabled"] is True
+    assert result["live_execute_enabled"] is True
+    assert result["external_api_calls"] == 3
+    assert result["transport_call_count"] == 3
+    assert [call["operation"] for call in calls] == ["create_project", "create_unit", "bind_material"]
+    assert result["ordered_steps"] == [
+        {"operation": "create_project", "planned_count": 1, "status": "completed", "test_transport_call_count": 1},
+        {"operation": "create_unit", "planned_count": 1, "status": "completed", "test_transport_call_count": 1},
+        {"operation": "bind_material", "planned_count": 1, "status": "completed", "test_transport_call_count": 1},
+    ]
+    assert [row["provider_id"] for row in result["provider_id_records"]] == ["project-001", "promotion-001"]
+
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT entity_type, local_key, provider_id
+            FROM create_provider_id_ledger
+            ORDER BY entity_type, local_key
+            """
+        ).fetchall()
+    assert rows == [
+        ("project", "target-1-p001", "project-001"),
+        ("promotion", "target-1-p001-u01", "promotion-001"),
+    ]
+
+
+def test_run_create_live_execute_once_request_writes_blocked_artifact(tmp_path: Path):
+    result = run_create_live_execute_once_request(
+        {
+            "create_live_execute_once": {
+                "create_live_execution_pack_artifact": _execution_pack_artifact(ready=False),
+                "create_execute_artifact": _execute_artifact(),
+                "create_first_live_runbook_artifact": _runbook_artifact(),
+                "create_live_payload_adapter_scaffold_artifact": _scaffold_artifact(),
+                "create_live_approval_artifact": _approval_artifact(),
+                "policy": _policy(),
+                "runtime": {"execution_enabled": True, "external_api_enabled": True},
+            }
+        },
+        runs_dir=tmp_path / "runs",
+        db_path=tmp_path / "roibang.sqlite3",
+    )
+
+    artifact = json.loads(Path(result["artifact_path"]).read_text(encoding="utf-8"))
+    assert result["workflow"] == "create_live_execute_once"
+    assert result["status"] == "blocked"
+    assert artifact["external_api_calls"] == 0
+    assert artifact["actions"] == []
+
+
+def test_create_live_execute_once_fixed_script_keeps_default_runtime_blocked(tmp_path: Path, capsys):
+    runtime_path = _runtime_config(tmp_path)
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_text(json.dumps(_policy(), ensure_ascii=False), encoding="utf-8")
+    runs_dir = tmp_path / "runs"
+    artifacts = {
+        "create_live_execution_pack": _execution_pack_artifact(ready=False),
+        "create_execute": _execute_artifact(),
+        "create_first_live_runbook": _runbook_artifact(),
+        "create_live_payload_adapter_scaffold": _scaffold_artifact(),
+        "create_live_approval": _approval_artifact(),
+    }
+    for workflow, artifact in artifacts.items():
+        path = runs_dir / workflow / "20260510T000000Z.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(artifact, ensure_ascii=False), encoding="utf-8")
+    module = _load_script("run_create_live_execute_once")
+
+    exit_code = module.run_from_args(["--config", str(runtime_path), "--policy", str(policy_path)])
+
+    output = json.loads(capsys.readouterr().out)
+    artifact = json.loads(Path(output["artifact_path"]).read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert output["workflow"] == "create_live_execute_once"
+    assert output["status"] == "blocked"
+    assert output["execution_enabled"] is False
+    assert output["live_execute_enabled"] is False
+    assert output["external_api_calls"] == 0
+    assert output["transport_call_count"] == 0
+    assert artifact["actions"] == []
