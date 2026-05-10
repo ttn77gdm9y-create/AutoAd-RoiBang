@@ -15,6 +15,10 @@ from roibang_v2.workflows.create_provider_adapter import (
     provider_adapter_contract,
 )
 from roibang_v2.workflows.create_provider_field_map import default_provider_field_map
+from roibang_v2.workflows.create_provider_id_ledger import (
+    record_create_provider_id,
+    resolve_create_lookup_placeholders,
+)
 from roibang_v2.workflows.create_provider_field_map_check import (
     build_create_provider_field_map_check,
     run_create_provider_field_map_check_request,
@@ -6452,6 +6456,144 @@ def test_run_create_dry_run_request_records_idempotency_ledger_in_sqlite(tmp_pat
         "recorded_key_count": 7,
         "existing_key_count": 7,
     }
+
+
+def test_create_provider_id_ledger_records_and_resolves_lookup_placeholders(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+
+    project_record = record_create_provider_id(
+        db_path=db_path,
+        entity_type="project",
+        local_key="target-1-p001",
+        provider_id="project_123",
+        plan_id="plan-1",
+        request_id="request-1",
+        advertiser_id="target-1",
+        source_workflow="unit_test",
+    )
+    unit_record = record_create_provider_id(
+        db_path=db_path,
+        entity_type="promotion",
+        local_key="target-1-p001-u01",
+        provider_id="promotion_456",
+        plan_id="plan-1",
+        request_id="request-1",
+        advertiser_id="target-1",
+        parent_local_key="target-1-p001",
+        source_workflow="unit_test",
+    )
+
+    resolved = resolve_create_lookup_placeholders(
+        db_path=db_path,
+        payload={
+            "project_id": "<lookup:target-1-p001>",
+            "promotion_id": "<lookup:target-1-p001-u01>",
+            "material_id": "m-high",
+        },
+    )
+
+    assert project_record["status"] == "recorded"
+    assert unit_record["status"] == "recorded"
+    assert resolved == {
+        "status": "resolved",
+        "lookup_count": 2,
+        "resolved_count": 2,
+        "unresolved_count": 0,
+        "unresolved_placeholders": [],
+        "resolved_payload": {
+            "project_id": "project_123",
+            "promotion_id": "promotion_456",
+            "material_id": "m-high",
+        },
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "actions": [],
+    }
+
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT entity_type, local_key, provider_id, parent_local_key, status, execution_enabled
+            FROM create_provider_id_ledger
+            ORDER BY entity_type, local_key
+            """
+        ).fetchall()
+
+    assert rows == [
+        ("project", "target-1-p001", "project_123", "", "active", 0),
+        ("promotion", "target-1-p001-u01", "promotion_456", "target-1-p001", "active", 0),
+    ]
+
+
+def test_create_provider_id_ledger_blocks_unresolved_lookup_placeholders(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+
+    result = resolve_create_lookup_placeholders(
+        db_path=db_path,
+        payload={
+            "project_id": "<lookup:target-1-p001>",
+            "promotion_id": "<lookup:target-1-p001-u01>",
+        },
+    )
+
+    assert result == {
+        "status": "blocked",
+        "lookup_count": 2,
+        "resolved_count": 0,
+        "unresolved_count": 2,
+        "unresolved_placeholders": [
+            {"field": "project_id", "placeholder": "<lookup:target-1-p001>", "local_key": "target-1-p001"},
+            {"field": "promotion_id", "placeholder": "<lookup:target-1-p001-u01>", "local_key": "target-1-p001-u01"},
+        ],
+        "resolved_payload": {
+            "project_id": "<lookup:target-1-p001>",
+            "promotion_id": "<lookup:target-1-p001-u01>",
+        },
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "actions": [],
+    }
+
+
+def test_create_provider_id_ledger_blocks_conflicting_provider_ids(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+
+    first = record_create_provider_id(
+        db_path=db_path,
+        entity_type="project",
+        local_key="target-1-p001",
+        provider_id="project_123",
+        source_workflow="unit_test",
+    )
+    conflict = record_create_provider_id(
+        db_path=db_path,
+        entity_type="project",
+        local_key="target-1-p001",
+        provider_id="project_999",
+        source_workflow="unit_test",
+    )
+
+    assert first["status"] == "recorded"
+    assert conflict == {
+        "status": "conflict",
+        "entity_type": "project",
+        "local_key": "target-1-p001",
+        "existing_provider_id": "project_123",
+        "provider_id": "project_999",
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "actions": [],
+    }
+
+    resolved = resolve_create_lookup_placeholders(
+        db_path=db_path,
+        payload={"project_id": "<lookup:target-1-p001>"},
+    )
+
+    assert resolved["resolved_payload"]["project_id"] == "project_123"
 
 
 def test_create_dry_run_blocks_when_preflight_failed(tmp_path: Path):
