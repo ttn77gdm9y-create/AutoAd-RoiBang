@@ -6798,6 +6798,18 @@ def test_create_execute_resolves_provider_payload_drafts_from_id_ledger(tmp_path
         "external_api_calls": 0,
         "actions": [],
     }
+    assert result["resolved_payload_contract"] == {
+        "status": "passed",
+        "checked_draft_count": 7,
+        "unresolved_lookup_count": 0,
+        "executable_draft_count": 0,
+        "live_payload_count": 0,
+        "violation_count": 0,
+        "violations": [],
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "actions": [],
+    }
     assert result["execution_plan"]["live_api_payloads"] == []
     assert result["resolved_provider_payload_drafts"]
     assert {draft["executable"] for draft in result["resolved_provider_payload_drafts"]} == {False}
@@ -6809,6 +6821,35 @@ def test_create_execute_resolves_provider_payload_drafts_from_id_ledger(tmp_path
     assert material_drafts[0]["payload"]["project_id"] == "project_123"
     assert material_drafts[0]["payload"]["promotion_id"] == "promotion_456"
     assert material_drafts[2]["payload"]["promotion_id"] == "promotion_789"
+    assert result["execution_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert result["actions"] == []
+
+
+def test_create_execute_resolved_payload_contract_blocks_unresolved_lookups(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    plan = build_create_strategy_plan(request=_create_request()["create_request"], db_path=db_path, policy={})
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+    dry_run = build_create_dry_run(create_strategy_plan_artifact=plan, create_preflight_artifact=preflight, policy={})
+    approval = build_create_approval(create_dry_run_artifact=dry_run, policy={"auto_approve_phase1": True})
+
+    result = build_create_execute(create_approval_artifact=approval, policy={}, db_path=db_path)
+
+    assert result["provider_payload_resolution"]["status"] == "blocked"
+    assert result["resolved_payload_contract"] == {
+        "status": "blocked",
+        "checked_draft_count": 7,
+        "unresolved_lookup_count": 10,
+        "executable_draft_count": 0,
+        "live_payload_count": 0,
+        "violation_count": 1,
+        "violations": ["resolved provider payload drafts must not contain lookup placeholders"],
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "actions": [],
+    }
+    assert result["execution_plan"]["live_api_payloads"] == []
     assert result["execution_enabled"] is False
     assert result["external_api_calls"] == 0
     assert result["actions"] == []

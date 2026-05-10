@@ -205,6 +205,56 @@ def _provider_payload_resolution(
     return resolve_provider_payload_drafts(db_path=db_path, provider_payload_drafts=drafts)
 
 
+def _contains_lookup_placeholder(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.startswith("<lookup:") and value.endswith(">")
+    if isinstance(value, dict):
+        return any(_contains_lookup_placeholder(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_lookup_placeholder(item) for item in value)
+    return False
+
+
+def _resolved_payload_contract(
+    *,
+    resolved_provider_payload_drafts: list[dict[str, Any]],
+    execution_plan: dict[str, Any],
+) -> dict[str, Any]:
+    unresolved_lookup_count = 0
+    executable_draft_count = 0
+    live_payload_count = len(execution_plan.get("live_api_payloads") or [])
+    for draft in resolved_provider_payload_drafts:
+        if not isinstance(draft, dict):
+            continue
+        payload = draft.get("payload") if isinstance(draft.get("payload"), dict) else {}
+        unresolved_lookup_count += sum(
+            1 for value in payload.values() if _contains_lookup_placeholder(value)
+        )
+        if bool(draft.get("executable", False)):
+            executable_draft_count += 1
+        if bool(draft.get("live_api_payload", False)):
+            live_payload_count += 1
+    violations: list[str] = []
+    if unresolved_lookup_count:
+        violations.append("resolved provider payload drafts must not contain lookup placeholders")
+    if executable_draft_count:
+        violations.append("resolved provider payload drafts must not be executable")
+    if live_payload_count:
+        violations.append("create execute must not contain live payloads")
+    return {
+        "status": "passed" if not violations else "blocked",
+        "checked_draft_count": len(resolved_provider_payload_drafts),
+        "unresolved_lookup_count": unresolved_lookup_count,
+        "executable_draft_count": executable_draft_count,
+        "live_payload_count": live_payload_count,
+        "violation_count": len(violations),
+        "violations": violations,
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "actions": [],
+    }
+
+
 def _policy_violations(policy: dict[str, Any]) -> list[str]:
     violations: list[str] = []
     if bool(policy.get("allow_execute_phase1", False)):
@@ -287,6 +337,13 @@ def build_create_execute(
     provider_id_gate = _provider_id_ledger_gate(provider_id_requirements)
     payload_resolution = _provider_payload_resolution(approval=create_approval_artifact, db_path=db_path)
     resolved_provider_payload_drafts = payload_resolution.get("resolved_provider_payload_drafts")
+    if not isinstance(resolved_provider_payload_drafts, list):
+        resolved_provider_payload_drafts = []
+    execution_plan = _execution_plan(summary, policy, provider_id_gate)
+    resolved_payload_contract = _resolved_payload_contract(
+        resolved_provider_payload_drafts=resolved_provider_payload_drafts,
+        execution_plan=execution_plan,
+    )
     return {
         "ok": not violations,
         "workflow": "create_execute",
@@ -308,7 +365,7 @@ def build_create_execute(
         },
         "candidate_task_digest": _candidate_task_digest(create_approval_artifact),
         "payload_schema": payload_schema,
-        "execution_plan": _execution_plan(summary, policy, provider_id_gate),
+        "execution_plan": execution_plan,
         "provider_field_map_digest": _provider_field_map_digest(create_approval_artifact),
         "provider_payload_draft_digest": _provider_payload_draft_digest(create_approval_artifact),
         "provider_payload_resolution": {
@@ -316,9 +373,8 @@ def build_create_execute(
             for key, value in payload_resolution.items()
             if key != "resolved_provider_payload_drafts"
         },
-        "resolved_provider_payload_drafts": resolved_provider_payload_drafts
-        if isinstance(resolved_provider_payload_drafts, list)
-        else [],
+        "resolved_provider_payload_drafts": resolved_provider_payload_drafts,
+        "resolved_payload_contract": resolved_payload_contract,
         "provider_readiness_contract": _provider_readiness(create_approval_artifact),
         "provider_id_ledger_requirements": provider_id_requirements,
         "provider_id_ledger_gate": provider_id_gate,
