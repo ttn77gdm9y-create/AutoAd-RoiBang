@@ -328,6 +328,38 @@ def test_create_live_execute_once_direct_mode_blocks_without_runtime_or_pack(tmp
     assert result["actions"] == []
 
 
+def test_create_live_execute_once_direct_mode_requires_verified_field_mapping_when_policy_requires_it(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+    policy = _policy()
+    policy["create_live_execute_runner"]["require_provider_field_mapping"] = True
+
+    result = run_create_live_execute_once_request(
+        {
+            "create_live_execute_once": {
+                "create_execute_artifact": _execute_artifact(),
+                "create_live_payload_adapter_scaffold_artifact": _scaffold_artifact(),
+                "policy": policy,
+                "runtime": {"execution_enabled": True, "external_api_enabled": True},
+            }
+        },
+        runs_dir=tmp_path / "runs",
+        db_path=db_path,
+        transport=lambda _call: {"code": 0},
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "blocked"
+    assert result["reason"] == "direct_execute_not_ready"
+    assert result["external_api_calls"] == 0
+    assert (
+        "create_execute provider payloads must have verified field mapping before live execute"
+        in result["blocking_reasons"]
+    )
+
+
 def test_create_live_execute_once_direct_mode_runs_fixed_sequence_with_transport(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     bootstrap_database(db_path)

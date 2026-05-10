@@ -58,6 +58,8 @@ PYTHONPATH=src python3 scripts/run_create_live_execute_once.py \
 
 这里的 `approval_id` 只是 HTTP transport（HTTP 请求发送层）的本地审计留痕字段，不要求走 `create_live_execution_pack` 或 `create_first_live_prepare_pack`。真正的业务参数仍必须来自本地 JSON 配置、policy 策略文件和 SQLite 台账。
 
+真实执行前，`create_execute` 产物里的 `resolved_provider_payload_drafts` 必须已经完成 verified provider field mapping（已验证平台字段映射）：也就是发送给平台的字段名已经是平台字段，不是 `project_name`、`daily_budget` 这类内部字段名。`policies/create-live-execute.local.example.json` 默认要求这一点，未满足时执行脚本会停在本地，不会发创建接口。
+
 ## 核心原则
 
 业务动作必须由固定脚本确定性执行。脚本只能读取 JSON 配置、JSON 策略和 SQLite 状态。

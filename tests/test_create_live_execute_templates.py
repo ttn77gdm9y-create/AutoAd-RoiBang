@@ -42,6 +42,7 @@ def test_live_create_policy_template_is_minimal_direct_execute_contract():
     }
     assert payload_schema["live_payload_generation_enabled"] is True
     assert runner["allow_create_http_transport"] is True
+    assert runner["require_provider_field_mapping"] is True
     assert transport["enabled"] is True
     assert transport["allow_mutation"] is True
     assert transport["approval_id"]

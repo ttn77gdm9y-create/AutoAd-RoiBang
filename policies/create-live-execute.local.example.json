@@ -23,6 +23,7 @@
   },
   "create_live_execute_runner": {
     "allow_create_http_transport": true,
+    "require_provider_field_mapping": true,
     "create_http_transport": {
       "enabled": true,
       "allow_mutation": true,

@@ -152,6 +152,26 @@ def _create_execute_payload_safety(create_execute: dict[str, Any]) -> dict[str, 
     }
 
 
+def _provider_payload_mapping_contract(create_execute: dict[str, Any]) -> dict[str, Any]:
+    drafts = _provider_payload_drafts(create_execute)
+    unmapped_count = 0
+    unverified_count = 0
+    for draft in drafts:
+        if not bool(draft.get("field_mapping_applied", False)):
+            unverified_count += 1
+            continue
+        if str(draft.get("field_mapping_mode") or "") != "verified":
+            unverified_count += 1
+        if draft.get("unmapped_payload_fields"):
+            unmapped_count += 1
+    return {
+        "status": "passed" if drafts and unverified_count == 0 and unmapped_count == 0 else "blocked",
+        "checked_draft_count": len(drafts),
+        "unverified_draft_count": unverified_count,
+        "unmapped_draft_count": unmapped_count,
+    }
+
+
 def _drafts_for_operation(create_execute: dict[str, Any], operation: str) -> list[dict[str, Any]]:
     return [draft for draft in _provider_payload_drafts(create_execute) if str(draft.get("operation") or "") == operation]
 
@@ -785,6 +805,12 @@ def _direct_blocking_reasons(
         reasons.append("policy.create_execute.payload_schema.live_payload_generation_enabled is false")
     if not bool(_runner_policy(policy).get("allow_create_http_transport", False)):
         reasons.append("policy.create_live_execute_runner.allow_create_http_transport is false")
+    if bool(_runner_policy(policy).get("require_provider_field_mapping", False)):
+        mapping_contract = _provider_payload_mapping_contract(create_execute_artifact)
+        if str(mapping_contract.get("status") or "") != "passed":
+            reasons.append(
+                "create_execute provider payloads must have verified field mapping before live execute"
+            )
     if bool(create_execute_artifact.get("execution_enabled", False)):
         reasons.append("create_execute artifact execution_enabled must be false")
     if int(create_execute_artifact.get("external_api_calls") or 0) != 0:
