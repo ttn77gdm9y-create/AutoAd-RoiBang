@@ -21,6 +21,16 @@ def _payload_schema_policy(policy: dict[str, Any]) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
+def _live_api_policy(policy: dict[str, Any]) -> dict[str, Any]:
+    value = _create_execute_policy(policy).get("live_api")
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _execution_policy(policy: dict[str, Any]) -> dict[str, Any]:
+    value = _create_execute_policy(policy).get("execution")
+    return dict(value) if isinstance(value, dict) else {}
+
+
 def _provider_adapter(dry_run: dict[str, Any]) -> dict[str, Any]:
     value = dry_run.get("provider_adapter")
     return dict(value) if isinstance(value, dict) else {}
@@ -112,6 +122,35 @@ def _blocking_reasons(phase_gate: dict[str, Any], violations: list[str]) -> list
     return []
 
 
+def _live_adapter_gate(phase_gate: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
+    live_api = _live_api_policy(policy)
+    execution = _execution_policy(policy)
+    endpoints = live_api.get("endpoints") if isinstance(live_api.get("endpoints"), dict) else {}
+    required_gates = {
+        "runtime_execution_enabled": bool(execution.get("execution_enabled", False)),
+        "runtime_external_api_enabled": bool(execution.get("external_api_enabled", False)),
+        "policy_live_api_enabled": bool(live_api.get("enabled", False)),
+        "policy_live_payload_generation_enabled": _policy_generation_enabled(policy),
+        "phase_gate_allows_live_execute": _phase_gate_allows_live_execute(phase_gate),
+        "approval_allows_execute": False,
+    }
+    ready = all(required_gates.values())
+    return {
+        "status": "ready_for_live_execute" if ready else "disabled_by_default",
+        "ready_for_live_execute": ready,
+        "required_gates": required_gates,
+        "transport": str(live_api.get("transport") or "disabled"),
+        "endpoints": {
+            "create_project": str(endpoints.get("create_project") or ""),
+            "create_unit": str(endpoints.get("create_unit") or ""),
+            "bind_material": str(endpoints.get("bind_material") or ""),
+        },
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "actions": [],
+    }
+
+
 def build_create_live_payload_adapter_scaffold(
     *,
     create_dry_run_artifact: dict[str, Any],
@@ -142,6 +181,7 @@ def build_create_live_payload_adapter_scaffold(
             "phase_gate_status": str(create_live_execute_phase_gate_artifact.get("status") or ""),
         },
         "adapter_interface": _adapter_interface(create_dry_run_artifact),
+        "live_adapter_gate": _live_adapter_gate(create_live_execute_phase_gate_artifact, policy),
         "safety_contract": safety,
         "provider_payload_draft_digest": _provider_payload_draft_digest(create_dry_run_artifact),
         "blocking_reasons": _blocking_reasons(create_live_execute_phase_gate_artifact, violations),

@@ -284,5 +284,13 @@
       "mode": "schema_only",
       "live_payload_generation_enabled": false
     }
+  },
+  "first_live_run": {
+    "advertiser_id": "target-1",
+    "max_project_count": 1,
+    "max_unit_count": 2,
+    "max_material_count": 4,
+    "operator": "human_required",
+    "live_execute_enabled": false
   }
 }

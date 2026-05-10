@@ -253,10 +253,12 @@ PYTHONPATH=src scripts/run_create_dry_run.py --config configs/runtime.example.js
 PYTHONPATH=src scripts/run_create_approval.py --config configs/runtime.example.json --policy policies/strategy.example.json
 PYTHONPATH=src scripts/run_create_plan_snapshot.py --config configs/runtime.example.json
 PYTHONPATH=src scripts/run_create_execute.py --config configs/runtime.example.json --policy policies/strategy.example.json
+PYTHONPATH=src scripts/run_create_mock_execute.py --config configs/runtime.example.json --policy policies/strategy.example.json
+PYTHONPATH=src scripts/run_create_first_live_runbook.py --config configs/runtime.example.json --policy policies/strategy.example.json
 PYTHONPATH=src scripts/run_create_chain_final_report.py --config configs/runtime.example.json
 ```
 
-这些脚本必须保持本地化和可复盘，不能越过安全开关。`run_create_approval.py` 只记录批准复核结果；即使 `policy_decision=would_approve`，也不代表允许真实创建，后续 `run_create_execute.py` 仍必须 hard-block。`run_create_chain_final_report.py` 会读取最新 `create_execute` 产物，把真实创建前最后边界汇总到 `creation_boundary_summary`。
+这些脚本必须保持本地化和可复盘，不能越过安全开关。`run_create_approval.py` 只记录批准复核结果；即使 `policy_decision=would_approve`，也不代表允许真实创建，后续 `run_create_execute.py` 仍必须 hard-block。`run_create_mock_execute.py` 会用 mock provider ID（模拟平台 ID）打通 `create_project -> create_unit -> bind_material` 顺序，并写入本地平台 ID 台账，但不会调用外部接口。`run_create_first_live_runbook.py` 生成首单受控创建评审包，仍然要求你单独批准后才可能进入真实执行。`run_create_chain_final_report.py` 会读取最新 `create_execute` 产物，把真实创建前最后边界汇总到 `creation_boundary_summary`。
 
 ## 定时任务
 

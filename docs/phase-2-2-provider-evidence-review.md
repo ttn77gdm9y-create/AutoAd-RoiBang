@@ -240,3 +240,26 @@ configs/provider-evidence/oceanengine.create.phase2-review.example.json
 - 两种情况都继续保持 `create_execute` 硬阻断，不执行真实创建。
 
 这一步把 `dry-run -> approve -> execute -> final_report` 串成了一个完整的本地复核边界包。后续如果要推进真实创建开发，必须另起明确批准阶段，不能从这些复核字段直接推导出可执行权限。
+
+## mock execute 与首单 runbook
+
+`create_mock_execute` 用本地 mock provider ID 打通真实创建顺序：
+
+```text
+create_project -> create_unit -> bind_material
+```
+
+它会模拟平台返回的 `project_id` 和 `promotion_id`，写入 `create_provider_id_ledger`（平台 ID 台账），再回跑 `create_execute` 的 resolved payload 复核。这个流程只写本地 SQLite 和 run artifact，不调用真实接口，`external_api_calls` 必须继续为 0。
+
+`create_live_payload_adapter_scaffold` 现在输出 `live_adapter_gate`，把正式执行所需闸门集中展示：
+
+- runtime 是否允许执行。
+- runtime 是否允许外部接口。
+- policy 是否启用 live API。
+- policy 是否允许生成 live payload。
+- phase gate 是否允许 live execute。
+- approval 是否允许 execute。
+
+默认所有真实执行闸门都是关闭的。
+
+`create_first_live_runbook` 会生成首单受控创建评审包。当前示例 scope 固定为 1 个项目、2 个单元、4 个素材；它只说明首单需要哪些人工批准、运行步骤和失败停止策略，不会打开真实执行。
