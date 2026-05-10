@@ -164,7 +164,7 @@ def _provider_payload(
     for internal_field, provider_field in operation_map.items():
         value = _payload_value(payload, internal_field)
         if value is not None:
-            provider_payload[provider_field] = value
+            _set_payload_value(provider_payload, provider_field, value)
     return provider_payload
 
 
@@ -310,6 +310,20 @@ def _payload_value(payload: dict[str, Any], field: str) -> Any:
             return None
         value = value.get(part)
     return value
+
+
+def _set_payload_value(payload: dict[str, Any], field: str, value: Any) -> None:
+    parts = [part for part in field.split(".") if part]
+    if not parts:
+        return
+    current = payload
+    for part in parts[:-1]:
+        existing = current.get(part)
+        if not isinstance(existing, dict):
+            existing = {}
+            current[part] = existing
+        current = existing
+    current[parts[-1]] = value
 
 
 def _payload_field_paths(payload: dict[str, Any]) -> list[str]:

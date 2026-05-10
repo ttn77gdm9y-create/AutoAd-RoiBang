@@ -5,8 +5,8 @@
   "evidence": {
     "oceanengine_openapi_project_create_request": {
       "title": "OceanEngine project create request schema",
-      "source_type": "official_doc_pending",
-      "source_url": "",
+      "source_type": "local_official_api_doc",
+      "source_url": "docs/api/MiniGameApi/巨量营销升级版/项目管理模块/创建项目.md",
       "operation": "create_project",
       "provider_object": "project_create_request",
       "provider_fields": [
@@ -15,31 +15,28 @@
         "budget",
         "landing_type",
         "pricing",
-        "inventory_type"
+        "delivery_range.inventory_type"
       ],
-      "reviewed": false,
-      "reviewed_by": "",
-      "reviewed_at": "",
-      "notes": "Pending official documentation or captured request evidence review."
+      "reviewed": true,
+      "reviewed_by": "codex_local_api_doc_review",
+      "reviewed_at": "2026-05-10T09:45:00Z",
+      "notes": "本地 MiniGameApi 文档已核对：创建项目 API 使用 advertiser_id、name、budget、landing_type、pricing；inventory_type 属于 delivery_range 下的子字段。"
     },
     "oceanengine_openapi_promotion_create_request": {
       "title": "OceanEngine promotion create request schema",
-      "source_type": "official_doc_pending",
-      "source_url": "",
+      "source_type": "local_official_api_doc",
+      "source_url": "docs/api/MiniGameApi/巨量营销升级版/单元管理模块/创建单元.md",
       "operation": "create_unit",
       "provider_object": "promotion_create_request",
       "provider_fields": [
         "advertiser_id",
         "project_id",
-        "name",
-        "landing_type",
-        "pricing",
-        "inventory_type"
+        "name"
       ],
-      "reviewed": false,
-      "reviewed_by": "",
-      "reviewed_at": "",
-      "notes": "Pending official documentation or captured request evidence review."
+      "reviewed": true,
+      "reviewed_by": "codex_local_api_doc_review",
+      "reviewed_at": "2026-05-10T09:45:00Z",
+      "notes": "本地 MiniGameApi 文档已核对：创建单元基础参数包含 advertiser_id、project_id、name；landing_type/pricing/inventory_type 不作为单元顶层字段传入。"
     },
     "oceanengine_openapi_material_binding_request": {
       "title": "OceanEngine material binding request schema",

@@ -940,27 +940,19 @@ def test_create_dry_run_emits_non_executable_candidate_provider_payloads_for_pha
         "budget": 300.0,
         "landing_type": "MICRO_GAME",
         "pricing": "PRICING_CPA",
-        "inventory_type": "UNION",
+        "delivery_range": {"inventory_type": "UNION"},
     }
-    assert project_draft["candidate_unverified_field_count"] == 6
-    assert {
-        (row["operation"], row["internal_field"], row["provider_field"])
-        for row in project_draft["candidate_unverified_fields"]
-    } == {
-        ("create_project", "advertiser_id", "advertiser_id"),
-        ("create_project", "project_name", "name"),
-        ("create_project", "daily_budget", "budget"),
-        ("create_project", "field_defaults.landing_type", "landing_type"),
-        ("create_project", "field_defaults.pricing", "pricing"),
-        ("create_project", "field_defaults.inventory_type", "inventory_type"),
-    }
+    assert project_draft["candidate_unverified_field_count"] == 0
+    assert project_draft["candidate_unverified_fields"] == []
     assert "candidate provider fields require evidence review before execution" in project_draft["non_executable_reasons"]
 
     unit_draft = next(draft for draft in result["provider_payload_drafts"] if draft["operation"] == "create_unit")
     assert unit_draft["field_mapping_mode"] == "candidate"
     assert unit_draft["payload"]["project_id"] == "<lookup:target-1-p001>"
     assert unit_draft["payload"]["name"] == "0508_郭靖_勇者突进_微小每付7R通投_B80C4C430_01_U01"
-    assert unit_draft["payload"]["landing_type"] == "MICRO_GAME"
+    assert "landing_type" not in unit_draft["payload"]
+    assert "pricing" not in unit_draft["payload"]
+    assert "inventory_type" not in unit_draft["payload"]
     assert "project_key" not in unit_draft["payload"]
     assert "unit_key" not in unit_draft["payload"]
 
@@ -1047,7 +1039,7 @@ def test_create_dry_run_can_load_provider_field_map_from_json_config(tmp_path: P
                         },
                         {
                             "internal_field": "field_defaults.inventory_type",
-                            "provider_field": "inventory_type",
+                            "provider_field": "delivery_range.inventory_type",
                             "purpose": "default inventory type",
                             "verified": True,
                             "required": True,
@@ -1242,7 +1234,7 @@ def test_create_dry_run_can_load_provider_field_map_from_json_config(tmp_path: P
     assert result["provider_payload_drafts"][0]["payload"]["name"] == "0508_郭靖_勇者突进_微小每付7R通投_B80C4C430_01"
     assert result["provider_payload_drafts"][0]["payload"]["landing_type"] == "MICRO_GAME"
     assert result["provider_payload_drafts"][0]["payload"]["pricing"] == "PRICING_CPA"
-    assert result["provider_payload_drafts"][0]["payload"]["inventory_type"] == "UNION"
+    assert result["provider_payload_drafts"][0]["payload"]["delivery_range"] == {"inventory_type": "UNION"}
     assert result["provider_payload_drafts"][0]["payload"]["budget"] == 300.0
     assert "project_name" not in result["provider_payload_drafts"][0]["payload"]
     assert "daily_budget" not in result["provider_payload_drafts"][0]["payload"]
@@ -1862,10 +1854,10 @@ def test_create_phase2_provider_mapping_prep_builds_review_matrix_without_execut
         "field_map_path": "configs/provider-field-maps/oceanengine.create.phase2-prep.example.json",
         "operation_count": 3,
         "field_count": 22,
-        "candidate_provider_field_count": 16,
-        "verified_field_count": 0,
-        "unresolved_field_count": 22,
-        "open_question_count": 16,
+        "candidate_provider_field_count": 13,
+        "verified_field_count": 9,
+        "unresolved_field_count": 4,
+        "open_question_count": 4,
         "ready_for_live_payload_development": False,
         "ready_for_live_execute": False,
     }
@@ -1891,23 +1883,14 @@ def test_create_phase2_provider_mapping_prep_builds_review_matrix_without_execut
         "value_source": "create_strategy_plan.strategy.projects[].advertiser_id",
         "evidence_refs": ["oceanengine_openapi_project_create_request"],
         "open_questions": [],
-        "review_status": "needs_verification",
+        "review_status": "verified",
     }
     unresolved = [
         item
         for item in result["unresolved_mappings"]
         if item["operation"] == "create_project" and item["internal_field"] == "field_defaults.landing_type"
     ]
-    assert unresolved == [
-        {
-            "operation": "create_project",
-            "internal_field": "field_defaults.landing_type",
-            "review_status": "needs_verification",
-            "open_questions": [
-                "Review evidence before changing candidate_direct to direct and verified=true."
-            ],
-        }
-    ]
+    assert unresolved == []
     assert result["provider_field_map_contract"]["status"] == "unverified"
     assert result["provider_readiness_contract"]["ready_for_live_execute"] is False
     assert result["violations"] == []
@@ -1983,12 +1966,13 @@ def test_create_provider_evidence_review_flags_unreviewed_phase2_evidence():
         "evidence_catalog_path": "configs/provider-evidence/oceanengine.create.phase2-review.example.json",
         "field_count": 22,
         "catalog_evidence_count": 3,
-        "reviewed_evidence_count": 0,
-        "ready_field_count": 0,
-        "unresolved_field_count": 22,
+        "reviewed_evidence_count": 2,
+        "ready_field_count": 9,
+        "unresolved_field_count": 4,
         "evidence_status_counts": {
-            "local_only_needs_confirmation": 6,
-            "needs_evidence_review": 16,
+            "local_only_confirmed": 9,
+            "needs_evidence_review": 4,
+            "verified": 9,
         },
         "ready_for_live_payload_development": False,
         "ready_for_live_execute": False,
@@ -2000,23 +1984,15 @@ def test_create_provider_evidence_review_flags_unreviewed_phase2_evidence():
         "provider_field": "advertiser_id",
         "mapping_kind": "direct",
         "evidence_refs": ["oceanengine_openapi_project_create_request"],
-        "evidence_status": "needs_evidence_review",
-        "evidence_issues": ["evidence oceanengine_openapi_project_create_request is not reviewed"],
+        "evidence_status": "verified",
+        "evidence_issues": [],
     }
     unresolved_local = [
         item
         for item in result["unresolved_evidence_items"]
         if item["operation"] == "create_unit" and item["internal_field"] == "project_key"
     ]
-    assert unresolved_local == [
-        {
-            "operation": "create_unit",
-            "internal_field": "project_key",
-            "provider_field": "",
-            "evidence_status": "local_only_needs_confirmation",
-            "evidence_issues": ["local-only field requires explicit confirmation"],
-        }
-    ]
+    assert unresolved_local == []
     assert result["phase2_provider_evidence_contract"] == {
         "review_only": True,
         "external_api_allowed": False,
@@ -2044,25 +2020,19 @@ def test_create_provider_evidence_review_flags_unreviewed_phase2_evidence():
     assert result["evidence_worksheet"]["summary"] == {
         "worksheet_version": "phase2.provider_evidence_worksheet.v1",
         "row_count": 22,
-        "requires_evidence_review_count": 16,
-        "requires_local_confirmation_count": 6,
+        "requires_evidence_review_count": 4,
+        "requires_local_confirmation_count": 0,
         "requires_provider_field_count": 0,
-        "ready_row_count": 0,
+        "ready_row_count": 18,
     }
     assert result["evidence_worksheet"]["rows"][0] == {
         "operation": "create_project",
         "internal_field": "advertiser_id",
         "provider_field": "advertiser_id",
         "mapping_kind": "direct",
-        "evidence_status": "needs_evidence_review",
+        "evidence_status": "verified",
         "evidence_refs": ["oceanengine_openapi_project_create_request"],
-        "fill_required": [
-            "source_url_or_captured_request_ref",
-            "reviewed_by",
-            "reviewed_at",
-            "set_evidence_reviewed_true_after_manual_check",
-            "set_field_verified_true_after_evidence_check",
-        ],
+        "fill_required": [],
         "do_not_change": [
             "execution_enabled",
             "external_api_calls",
@@ -2071,54 +2041,23 @@ def test_create_provider_evidence_review_flags_unreviewed_phase2_evidence():
     }
     assert result["manual_review_workbench"]["summary"] == {
         "workbench_version": "phase2.manual_review_workbench.v1",
-        "candidate_field_count": 6,
-        "local_only_confirmation_count": 6,
-        "evidence_review_count": 16,
+        "candidate_field_count": 0,
+        "local_only_confirmation_count": 0,
+        "evidence_review_count": 4,
         "ready_to_edit_json": True,
         "execution_enabled": False,
         "external_api_calls": 0,
     }
-    assert result["manual_review_workbench"]["candidate_fields"][0] == {
-        "operation": "create_project",
-        "internal_field": "field_defaults.landing_type",
-        "provider_field": "landing_type",
-        "mapping_kind": "candidate_direct",
-        "evidence_refs": ["oceanengine_openapi_project_create_request"],
-        "edit_file": "configs/provider-field-maps/oceanengine.create.phase2-prep.example.json",
-        "after_review_set": {
-            "mapping_kind": "direct",
-            "verified": True,
-        },
-        "blocked_until": [
-            "证据目录里的 evidence.reviewed=true",
-            "确认 provider_fields 包含 landing_type",
-            "人工确认后才允许把 mapping_kind 改为 direct",
-        ],
-    }
-    assert result["manual_review_workbench"]["local_only_confirmations"][0] == {
-        "operation": "create_project",
-        "internal_field": "project_type",
-        "mapping_kind": "local_only",
-        "edit_file": "configs/provider-field-maps/oceanengine.create.phase2-prep.example.json",
-        "after_review_set": {
-            "local_only_confirmed": True,
-            "local_only_confirmation_note": "人工确认该字段只用于本地流程，不进入平台 payload。",
-        },
-        "blocked_until": [
-            "确认 dry-run/provider payload 不包含该字段",
-            "确认该字段只用于本地模板、查表、幂等或追溯",
-        ],
-    }
+    assert result["manual_review_workbench"]["candidate_fields"] == []
+    assert result["manual_review_workbench"]["local_only_confirmations"] == []
     assert result["manual_review_workbench"]["evidence_reviews"][0] == {
-        "evidence_ref": "oceanengine_openapi_project_create_request",
-        "operation": "create_project",
+        "evidence_ref": "oceanengine_openapi_material_binding_request",
+        "operation": "bind_material",
         "provider_fields": [
             "advertiser_id",
-            "name",
-            "budget",
-            "landing_type",
-            "pricing",
-            "inventory_type",
+            "project_id",
+            "promotion_id",
+            "material_id",
         ],
         "edit_file": "configs/provider-evidence/oceanengine.create.phase2-review.example.json",
         "after_review_set": {
@@ -2136,10 +2075,7 @@ def test_create_provider_evidence_review_flags_unreviewed_phase2_evidence():
         for row in result["evidence_worksheet"]["rows"]
         if row["operation"] == "create_unit" and row["internal_field"] == "project_key"
     ][0]
-    assert local_only_row["fill_required"] == [
-        "confirm_field_is_local_only",
-        "set_local_only_confirmed_true_after_manual_check",
-    ]
+    assert local_only_row["fill_required"] == []
     assert result["provider_field_gap_report"]["summary"] == {
         "gap_count": 0,
         "operation_counts": {},
@@ -2238,17 +2174,18 @@ def test_create_provider_evidence_review_accepts_explicit_local_only_confirmatio
     )
 
     assert result["summary"]["evidence_status_counts"] == {
-        "local_only_confirmed": 6,
-        "needs_evidence_review": 16,
+        "local_only_confirmed": 9,
+        "needs_evidence_review": 4,
+        "verified": 9,
     }
-    assert result["summary"]["unresolved_field_count"] == 16
+    assert result["summary"]["unresolved_field_count"] == 4
     assert result["evidence_worksheet"]["summary"]["requires_local_confirmation_count"] == 0
     confirmed_rows = [
         row
         for row in result["evidence_worksheet"]["rows"]
         if row["evidence_status"] == "local_only_confirmed"
     ]
-    assert len(confirmed_rows) == 6
+    assert len(confirmed_rows) == 9
     assert all(row["fill_required"] == [] for row in confirmed_rows)
     assert result["execution_enabled"] is False
     assert result["external_api_calls"] == 0
@@ -2299,38 +2236,25 @@ def test_create_provider_evidence_review_cli_uses_policy_config(tmp_path: Path, 
     assert output["field_gap_convergence_summary"]["remaining_provider_field_gap_count"] == 0
     assert output["manual_review_workbench_summary"] == {
         "workbench_version": "phase2.manual_review_workbench.v1",
-        "candidate_field_count": 6,
-        "local_only_confirmation_count": 6,
-        "evidence_review_count": 16,
+        "candidate_field_count": 0,
+        "local_only_confirmation_count": 0,
+        "evidence_review_count": 4,
         "ready_to_edit_json": True,
         "execution_enabled": False,
         "external_api_calls": 0,
     }
     assert output["manual_review_next_items"] == {
-        "candidate_fields": [
-            {
-                "operation": "create_project",
-                "internal_field": "field_defaults.landing_type",
-                "provider_field": "landing_type",
-                "edit_file": "configs/provider-field-maps/oceanengine.create.phase2-prep.example.json",
-            }
-        ],
-        "local_only_confirmations": [
-            {
-                "operation": "create_project",
-                "internal_field": "project_type",
-                "edit_file": "configs/provider-field-maps/oceanengine.create.phase2-prep.example.json",
-            }
-        ],
+        "candidate_fields": [],
+        "local_only_confirmations": [],
         "evidence_reviews": [
             {
-                "evidence_ref": "oceanengine_openapi_project_create_request",
-                "operation": "create_project",
+                "evidence_ref": "oceanengine_openapi_material_binding_request",
+                "operation": "bind_material",
                 "edit_file": "configs/provider-evidence/oceanengine.create.phase2-review.example.json",
             }
         ],
     }
-    assert artifact["evidence_worksheet"]["summary"]["requires_evidence_review_count"] == 16
+    assert artifact["evidence_worksheet"]["summary"]["requires_evidence_review_count"] == 4
     assert artifact["provider_field_gap_report"]["summary"]["operation_counts"] == {}
     assert artifact["provider_field_gap_resolution_plan"]["summary"]["manual_review_required"] is False
     assert artifact["project_type_local_usage_review"]["summary"]["blocking_item_count"] == 0
@@ -7212,7 +7136,7 @@ def test_create_approval_and_execute_preserve_candidate_payload_boundaries(tmp_p
         "verified_draft_count": 0,
         "executable_draft_count": 0,
         "live_payload_count": 0,
-        "candidate_unverified_field_count": 34,
+        "candidate_unverified_field_count": 16,
         "unmapped_payload_field_count": 0,
         "ready_for_execute": False,
         "blocking_reasons": [

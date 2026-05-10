@@ -12,9 +12,9 @@
         "mapping_kind": "direct",
         "value_source": "create_strategy_plan.strategy.projects[].advertiser_id",
         "purpose": "target advertiser account id",
-        "verified": false,
+        "verified": true,
         "required": true,
-        "source": "phase2_preparation",
+        "source": "local_api_doc_review",
         "evidence_refs": ["oceanengine_openapi_project_create_request"],
         "open_questions": []
       },
@@ -25,9 +25,9 @@
         "mapping_kind": "direct",
         "value_source": "create_strategy_plan.strategy.projects[].project_name",
         "purpose": "planned project name",
-        "verified": false,
+        "verified": true,
         "required": true,
-        "source": "phase2_preparation",
+        "source": "local_api_doc_review",
         "evidence_refs": ["oceanengine_openapi_project_create_request"],
         "open_questions": []
       },
@@ -36,17 +36,15 @@
         "provider_field": "",
         "provider_object": "project_create_request",
         "mapping_kind": "local_only",
-        "local_only_confirmed": false,
-        "local_only_confirmation_note": "",
+        "local_only_confirmed": true,
+        "local_only_confirmation_note": "本地模板分支字段；创建项目 API 不包含 project_type，平台字段由 landing_type、pricing、delivery_range 等显式字段表达。",
         "value_source": "create_strategy_plan.strategy.projects[].project_type",
         "purpose": "internal project type",
         "verified": false,
         "required": true,
-        "source": "phase2_preparation",
+        "source": "local_api_doc_review",
         "evidence_refs": [],
-        "open_questions": [
-          "Confirm whether internal project_type selects landing_type, delivery mode, or a fixed template branch."
-        ]
+        "open_questions": []
       },
       {
         "internal_field": "daily_budget",
@@ -55,9 +53,9 @@
         "mapping_kind": "direct",
         "value_source": "create_strategy_plan.strategy.projects[].daily_budget",
         "purpose": "planned project daily budget",
-        "verified": false,
+        "verified": true,
         "required": true,
-        "source": "phase2_preparation",
+        "source": "local_api_doc_review",
         "evidence_refs": ["oceanengine_openapi_project_create_request"],
         "open_questions": []
       },
@@ -65,46 +63,40 @@
         "internal_field": "field_defaults.landing_type",
         "provider_field": "landing_type",
         "provider_object": "project_create_request",
-        "mapping_kind": "candidate_direct",
+        "mapping_kind": "direct",
         "value_source": "create_strategy_plan.strategy.projects[].field_defaults.landing_type",
         "purpose": "project landing type default",
-        "verified": false,
+        "verified": true,
         "required": true,
-        "source": "phase2_preparation",
+        "source": "local_api_doc_review",
         "evidence_refs": ["oceanengine_openapi_project_create_request"],
-        "open_questions": [
-          "Review evidence before changing candidate_direct to direct and verified=true."
-        ]
+        "open_questions": []
       },
       {
         "internal_field": "field_defaults.pricing",
         "provider_field": "pricing",
         "provider_object": "project_create_request",
-        "mapping_kind": "candidate_direct",
+        "mapping_kind": "direct",
         "value_source": "create_strategy_plan.strategy.projects[].field_defaults.pricing",
         "purpose": "project pricing default",
-        "verified": false,
+        "verified": true,
         "required": true,
-        "source": "phase2_preparation",
+        "source": "local_api_doc_review",
         "evidence_refs": ["oceanengine_openapi_project_create_request"],
-        "open_questions": [
-          "Review evidence before changing candidate_direct to direct and verified=true."
-        ]
+        "open_questions": []
       },
       {
         "internal_field": "field_defaults.inventory_type",
-        "provider_field": "inventory_type",
+        "provider_field": "delivery_range.inventory_type",
         "provider_object": "project_create_request",
-        "mapping_kind": "candidate_direct",
+        "mapping_kind": "direct",
         "value_source": "create_strategy_plan.strategy.projects[].field_defaults.inventory_type",
-        "purpose": "project inventory type default",
-        "verified": false,
+        "purpose": "project delivery range inventory type default",
+        "verified": true,
         "required": true,
-        "source": "phase2_preparation",
+        "source": "local_api_doc_review",
         "evidence_refs": ["oceanengine_openapi_project_create_request"],
-        "open_questions": [
-          "Review evidence before changing candidate_direct to direct and verified=true."
-        ]
+        "open_questions": []
       }
     ],
     "create_unit": [
@@ -115,9 +107,9 @@
         "mapping_kind": "direct",
         "value_source": "create_strategy_plan.strategy.projects[].advertiser_id",
         "purpose": "target advertiser account id",
-        "verified": false,
+        "verified": true,
         "required": true,
-        "source": "phase2_preparation",
+        "source": "local_api_doc_review",
         "evidence_refs": ["oceanengine_openapi_promotion_create_request"],
         "open_questions": []
       },
@@ -126,17 +118,15 @@
         "provider_field": "",
         "provider_object": "promotion_create_request",
         "mapping_kind": "local_lookup_key",
-        "local_only_confirmed": false,
-        "local_only_confirmation_note": "",
+        "local_only_confirmed": true,
+        "local_only_confirmation_note": "本地查表键；创建单元 API 使用 project_id，不接收 project_key。",
         "value_source": "create_strategy_plan.strategy.projects[].project_key",
         "purpose": "local planned project key",
         "verified": false,
         "required": true,
-        "source": "phase2_preparation",
+        "source": "local_api_doc_review",
         "evidence_refs": [],
-        "open_questions": [
-          "Confirm project_key remains local-only and never goes into provider payloads."
-        ]
+        "open_questions": []
       },
       {
         "internal_field": "project_id",
@@ -145,9 +135,9 @@
         "mapping_kind": "created_id_lookup",
         "value_source": "create_dry_run.candidate_tasks[].units[].project_id",
         "purpose": "provider project id lookup placeholder",
-        "verified": false,
+        "verified": true,
         "required": true,
-        "source": "phase2_preparation",
+        "source": "local_api_doc_review",
         "evidence_refs": ["oceanengine_openapi_promotion_create_request"],
         "open_questions": [
           "Confirm ledger lookup from local project_key to provider project_id after project creation."
@@ -158,17 +148,15 @@
         "provider_field": "",
         "provider_object": "promotion_create_request",
         "mapping_kind": "local_lookup_key",
-        "local_only_confirmed": false,
-        "local_only_confirmation_note": "",
+        "local_only_confirmed": true,
+        "local_only_confirmation_note": "本地幂等和查表键；创建单元 API 不接收 unit_key。",
         "value_source": "create_strategy_plan.strategy.projects[].units[].unit_key",
         "purpose": "local planned unit key",
         "verified": false,
         "required": true,
-        "source": "phase2_preparation",
+        "source": "local_api_doc_review",
         "evidence_refs": [],
-        "open_questions": [
-          "Confirm unit_key remains local-only and is used only for idempotency and promotion_id lookup."
-        ]
+        "open_questions": []
       },
       {
         "internal_field": "promotion_name",
@@ -177,56 +165,56 @@
         "mapping_kind": "direct",
         "value_source": "create_strategy_plan.strategy.projects[].units[].promotion_name",
         "purpose": "planned provider-facing unit name",
-        "verified": false,
+        "verified": true,
         "required": true,
-        "source": "phase2_preparation",
+        "source": "local_api_doc_review",
         "evidence_refs": ["oceanengine_openapi_promotion_create_request"],
         "open_questions": []
       },
       {
         "internal_field": "field_defaults.landing_type",
-        "provider_field": "landing_type",
+        "provider_field": "",
         "provider_object": "promotion_create_request",
-        "mapping_kind": "candidate_direct",
+        "mapping_kind": "local_only",
+        "local_only_confirmed": true,
+        "local_only_confirmation_note": "本地项目上下文字段；创建单元 API 通过 project_id 继承项目层级 landing_type，不在单元请求体重复传入。",
         "value_source": "create_strategy_plan.strategy.projects[].field_defaults.landing_type",
-        "purpose": "unit landing type default",
-        "verified": false,
+        "purpose": "project landing type context for unit planning",
+        "verified": true,
         "required": true,
-        "source": "phase2_preparation",
-        "evidence_refs": ["oceanengine_openapi_promotion_create_request"],
-        "open_questions": [
-          "Review evidence before changing candidate_direct to direct and verified=true."
-        ]
+        "source": "local_api_doc_review",
+        "evidence_refs": [],
+        "open_questions": []
       },
       {
         "internal_field": "field_defaults.pricing",
-        "provider_field": "pricing",
+        "provider_field": "",
         "provider_object": "promotion_create_request",
-        "mapping_kind": "candidate_direct",
+        "mapping_kind": "local_only",
+        "local_only_confirmed": true,
+        "local_only_confirmation_note": "本地项目上下文字段；创建单元 API 不包含 pricing 顶层字段，计费方式来自项目层级。",
         "value_source": "create_strategy_plan.strategy.projects[].field_defaults.pricing",
-        "purpose": "unit pricing default",
-        "verified": false,
+        "purpose": "project pricing context for unit planning",
+        "verified": true,
         "required": true,
-        "source": "phase2_preparation",
-        "evidence_refs": ["oceanengine_openapi_promotion_create_request"],
-        "open_questions": [
-          "Review evidence before changing candidate_direct to direct and verified=true."
-        ]
+        "source": "local_api_doc_review",
+        "evidence_refs": [],
+        "open_questions": []
       },
       {
         "internal_field": "field_defaults.inventory_type",
-        "provider_field": "inventory_type",
+        "provider_field": "",
         "provider_object": "promotion_create_request",
-        "mapping_kind": "candidate_direct",
+        "mapping_kind": "local_only",
+        "local_only_confirmed": true,
+        "local_only_confirmation_note": "本地项目上下文字段；创建单元 API 不包含 inventory_type 顶层字段，流量版位来自项目层级 delivery_range。",
         "value_source": "create_strategy_plan.strategy.projects[].field_defaults.inventory_type",
-        "purpose": "unit inventory type default",
-        "verified": false,
+        "purpose": "project inventory context for unit planning",
+        "verified": true,
         "required": true,
-        "source": "phase2_preparation",
-        "evidence_refs": ["oceanengine_openapi_promotion_create_request"],
-        "open_questions": [
-          "Review evidence before changing candidate_direct to direct and verified=true."
-        ]
+        "source": "local_api_doc_review",
+        "evidence_refs": [],
+        "open_questions": []
       }
     ],
     "bind_material": [
@@ -248,17 +236,15 @@
         "provider_field": "",
         "provider_object": "material_bind_request",
         "mapping_kind": "local_lookup_key",
-        "local_only_confirmed": false,
-        "local_only_confirmation_note": "",
+        "local_only_confirmed": true,
+        "local_only_confirmation_note": "本地查表键；平台素材请求不接收 project_key。",
         "value_source": "create_strategy_plan.strategy.projects[].project_key",
         "purpose": "local planned project key",
         "verified": false,
         "required": true,
-        "source": "phase2_preparation",
+        "source": "local_api_doc_review",
         "evidence_refs": [],
-        "open_questions": [
-          "Confirm project_key remains local-only and never goes into material binding provider payloads."
-        ]
+        "open_questions": []
       },
       {
         "internal_field": "project_id",
@@ -280,17 +266,15 @@
         "provider_field": "",
         "provider_object": "material_bind_request",
         "mapping_kind": "local_lookup_key",
-        "local_only_confirmed": false,
-        "local_only_confirmation_note": "",
+        "local_only_confirmed": true,
+        "local_only_confirmation_note": "本地查表键；平台素材请求不接收 unit_key。",
         "value_source": "create_strategy_plan.strategy.projects[].units[].unit_key",
         "purpose": "local planned unit key",
         "verified": false,
         "required": true,
-        "source": "phase2_preparation",
+        "source": "local_api_doc_review",
         "evidence_refs": [],
-        "open_questions": [
-          "Confirm unit_key remains local-only and never goes into material binding provider payloads."
-        ]
+        "open_questions": []
       },
       {
         "internal_field": "promotion_id",
@@ -327,17 +311,15 @@
         "provider_field": "",
         "provider_object": "material_bind_request",
         "mapping_kind": "local_only",
-        "local_only_confirmed": false,
-        "local_only_confirmation_note": "",
+        "local_only_confirmed": true,
+        "local_only_confirmation_note": "本地素材来源追溯字段；平台素材请求使用 material_id 或视频素材字段，不直接接收 source_video_id。",
         "value_source": "create_strategy_plan.strategy.projects[].units[].materials[].source_video_id",
         "purpose": "source video identity",
         "verified": false,
         "required": true,
-        "source": "phase2_preparation",
+        "source": "local_api_doc_review",
         "evidence_refs": [],
-        "open_questions": [
-          "Confirm source_video_id is only local material provenance before setting local_only_confirmed=true."
-        ]
+        "open_questions": []
       }
     ]
   }

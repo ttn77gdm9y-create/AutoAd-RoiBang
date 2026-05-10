@@ -24,6 +24,9 @@ def _field_map_path(policy: dict[str, Any]) -> str:
 
 
 def _review_status(entry: dict[str, Any]) -> str:
+    mapping_kind = str(entry.get("mapping_kind") or "").strip()
+    if mapping_kind in {"local_lookup_key", "local_only"} and bool(entry.get("local_only_confirmed", False)):
+        return "local_only_confirmed"
     if not str(entry.get("provider_field") or "").strip():
         return "needs_provider_field"
     evidence = entry.get("evidence_refs")
@@ -91,7 +94,7 @@ def _unresolved_mappings(matrix: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for field in section.get("fields") if isinstance(section.get("fields"), list) else []:
             if not isinstance(field, dict):
                 continue
-            if str(field.get("review_status") or "") == "verified":
+            if str(field.get("review_status") or "") in {"verified", "local_only_confirmed"}:
                 continue
             rows.append(
                 {
@@ -111,7 +114,11 @@ def _summary(
     matrix: list[dict[str, Any]],
 ) -> dict[str, Any]:
     fields = _fields(matrix)
-    unresolved = [field for field in fields if str(field.get("review_status") or "") != "verified"]
+    unresolved = [
+        field
+        for field in fields
+        if str(field.get("review_status") or "") not in {"verified", "local_only_confirmed"}
+    ]
     return {
         "provider": str(field_map.get("provider") or ""),
         "field_mapping_version": str(field_map.get("field_mapping_version") or ""),
