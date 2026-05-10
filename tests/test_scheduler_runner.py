@@ -98,6 +98,41 @@ print("python script complete")
     assert result["script"]["stdout"].strip() == "python script complete"
 
 
+def test_run_scheduler_job_prefers_explicit_command_over_path_args(tmp_path):
+    command_script = tmp_path / "scripts" / "command_success.py"
+    fallback_script = tmp_path / "scripts" / "fallback_should_not_run.py"
+    command_script.parent.mkdir(parents=True, exist_ok=True)
+    command_script.write_text(
+        """import argparse
+import json
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--message")
+args = parser.parse_args()
+target = Path("data/runs/dummy/20260101T000000Z.json")
+target.parent.mkdir(parents=True, exist_ok=True)
+target.write_text(json.dumps({"ok": True, "workflow": "dummy", "message": args.message}), encoding="utf-8")
+print("command script complete")
+""",
+        encoding="utf-8",
+    )
+    fallback_script.write_text("raise SystemExit('fallback should not run')\n", encoding="utf-8")
+    registry = _dummy_registry()
+    registry["jobs"][0]["script"] = {
+        "command": ["python3", "scripts/command_success.py", "--message", "from-command"],
+        "path": "scripts/fallback_should_not_run.py",
+        "mode": "foreground",
+        "args": ["--message", "from-path-args"],
+    }
+
+    result = run_scheduler_job(registry, job_id="dummy-success", repo_root=tmp_path)
+
+    assert result["ok"] is True
+    assert result["script"]["argv"] == ["python3", "scripts/command_success.py", "--message", "from-command"]
+    assert result["script"]["stdout"].strip() == "command script complete"
+
+
 def test_run_scheduler_job_writes_failed_execution_result_when_script_fails(tmp_path):
     registry = _dummy_registry()
     script = tmp_path / "scripts" / "dummy_success.py"

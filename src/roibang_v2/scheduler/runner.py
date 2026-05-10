@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import time
 from datetime import datetime, timezone
@@ -26,6 +27,11 @@ def _find_job(registry: dict[str, Any], job_id: str) -> dict[str, Any]:
 
 def _script_argv(job: dict[str, Any]) -> list[str]:
     script = job["script"]
+    command = script.get("command")
+    if isinstance(command, str) and str(command).strip():
+        return shlex.split(command)
+    if isinstance(command, list) and command:
+        return [str(arg) for arg in command]
     script_path = str(script["path"])
     args = [str(arg) for arg in script.get("args", [])]
     if script_path.endswith(".py"):
@@ -74,8 +80,9 @@ def run_scheduler_job(
     finished_at = _now_iso()
     duration_seconds = round(time.monotonic() - started, 3)
     script_result = {
-        "path": str(job["script"]["path"]),
+        "path": str(job["script"].get("path") or ""),
         "args": [str(arg) for arg in job["script"].get("args", [])],
+        "command": job["script"].get("command", []),
         "argv": argv,
         "mode": "foreground",
         "exit_code": completed.returncode,

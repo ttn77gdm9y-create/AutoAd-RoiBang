@@ -1,0 +1,22 @@
+{
+  "_comment": "复制为 configs/create-plans/first-live.local.json 后填真实值。本文件只放占位示例，不用于执行。",
+  "plan_id": "first-live-YYYYMMDD-001",
+  "product": "yzt",
+  "platform": "wx-mini-game",
+  "source_advertiser_id": "source-advertiser-id",
+  "target_accounts": [
+    {
+      "advertiser_id": "target-advertiser-id",
+      "project_count": 1,
+      "unit_count_per_project": 1,
+      "daily_budget": 1000
+    }
+  ],
+  "materials": [
+    {
+      "source_material_id": "material-id",
+      "source_video_id": "video-id"
+    }
+  ],
+  "reason": "首单链路验证"
+}

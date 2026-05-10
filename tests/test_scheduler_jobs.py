@@ -12,9 +12,9 @@ def test_scheduler_registry_has_no_ai_execution_prompts():
 
     assert result == {
         "ok": True,
-        "jobs": 50,
+        "jobs": 51,
         "enabled_jobs": 9,
-        "disabled_jobs": 41,
+        "disabled_jobs": 42,
         "violations": [],
     }
 
@@ -78,6 +78,10 @@ def test_scheduler_registry_includes_disabled_fixed_create_chain_jobs():
         "roibang-create-first-live-local-chain": (
             "create_first_live_local_chain",
             "scripts/run_create_first_live_local_chain.py",
+        ),
+        "roibang-create-plan-validate": (
+            "create_plan_validate",
+            "scripts/run_create_plan_validate.py",
         ),
         "roibang-create-mock-execute": ("create_mock_execute", "scripts/run_create_mock_execute.py"),
         "roibang-create-first-live-runbook": (
@@ -152,6 +156,40 @@ def test_scheduler_registry_includes_disabled_fixed_create_chain_jobs():
         assert "prompt" not in job
         assert job["result_contract"]["workflow"] == workflow
         assert job["result_contract"]["artifact_dir"] == f"data/runs/{workflow}"
+    assert jobs["roibang-create-first-live-local-chain"]["script"]["command"] == [
+        "python3",
+        "scripts/run_create_first_live_local_chain.py",
+        "--config",
+        "configs/runtime.example.json",
+        "--preview-config",
+        "configs/create/yzt-wx-mini-game.preview.local.json",
+        "--policy",
+        "policies/strategy.example.json",
+    ]
+    assert jobs["roibang-create-live-execute-once"]["script"]["command"] == [
+        "python3",
+        "scripts/run_create_live_execute_once.py",
+        "--config",
+        "configs/runtime.example.json",
+        "--policy",
+        "policies/strategy.example.json",
+    ]
+    assert jobs["roibang-create-live-execute-report"]["script"]["command"] == [
+        "python3",
+        "scripts/run_create_live_execute_report.py",
+        "--config",
+        "configs/runtime.example.json",
+    ]
+    assert jobs["roibang-create-plan-validate"]["script"]["command"] == [
+        "python3",
+        "scripts/run_create_plan_validate.py",
+        "--config",
+        "configs/runtime.example.json",
+        "--plan",
+        "configs/create-plans/first-live.local.json",
+        "--policy",
+        "policies/strategy.example.json",
+    ]
 
 
 def test_scheduler_registry_phase1_contracts_pin_safe_execution_values():
@@ -189,6 +227,7 @@ def test_scheduler_registry_phase1_contracts_pin_safe_execution_values():
         "roibang-create-live-execute-phase-gate",
         "roibang-create-live-payload-adapter-scaffold",
         "roibang-create-live-execute-report",
+        "roibang-create-plan-validate",
         "roibang-create-adapter-review-pack",
         "roibang-create-chain-index",
         "roibang-create-chain-final-report",
@@ -520,6 +559,26 @@ def test_scheduler_registry_rejects_prompt_driven_jobs():
 
     with pytest.raises(ValueError, match="prompt"):
         validate_job_registry(registry)
+
+
+def test_scheduler_registry_accepts_direct_command_without_path_args():
+    registry = {
+        "jobs": [
+            {
+                "id": "direct-command",
+                "name": "Direct command",
+                "schedule": {"type": "cron", "expr": "0 1 * * *", "tz": "Asia/Shanghai"},
+                "script": {"command": ["python3", "scripts/run_create_plan_validate.py"], "mode": "foreground"},
+                "policy": {},
+                "result_contract": {
+                    "workflow": "create_plan_validate",
+                    "artifact_dir": "data/runs/create_plan_validate",
+                },
+            }
+        ]
+    }
+
+    assert validate_job_registry(registry)["ok"] is True
 
 
 def test_live_mutation_jobs_must_have_policy_and_result_contract():

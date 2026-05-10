@@ -401,12 +401,29 @@
       "enabled": false,
       "schedule": {"type": "cron", "expr": "33 12 * * *", "tz": "Asia/Shanghai"},
       "script": {
+        "command": ["python3", "scripts/run_create_first_live_local_chain.py", "--config", "configs/runtime.example.json", "--preview-config", "configs/create/yzt-wx-mini-game.preview.local.json", "--policy", "policies/strategy.example.json"],
         "path": "scripts/run_create_first_live_local_chain.py",
         "mode": "foreground",
         "args": ["--config", "configs/runtime.example.json", "--preview-config", "configs/create/yzt-wx-mini-game.preview.local.json", "--policy", "policies/strategy.example.json"]
       },
       "policy": {"config": "configs/runtime.example.json", "preview_config": "configs/create/yzt-wx-mini-game.preview.local.json", "policy": "policies/strategy.example.json"},
       "result_contract": {"workflow": "create_first_live_local_chain", "artifact_dir": "data/runs/create_first_live_local_chain", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "summary", "first_live_scope", "scope_guard", "chain_steps", "artifacts", "preparation_check", "dry_chain", "approved_for_execute", "human_next_steps", "violations", "actions"], "must_equal": {"phase": "phase2_preparation", "execution_enabled": false, "external_api_calls": 0, "approved_for_execute": false}, "must_be_empty": ["actions"]},
+      "delivery": {"channel": "none"}
+    },
+    {
+      "id": "roibang-create-plan-validate",
+      "name": "RoiBang-v2 创建计划校验",
+      "category": "create_plan_validate",
+      "enabled": false,
+      "schedule": {"type": "cron", "expr": "34 12 * * *", "tz": "Asia/Shanghai"},
+      "script": {
+        "command": ["python3", "scripts/run_create_plan_validate.py", "--config", "configs/runtime.example.json", "--plan", "configs/create-plans/first-live.local.json", "--policy", "policies/strategy.example.json"],
+        "path": "scripts/run_create_plan_validate.py",
+        "mode": "foreground",
+        "args": ["--config", "configs/runtime.example.json", "--plan", "configs/create-plans/first-live.local.json", "--policy", "policies/strategy.example.json"]
+      },
+      "policy": {"config": "configs/runtime.example.json", "plan": "configs/create-plans/first-live.local.json", "policy": "policies/strategy.example.json"},
+      "result_contract": {"workflow": "create_plan_validate", "artifact_dir": "data/runs/create_plan_validate", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "summary", "source_contract", "violations", "actions"], "must_equal": {"phase": "phase2_preparation", "execution_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
       "delivery": {"channel": "none"}
     },
     {
@@ -656,6 +673,7 @@
       "enabled": false,
       "schedule": {"type": "cron", "expr": "12 11 * * *", "tz": "Asia/Shanghai"},
       "script": {
+        "command": ["python3", "scripts/run_create_live_execute_once.py", "--config", "configs/runtime.example.json", "--policy", "policies/strategy.example.json"],
         "path": "scripts/run_create_live_execute_once.py",
         "mode": "foreground",
         "args": ["--config", "configs/runtime.example.json", "--policy", "policies/strategy.example.json"]
@@ -671,6 +689,7 @@
       "enabled": false,
       "schedule": {"type": "cron", "expr": "15 11 * * *", "tz": "Asia/Shanghai"},
       "script": {
+        "command": ["python3", "scripts/run_create_live_execute_report.py", "--config", "configs/runtime.example.json"],
         "path": "scripts/run_create_live_execute_report.py",
         "mode": "foreground",
         "args": ["--config", "configs/runtime.example.json"]

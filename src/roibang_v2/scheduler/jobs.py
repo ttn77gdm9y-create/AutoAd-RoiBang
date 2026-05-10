@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -7,7 +8,6 @@ from roibang_v2.config import load_json
 
 
 FORBIDDEN_JOB_KEYS = {"prompt", "agentId", "agent_id", "operator_task"}
-FORBIDDEN_SCRIPT_KEYS = {"command"}
 LIVE_MUTATION_CATEGORIES = {"live_mutation", "execute", "create", "pause", "delete", "bid_apply"}
 
 
@@ -40,10 +40,10 @@ def _validate_job(job: dict[str, Any], index: int) -> list[str]:
     script = job.get("script")
     _require(isinstance(script, dict), f"{prefix} missing script", violations)
     if isinstance(script, dict):
-        for key in FORBIDDEN_SCRIPT_KEYS:
-            if key in script:
-                violations.append(f"{prefix} script uses forbidden command key: {key}")
-        _require(bool(str(script.get("path") or "").strip()), f"{prefix} missing script.path", violations)
+        command = script.get("command")
+        has_command = bool(_script_command_argv(command)) if command is not None else False
+        has_path = bool(str(script.get("path") or "").strip())
+        _require(has_command or has_path, f"{prefix} missing script.command or script.path", violations)
         _require(str(script.get("mode") or "") in {"foreground", "background"}, f"{prefix} invalid script.mode", violations)
 
     policy = job.get("policy")
@@ -60,6 +60,14 @@ def _validate_job(job: dict[str, Any], index: int) -> list[str]:
         _require(isinstance(result_contract, dict) and bool(result_contract.get("execution_result")), f"{prefix} live mutation missing execution result contract", violations)
 
     return violations
+
+
+def _script_command_argv(command: Any) -> list[str]:
+    if isinstance(command, str):
+        return shlex.split(command)
+    if isinstance(command, list):
+        return [str(arg) for arg in command if str(arg).strip()]
+    return []
 
 
 def validate_job_registry(registry: dict[str, Any]) -> dict[str, Any]:
