@@ -1,0 +1,287 @@
+获取指定数量的全局唯一id
+
+关键信息
+
+详情
+
+是否支持SDK
+
+支持
+
+权限点及应用类型
+
+了解如何 [申请授权&生成授权](https://open.oceanengine.com/labels/7/docs/1803016515293203?origin=metadata)
+
+权限点:  账号服务-资金和流水管理-共享钱包
+
+应用类型:  自研投放应用-客户/代理商/独立三方站点/群峰上架服务、提供第三方服务-客户/代理商/独立三方站点/群峰上架服务
+
+接入能力范围:  巨量 PC
+
+支持的账户类型
+
+客户投放账户
+
+代理商账户
+
+巨量引擎工作台账户
+
+升级版巨量引擎工作台账户
+
+# 请求地址
+
+https://api.oceanengine.com/open\_api/v3.0/ad\_billing/unique\_id/get/[可视化调试](https://open.oceanengine.com/tools/visual_debug.html?docId=1848384417379332)
+[SDK下载](https://open.oceanengine.com/labels/7/docs/1773083358100557)
+
+# 请求方法
+
+GET
+
+# Header
+
+| 字段 | 类型 | 描述 |
+| --- | --- | --- |
+| Access-Token  必填 | string | 授权access\_token，可以通过【[获取Access token](https://open.oceanengine.com/labels/7/docs/1696710505596940)】接口获取 |
+
+# 请求参数
+
+| 字段 | 类型 | 描述 |
+| --- | --- | --- |
+| advertiser\_id  必填 | number |  |
+| count  必填 | number | 待获取的唯一键个数 |
+| unique\_id\_type  必填 | string | 唯一键类型, 用于决定唯一键分类 可选值:    * `capital_operation` 资金操作 * `charge_back` 回充 * `shared_wallet_id` 共享钱包id * `shared_wallet_operation` 共享钱包操作id |
+
+# 请求示例
+
+**Python**
+
+```python
+# coding=utf-8
+import json
+import requests
+​
+from six import string_types
+from six.moves.urllib.parse import urlencode, urlunparse  # noqa
+​
+ACCESS_TOKEN = "xxx"
+PATH = "/open_api/v3.0/ad_billing/unique_id/get/"
+​
+​
+def build_url(path, query=""):
+    # type: (str, str) -> str
+    """
+    Build request URL
+    :param path: Request path
+    :param query: Querystring
+    :return: Request URL
+    """
+    scheme, netloc = "https", "api.oceanengine.com"
+    return urlunparse((scheme, netloc, path, "", query, ""))
+​
+def get(json_str):
+    # type: (str) -> dict
+    """
+    Send GET request
+    :param json_str: Args in JSON format
+    :return: Response in JSON format
+    """
+    args = json.loads(json_str)
+    query_string = urlencode({k: v if isinstance(v, string_types) else json.dumps(v) for k, v in args.items()})
+    url = build_url(PATH, query_string)
+    headers = {
+        "Access-Token": ACCESS_TOKEN,
+    }
+    rsp = requests.get(url, headers=headers)
+    return rsp.json()
+    
+​
+if __name__ == '__main__':
+    advertiser_id = ADVERTISER_ID
+    count = COUNT
+    unique_id_type = UNIQUE_ID_TYPE
+​
+    # Args in JSON format
+    my_args = "{\"advertiser_id\": \"%s\", \"count\": \"%s\", \"unique_id_type\": \"%s\"}" % (advertiser_id, count, unique_id_type)
+    print(get(my_args))
+```
+
+---
+
+**Java**
+
+```java
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import okhttp3.*;
+import org.apache.http.client.utils.URIBuilder;
+​
+import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.net.URL;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+​
+public class Demo {
+    private static final String ACCESS_TOKEN = "xxx";
+    private static final String PATH = "/open_api/v3.0/ad_billing/unique_id/get/";
+    private static final ObjectMapper mapper = new ObjectMapper();
+​
+    /**
+     * Build request URL
+     *
+     * @param path Request path
+     * @return Request URL
+     */
+    private static String buildUrl(String path) throws URISyntaxException {
+        URI uri = new URI("https", "api.oceanengine.com", path, "", "");
+        return uri.toString();
+    }
+​
+    
+    /**
+     * Send GET request
+     *
+     * @param jsonStr:Args in JSON format
+     * @return Response in JSON format
+     */
+    private static String get(String jsonStr) throws IOException, URISyntaxException {
+        OkHttpClient client = new OkHttpClient().newBuilder().build();
+        URIBuilder ub = new URIBuilder(buildUrl(PATH));
+        Map< String, Object > map = mapper.readValue(jsonStr, Map.class);
+        map.forEach((k, v) -> {
+            try {
+                ub.addParameter(k, v instanceof String ? (String) v : mapper.writeValueAsString(v));
+            } catch (JsonProcessingException e) {
+                e.printStackTrace();
+            }
+        });
+        URL url = ub.build().toURL();
+​
+        Request request = new Request.Builder()
+                .url(url)
+                .method("GET", null)
+                .addHeader("Access-Token", ACCESS_TOKEN)
+                .build();
+        Response response = client.newCall(request).execute();
+        return response.body().string();
+    }
+    
+​
+    public static void main(String[] args) throws IOException, URISyntaxException {
+        Long advertiser_id = ADVERTISER_ID;
+        Long count = COUNT;
+        String unique_id_type = UNIQUE_ID_TYPE;
+​
+        // Args in JSON format
+        String myArgs = String.format("{\"advertiser_id\": \"%s\", \"count\": \"%s\", \"unique_id_type\": \"%s\"}",advertiser_id, count, unique_id_type);
+        System.out.println(get(myArgs));
+    }
+}
+​
+```
+
+---
+
+**Php**
+
+```php
+​
+$ACCESS_TOKEN = "xxx";
+$PATH = "/open_api/v3.0/ad_billing/unique_id/get/";
+​
+/**
+ * Build request URL
+ * @param $path : Request path
+ * @return string
+ */
+function build_url($path)
+{
+    return "https://api.oceanengine.com" . $path;
+}
+​
+/**
+ * Send GET request
+ * @param $json_str : Args in JSON format
+ * @return bool|string : Response in JSON format
+ */
+function get($json_str)
+{
+    global $ACCESS_TOKEN, $PATH;
+    $curl = curl_init();
+​
+    $args = json_decode($json_str, true);
+​
+    /* Values of querystring is also in JSON format */
+    foreach ($args as $key => $value) {
+        $args[$key] = is_string($value) ? $value : json_encode($value);
+    }
+​
+    $url = build_url($PATH) . "?" . http_build_query(
+            $args
+        );
+​
+    curl_setopt_array($curl, array(
+        CURLOPT_URL => $url,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_ENCODING => "",
+        CURLOPT_MAXREDIRS => 10,
+        CURLOPT_TIMEOUT => 0,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+        CURLOPT_CUSTOMREQUEST => "GET",
+        CURLOPT_HTTPHEADER => array(
+            "Access-Token: " . $ACCESS_TOKEN,
+        ),
+    ));
+​
+    $response = curl_exec($curl);
+    curl_close($curl);
+    return $response;
+}
+​
+​
+$advertiser_id = ADVERTISER_ID;
+$count = COUNT;
+$unique_id_type = UNIQUE_ID_TYPE;
+​
+/* Args in JSON format */
+$my_args = sprintf("{\"advertiser_id\": \"%s\", \"count\": \"%s\", \"unique_id_type\": \"%s\"}", $advertiser_id, $count, $unique_id_type);
+echo get($my_args);
+​
+```
+
+---
+
+**Curl**
+
+```bash
+curl --get -H "Access-Token:xxx" \
+--data-urlencode "advertiser_id=ADVERTISER_ID" \
+--data-urlencode "count=COUNT" \
+--data-urlencode "unique_id_type=UNIQUE_ID_TYPE" \
+https://api.oceanengine.com/open_api/v3.0/ad_billing/unique_id/get/
+```
+
+# 应答字段
+
+| 字段 | 类型 | 描述 |
+| --- | --- | --- |
+| code | number | 返回码,详见 [【附录-返回码】](https://open.oceanengine.com/labels/7/docs/1696710760866831) |
+| message | string | [返回信息,详见](https://open.oceanengine.com/labels/7/docs/1696710760866831) [【附录-返回码】](https://open.oceanengine.com/labels/7/docs/1696710760866831) |
+| data | json | json返回值 |
+| unique\_id\_list | number[] | 唯一键列表 |
+| request\_id | string | 请求日志id |
+
+# 应答示例
+
+```
+HTTPS/1.1 200 OK
+{
+    "message": "OK",
+    "code": 0,
+    "data": {}
+}
+```
+
