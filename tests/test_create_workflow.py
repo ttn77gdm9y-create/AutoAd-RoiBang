@@ -8299,6 +8299,12 @@ def test_create_live_execute_runner_uses_injected_test_transport_in_fixed_order(
     assert result["execution_enabled"] is False
     assert result["live_execute_enabled"] is False
     assert result["external_api_calls"] == 0
+    assert result["runner_gate"]["transport_contract"] == {
+        "mode": "injected_test_transport",
+        "transport_present": True,
+        "create_http_transport_allowed": False,
+        "external_api_call_accounting": "test_transport_not_counted_as_external_api",
+    }
     assert result["test_transport_call_count"] == 7
     assert [call["operation"] for call in calls] == [
         "create_project",
@@ -8338,6 +8344,64 @@ def test_create_live_execute_runner_uses_injected_test_transport_in_fixed_order(
         ("promotion", "target-1-p001-u01", "live-promotion-001", "create_live_execute_runner", 0),
         ("promotion", "target-1-p001-u02", "live-promotion-002", "create_live_execute_runner", 0),
     ]
+
+
+def test_create_live_execute_runner_blocks_create_http_transport_until_policy_allows_it(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    plan = build_create_strategy_plan(request=_create_request()["create_request"], db_path=db_path, policy={})
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+    dry_run = build_create_dry_run(create_strategy_plan_artifact=plan, create_preflight_artifact=preflight, policy={})
+    approval = build_create_approval(create_dry_run_artifact=dry_run, policy={"auto_approve_phase1": True})
+    execute = build_create_execute(create_approval_artifact=approval, policy={}, db_path=db_path)
+    calls: list[dict] = []
+
+    result = build_create_live_execute_runner(
+        create_execute_artifact=execute,
+        create_first_live_runbook_artifact={
+            "workflow": "create_first_live_runbook",
+            "ok": True,
+            "status": "ready_for_human_approval",
+            "execution_enabled": False,
+            "external_api_calls": 0,
+        },
+        create_live_payload_adapter_scaffold_artifact={
+            "workflow": "create_live_payload_adapter_scaffold",
+            "execution_enabled": False,
+            "external_api_calls": 0,
+            "live_adapter_gate": {
+                "ready_for_live_execute": True,
+                "required_gates": {"phase_gate_allows_live_execute": True},
+            },
+        },
+        policy={
+            "create_execute": {
+                "live_api": {"enabled": True},
+                "payload_schema": {"live_payload_generation_enabled": True},
+            },
+            "create_live_execute_runner": {
+                "human_approval": {"approved": True, "approval_id": "unit-test-approval", "approved_by": "tester"},
+                "allow_create_http_transport": False,
+            },
+        },
+        runtime={"execution_enabled": True, "external_api_enabled": True},
+        db_path=db_path,
+        transport=lambda call: calls.append(call) or {"code": 0},
+        transport_mode="create_http",
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "blocked"
+    assert result["runner_gate"]["transport_contract"] == {
+        "mode": "create_http",
+        "transport_present": True,
+        "create_http_transport_allowed": False,
+        "external_api_call_accounting": "blocked_zero",
+    }
+    assert "create_http transport is not allowed by policy" in result["blocking_reasons"]
+    assert calls == []
+    assert result["external_api_calls"] == 0
+    assert result["actions"] == []
 
 
 def test_create_live_execute_runner_stops_on_first_test_transport_error(tmp_path: Path):

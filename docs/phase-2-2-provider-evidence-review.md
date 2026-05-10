@@ -280,3 +280,24 @@ PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_live_execute
 ```
 
 它会读取最新的 `create_execute`、`create_first_live_runbook` 和 `create_live_payload_adapter_scaffold` artifacts（运行产物），输出一个默认 blocked 的复核 artifact；不会调用真实创建接口。
+
+## create HTTP transport 边界
+
+`create_http_transport` 是真实创建接口的 HTTP transport（HTTP 请求发送层），目前只作为受控模块存在，不接入普通 CLI：
+
+- 默认 `enabled=false`，无法构造。
+- 必须显式设置 `allow_mutation=true`，mutation 是变更操作，表示可能创建或修改线上对象。
+- 必须有 `approval_id`，也就是人工批准编号。
+- 只允许三个 endpoint（接口地址）：
+  - `create_project`: `/open_api/2/project/create/`
+  - `create_unit`: `/open_api/2/promotion/create/`
+  - `bind_material`: `/open_api/2/file/material/bind/`
+- `bind_material` 仍是素材推送绑定，不接收 `project_id` 或 `promotion_id`。
+- 变更型请求不做 retry（重试），避免重复创建。
+- audit（审计日志）会记录请求和响应，但 `Access-Token` 会脱敏为 `<redacted>`。
+
+`create_live_execute_runner` 现在会输出 `transport_contract`：
+
+- `injected_test_transport` 表示测试注入发送层，不计入 `external_api_calls`。
+- `create_http` 表示真实创建 HTTP 发送层，除非 policy 中 `allow_create_http_transport=true`，否则 runner 会 blocked 且不会调用 transport。
+- 当前示例策略中 `allow_create_http_transport=false`，所以真实 HTTP 创建仍然关闭。

@@ -88,6 +88,10 @@ def _human_approval_present(policy: dict[str, Any]) -> bool:
     return bool(approval.get("approved", False)) and bool(str(approval.get("approval_id") or "").strip())
 
 
+def _allow_create_http_transport(policy: dict[str, Any]) -> bool:
+    return bool(_runner_policy(policy).get("allow_create_http_transport", False))
+
+
 def _rows(value: Any) -> list[dict[str, Any]]:
     return [row for row in value if isinstance(row, dict)] if isinstance(value, list) else []
 
@@ -140,8 +144,19 @@ def _runner_gate(
     policy: dict[str, Any],
     runtime: dict[str, Any],
     transport: Transport | None,
+    transport_mode: str = "injected_test_transport",
 ) -> dict[str, Any]:
     adapter_gates = _adapter_required_gates(create_live_payload_adapter_scaffold_artifact)
+    normalized_transport_mode = str(transport_mode or "injected_test_transport")
+    create_http_allowed = _allow_create_http_transport(policy)
+    transport_allowed = normalized_transport_mode == "injected_test_transport" or create_http_allowed
+    external_api_call_accounting = (
+        "test_transport_not_counted_as_external_api"
+        if normalized_transport_mode == "injected_test_transport"
+        else "external_api_calls_count_real_transport"
+        if create_http_allowed
+        else "blocked_zero"
+    )
     required_gates = {
         "runtime_execution_enabled": _runtime_enabled(runtime, "execution_enabled"),
         "runtime_external_api_enabled": _runtime_enabled(runtime, "external_api_enabled"),
@@ -163,12 +178,19 @@ def _runner_gate(
         and required_gates["runbook_ready_for_human_approval"]
         and required_gates["human_approval_record_present"]
         and required_gates["transport_injected_for_test"]
+        and transport_allowed
         and _chain_resolvable(create_execute_artifact)
     )
     return {
         "status": "ready_for_test_transport" if ready else "blocked",
         "ready_for_live_execute": ready,
         "required_gates": required_gates,
+        "transport_contract": {
+            "mode": normalized_transport_mode,
+            "transport_present": transport is not None,
+            "create_http_transport_allowed": create_http_allowed,
+            "external_api_call_accounting": external_api_call_accounting,
+        },
         "lookup_placeholders_chain_resolvable": _chain_resolvable(create_execute_artifact),
         "execution_enabled": False,
         "external_api_calls": 0,
@@ -192,6 +214,11 @@ def _blocking_reasons(gate: dict[str, Any]) -> list[str]:
     for key, message in labels.items():
         if not bool(required_gates.get(key, False)):
             reasons.append(message)
+    transport_contract = gate.get("transport_contract") if isinstance(gate.get("transport_contract"), dict) else {}
+    if str(transport_contract.get("mode") or "") != "injected_test_transport" and not bool(
+        transport_contract.get("create_http_transport_allowed", False)
+    ):
+        reasons.append("create_http transport is not allowed by policy")
     if not bool(gate.get("lookup_placeholders_chain_resolvable", False)):
         reasons.append("provider id lookup placeholders are not chain-resolvable")
     return reasons
@@ -222,6 +249,7 @@ def _empty_result(
     policy: dict[str, Any],
     runtime: dict[str, Any],
     transport: Transport | None,
+    transport_mode: str = "injected_test_transport",
 ) -> dict[str, Any]:
     gate = _runner_gate(
         create_execute_artifact=create_execute_artifact,
@@ -230,6 +258,7 @@ def _empty_result(
         policy=policy,
         runtime=runtime,
         transport=transport,
+        transport_mode=transport_mode,
     )
     return {
         "ok": False,
@@ -365,7 +394,9 @@ def build_create_live_execute_runner(
     runtime: dict[str, Any],
     db_path: str | Path,
     transport: Transport | None = None,
+    transport_mode: str = "injected_test_transport",
 ) -> dict[str, Any]:
+    normalized_transport_mode = str(transport_mode or "injected_test_transport")
     result = _empty_result(
         create_execute_artifact=create_execute_artifact,
         create_first_live_runbook_artifact=create_first_live_runbook_artifact,
@@ -373,6 +404,7 @@ def build_create_live_execute_runner(
         policy=policy,
         runtime=runtime,
         transport=transport,
+        transport_mode=normalized_transport_mode,
     )
     if not bool(result["runner_gate"]["ready_for_live_execute"]):
         return result
@@ -413,7 +445,7 @@ def build_create_live_execute_runner(
                 "operation": operation,
                 "endpoint": endpoints.get(operation, ""),
                 "payload": draft.get("payload") if isinstance(draft.get("payload"), dict) else {},
-                "transport_mode": "injected_test_transport",
+                "transport_mode": normalized_transport_mode,
             }
             response = transport(call)
             sequence += 1
@@ -422,11 +454,16 @@ def build_create_live_execute_runner(
             if _response_code(response) != 0:
                 result.update(
                     {
-                        "status": "test_transport_failed",
+                        "status": "test_transport_failed"
+                        if normalized_transport_mode == "injected_test_transport"
+                        else "create_http_failed",
                         "failure": _failure(operation, index, response),
                         "ordered_steps": ordered_steps,
                         "provider_id_records": provider_id_records,
                         "test_transport_call_count": test_transport_call_count,
+                        "external_api_calls": 0
+                        if normalized_transport_mode == "injected_test_transport"
+                        else test_transport_call_count,
                     }
                 )
                 return result
@@ -467,11 +504,16 @@ def build_create_live_execute_runner(
     result.update(
         {
             "ok": True,
-            "status": "test_transport_completed",
+            "status": "test_transport_completed"
+            if normalized_transport_mode == "injected_test_transport"
+            else "create_http_completed",
             "blocking_reasons": [],
             "ordered_steps": ordered_steps,
             "provider_id_records": provider_id_records,
             "test_transport_call_count": test_transport_call_count,
+            "external_api_calls": 0
+            if normalized_transport_mode == "injected_test_transport"
+            else test_transport_call_count,
             "failure": None,
         }
     )

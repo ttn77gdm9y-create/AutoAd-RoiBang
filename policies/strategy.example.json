@@ -299,6 +299,22 @@
     }
   },
   "create_live_execute_runner": {
+    "allow_create_http_transport": false,
+    "create_http_transport": {
+      "enabled": false,
+      "allow_mutation": false,
+      "approval_id": "",
+      "approved_by": "",
+      "base_url": "https://api.oceanengine.com",
+      "timeout_seconds": 20,
+      "max_retries": 0,
+      "token_store": {
+        "enabled": false,
+        "store_file": "data/secrets/oceanengine-tokens.local.json",
+        "user_id": "default",
+        "auto_refresh": false
+      }
+    },
     "human_approval": {
       "approved": false,
       "approval_id": "",
