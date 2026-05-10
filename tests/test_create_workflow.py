@@ -1867,6 +1867,11 @@ def test_create_provider_evidence_review_flags_unreviewed_phase2_evidence():
         "reviewed_evidence_count": 0,
         "ready_field_count": 0,
         "unresolved_field_count": 18,
+        "evidence_status_counts": {
+            "local_only_needs_confirmation": 4,
+            "needs_evidence_review": 10,
+            "needs_provider_field": 4,
+        },
         "ready_for_live_payload_development": False,
         "ready_for_live_execute": False,
     }
@@ -1900,6 +1905,23 @@ def test_create_provider_evidence_review_flags_unreviewed_phase2_evidence():
         "live_payload_generation_enabled": False,
         "create_execute_hard_block_required": True,
         "mapping_verified_must_remain_false": True,
+    }
+    assert result["operator_guide"] == {
+        "status": "needs_review",
+        "title": "平台字段证据仍需人工复核",
+        "ordered_steps": [
+            "先补证据目录里的 source_url 或 captured_request_ref。",
+            "人工核对后，把对应 evidence.reviewed 改为 true，并填写 reviewed_by 和 reviewed_at。",
+            "确认 local-only 字段不会进入平台 payload 后，再在字段映射里标记 local_only_confirmed=true。",
+            "证据和字段都确认后，才考虑把具体字段 verified 改为 true。",
+            "重新运行 provider evidence review 脚本查看剩余项。",
+        ],
+        "blocked_until": [
+            "所有平台字段都有已复核证据",
+            "所有 local-only 字段已明确确认",
+            "create_execute 仍保持 hard-blocked",
+        ],
+        "next_command": "PYTHONPATH=src python3 scripts/run_create_provider_evidence_review.py --config configs/runtime.example.json --policy policies/strategy.example.json",
     }
     assert result["violations"] == []
     assert result["actions"] == []
@@ -1958,6 +1980,7 @@ def test_create_provider_evidence_review_cli_uses_policy_config(tmp_path: Path, 
     assert output["status"] == "needs_review"
     assert artifact["phase"] == "phase2_preparation"
     assert artifact["summary"]["evidence_catalog_path"] == "configs/provider-evidence/oceanengine.create.phase2-review.example.json"
+    assert output["operator_guide"]["status"] == "needs_review"
     assert artifact["execution_enabled"] is False
     assert artifact["external_api_calls"] == 0
     assert artifact["actions"] == []

@@ -41,6 +41,19 @@ The workflow reports:
 - evidence entries that exist but are not reviewed,
 - local-only fields that still need explicit confirmation.
 
+It also reports:
+
+- `evidence_status_counts`: 证据状态计数, grouped by unresolved reason.
+- `operator_guide`: 操作员指南, the exact human next steps.
+
+Common status meanings:
+
+- `needs_provider_field`: 缺平台字段名.
+- `needs_evidence_ref`: 缺证据引用.
+- `needs_evidence_review`: 有证据引用, 但还没有人工复核.
+- `local_only_needs_confirmation`: 本地字段需要确认不会进入平台请求体.
+- `verified`: 字段映射和证据都已确认.
+
 ## Safety Contract
 
 The workflow must always return:
@@ -78,6 +91,7 @@ Current expected result:
 - 3 evidence catalog entries loaded.
 - 0 evidence entries reviewed.
 - 18 fields unresolved.
+- `operator_guide.status=needs_review`.
 - live payload development remains not ready.
 - live execute remains not ready.
 

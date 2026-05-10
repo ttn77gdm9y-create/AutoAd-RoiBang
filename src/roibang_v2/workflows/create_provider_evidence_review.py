@@ -209,6 +209,12 @@ def _summary(
 ) -> dict[str, Any]:
     fields = _fields(sections)
     evidence_by_ref = _catalog_evidence(catalog)
+    status_counts: dict[str, int] = {}
+    for field in fields:
+        status = str(field.get("evidence_status") or "")
+        if not status:
+            continue
+        status_counts[status] = status_counts.get(status, 0) + 1
     return {
         "provider": str(field_map.get("provider") or ""),
         "field_mapping_version": str(field_map.get("field_mapping_version") or ""),
@@ -219,6 +225,7 @@ def _summary(
         "reviewed_evidence_count": sum(1 for item in evidence_by_ref.values() if bool(item.get("reviewed", False))),
         "ready_field_count": sum(1 for field in fields if str(field.get("evidence_status") or "") == "verified"),
         "unresolved_field_count": sum(1 for field in fields if str(field.get("evidence_status") or "") != "verified"),
+        "evidence_status_counts": dict(sorted(status_counts.items())),
         "ready_for_live_payload_development": False,
         "ready_for_live_execute": False,
     }
@@ -231,6 +238,47 @@ def _phase2_provider_evidence_contract() -> dict[str, Any]:
         "live_payload_generation_enabled": False,
         "create_execute_hard_block_required": True,
         "mapping_verified_must_remain_false": True,
+    }
+
+
+def _operator_guide(*, status: str) -> dict[str, Any]:
+    if status == "invalid":
+        return {
+            "status": "needs_fix",
+            "title": "平台字段证据配置不可用",
+            "ordered_steps": [
+                "先修复 provider field map 或 provider evidence catalog JSON。",
+                "确认 JSON 结构正确后重新运行 provider evidence review 脚本。",
+            ],
+            "blocked_until": [
+                "证据目录 JSON 可以正常读取",
+                "字段映射 JSON 可以正常读取",
+                "create_execute 仍保持 hard-blocked",
+            ],
+            "next_command": (
+                "PYTHONPATH=src python3 scripts/run_create_provider_evidence_review.py "
+                "--config configs/runtime.example.json --policy policies/strategy.example.json"
+            ),
+        }
+    return {
+        "status": "needs_review",
+        "title": "平台字段证据仍需人工复核",
+        "ordered_steps": [
+            "先补证据目录里的 source_url 或 captured_request_ref。",
+            "人工核对后，把对应 evidence.reviewed 改为 true，并填写 reviewed_by 和 reviewed_at。",
+            "确认 local-only 字段不会进入平台 payload 后，再在字段映射里标记 local_only_confirmed=true。",
+            "证据和字段都确认后，才考虑把具体字段 verified 改为 true。",
+            "重新运行 provider evidence review 脚本查看剩余项。",
+        ],
+        "blocked_until": [
+            "所有平台字段都有已复核证据",
+            "所有 local-only 字段已明确确认",
+            "create_execute 仍保持 hard-blocked",
+        ],
+        "next_command": (
+            "PYTHONPATH=src python3 scripts/run_create_provider_evidence_review.py "
+            "--config configs/runtime.example.json --policy policies/strategy.example.json"
+        ),
     }
 
 
@@ -264,6 +312,7 @@ def build_create_provider_evidence_review(*, policy: dict[str, Any]) -> dict[str
         "provider_evidence_catalog": catalog,
         "evidence_review_sections": sections,
         "unresolved_evidence_items": _unresolved_items(sections),
+        "operator_guide": _operator_guide(status=status),
         "violations": violations,
         "actions": [],
     }
