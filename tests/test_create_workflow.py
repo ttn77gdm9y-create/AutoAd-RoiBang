@@ -6755,6 +6755,65 @@ def test_create_execute_plan_carries_provider_id_ledger_gate(tmp_path: Path):
     }
 
 
+def test_create_execute_resolves_provider_payload_drafts_from_id_ledger(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    plan = build_create_strategy_plan(request=_create_request()["create_request"], db_path=db_path, policy={})
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+    dry_run = build_create_dry_run(create_strategy_plan_artifact=plan, create_preflight_artifact=preflight, policy={})
+    approval = build_create_approval(create_dry_run_artifact=dry_run, policy={"auto_approve_phase1": True})
+    record_create_provider_id(
+        db_path=db_path,
+        entity_type="project",
+        local_key="target-1-p001",
+        provider_id="project_123",
+        source_workflow="unit_test",
+    )
+    record_create_provider_id(
+        db_path=db_path,
+        entity_type="promotion",
+        local_key="target-1-p001-u01",
+        provider_id="promotion_456",
+        source_workflow="unit_test",
+    )
+    record_create_provider_id(
+        db_path=db_path,
+        entity_type="promotion",
+        local_key="target-1-p001-u02",
+        provider_id="promotion_789",
+        source_workflow="unit_test",
+    )
+
+    result = build_create_execute(create_approval_artifact=approval, policy={}, db_path=db_path)
+
+    assert approval["provider_payload_drafts"] == dry_run["provider_payload_drafts"]
+    assert result["provider_payload_resolution"] == {
+        "status": "resolved",
+        "draft_count": 7,
+        "lookup_count": 10,
+        "resolved_count": 10,
+        "unresolved_count": 0,
+        "unresolved_placeholders": [],
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "actions": [],
+    }
+    assert result["execution_plan"]["live_api_payloads"] == []
+    assert result["resolved_provider_payload_drafts"]
+    assert {draft["executable"] for draft in result["resolved_provider_payload_drafts"]} == {False}
+    unit_draft = next(draft for draft in result["resolved_provider_payload_drafts"] if draft["operation"] == "create_unit")
+    assert unit_draft["payload"]["project_id"] == "project_123"
+    material_drafts = [
+        draft for draft in result["resolved_provider_payload_drafts"] if draft["operation"] == "bind_material"
+    ]
+    assert material_drafts[0]["payload"]["project_id"] == "project_123"
+    assert material_drafts[0]["payload"]["promotion_id"] == "promotion_456"
+    assert material_drafts[2]["payload"]["promotion_id"] == "promotion_789"
+    assert result["execution_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert result["actions"] == []
+
+
 def test_create_execute_is_hard_blocked_in_phase1_even_after_recorded_approval(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     _seed_create_db(db_path)

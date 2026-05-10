@@ -100,6 +100,11 @@ def _provider_id_ledger_requirements(dry_run: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _provider_payload_drafts(dry_run: dict[str, Any]) -> list[dict[str, Any]]:
+    drafts = dry_run.get("provider_payload_drafts")
+    return [draft for draft in drafts if isinstance(draft, dict)] if isinstance(drafts, list) else []
+
+
 def _violations(dry_run: dict[str, Any], policy: dict[str, Any]) -> list[str]:
     violations: list[str] = []
     dry_run_ref = create_ref(workflow="create_dry_run", artifact=dry_run)
@@ -193,6 +198,7 @@ def build_create_approval(
         "candidate_task_digest": _candidate_task_digest(create_dry_run_artifact),
         "provider_field_map_digest": _provider_field_map_digest(create_dry_run_artifact),
         "provider_payload_draft_digest": _provider_payload_draft_digest(create_dry_run_artifact),
+        "provider_payload_drafts": _provider_payload_drafts(create_dry_run_artifact),
         "provider_readiness_contract": _provider_readiness(create_dry_run_artifact),
         "provider_id_ledger_requirements": _provider_id_ledger_requirements(create_dry_run_artifact),
         "policy": {

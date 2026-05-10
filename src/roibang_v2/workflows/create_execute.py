@@ -11,6 +11,7 @@ from roibang_v2.workflows.create_lineage import (
     require_create_ref_fields,
 )
 from roibang_v2.workflows.create_payload_schema import disabled_create_payload_schema
+from roibang_v2.workflows.create_provider_id_ledger import resolve_provider_payload_drafts
 from roibang_v2.workflows.create_provider_readiness import not_ready_provider_readiness_contract
 
 
@@ -164,6 +165,46 @@ def _provider_payload_draft_digest(approval: dict[str, Any]) -> dict[str, Any]:
     return {"algorithm": "sha256", "value": "", "provider_payload_draft_count": 0}
 
 
+def _provider_payload_drafts(approval: dict[str, Any]) -> list[dict[str, Any]]:
+    drafts = approval.get("provider_payload_drafts")
+    return [draft for draft in drafts if isinstance(draft, dict)] if isinstance(drafts, list) else []
+
+
+def _provider_payload_resolution(
+    *,
+    approval: dict[str, Any],
+    db_path: str | Path | None,
+) -> dict[str, Any]:
+    drafts = _provider_payload_drafts(approval)
+    if not drafts:
+        return {
+            "status": "no_provider_payload_drafts",
+            "draft_count": 0,
+            "lookup_count": 0,
+            "resolved_count": 0,
+            "unresolved_count": 0,
+            "unresolved_placeholders": [],
+            "resolved_provider_payload_drafts": [],
+            "execution_enabled": False,
+            "external_api_calls": 0,
+            "actions": [],
+        }
+    if db_path is None:
+        return {
+            "status": "not_resolved_missing_db_path",
+            "draft_count": len(drafts),
+            "lookup_count": 0,
+            "resolved_count": 0,
+            "unresolved_count": 0,
+            "unresolved_placeholders": [],
+            "resolved_provider_payload_drafts": [],
+            "execution_enabled": False,
+            "external_api_calls": 0,
+            "actions": [],
+        }
+    return resolve_provider_payload_drafts(db_path=db_path, provider_payload_drafts=drafts)
+
+
 def _policy_violations(policy: dict[str, Any]) -> list[str]:
     violations: list[str] = []
     if bool(policy.get("allow_execute_phase1", False)):
@@ -237,12 +278,15 @@ def build_create_execute(
     *,
     create_approval_artifact: dict[str, Any],
     policy: dict[str, Any],
+    db_path: str | Path | None = None,
 ) -> dict[str, Any]:
     violations = _violations(create_approval_artifact, policy)
     summary = _summary(create_approval_artifact)
     payload_schema = disabled_create_payload_schema(policy)
     provider_id_requirements = _provider_id_ledger_requirements(create_approval_artifact)
     provider_id_gate = _provider_id_ledger_gate(provider_id_requirements)
+    payload_resolution = _provider_payload_resolution(approval=create_approval_artifact, db_path=db_path)
+    resolved_provider_payload_drafts = payload_resolution.get("resolved_provider_payload_drafts")
     return {
         "ok": not violations,
         "workflow": "create_execute",
@@ -267,6 +311,14 @@ def build_create_execute(
         "execution_plan": _execution_plan(summary, policy, provider_id_gate),
         "provider_field_map_digest": _provider_field_map_digest(create_approval_artifact),
         "provider_payload_draft_digest": _provider_payload_draft_digest(create_approval_artifact),
+        "provider_payload_resolution": {
+            key: value
+            for key, value in payload_resolution.items()
+            if key != "resolved_provider_payload_drafts"
+        },
+        "resolved_provider_payload_drafts": resolved_provider_payload_drafts
+        if isinstance(resolved_provider_payload_drafts, list)
+        else [],
         "provider_readiness_contract": _provider_readiness(create_approval_artifact),
         "provider_id_ledger_requirements": provider_id_requirements,
         "provider_id_ledger_gate": provider_id_gate,
@@ -282,13 +334,14 @@ def run_create_execute_request(
     request: dict[str, Any],
     *,
     runs_dir: str | Path,
+    db_path: str | Path | None = None,
 ) -> dict[str, Any]:
     cfg = _execute_config(request)
     create_approval_artifact = cfg.get("create_approval_artifact")
     if not isinstance(create_approval_artifact, dict):
         raise ValueError("create execute requires create_approval_artifact")
     policy = cfg.get("policy") if isinstance(cfg.get("policy"), dict) else {}
-    payload = build_create_execute(create_approval_artifact=create_approval_artifact, policy=policy)
+    payload = build_create_execute(create_approval_artifact=create_approval_artifact, policy=policy, db_path=db_path)
     approval_path = cfg.get("create_approval_artifact_path")
     if str(approval_path or "").strip():
         payload["lineage"]["create_approval"]["artifact_path"] = str(approval_path)

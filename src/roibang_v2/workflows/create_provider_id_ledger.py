@@ -155,3 +155,53 @@ def resolve_create_lookup_placeholders(*, db_path: str | Path, payload: dict[str
         "external_api_calls": 0,
         "actions": [],
     }
+
+
+def resolve_provider_payload_drafts(
+    *,
+    db_path: str | Path,
+    provider_payload_drafts: list[dict[str, Any]],
+) -> dict[str, Any]:
+    resolved_drafts: list[dict[str, Any]] = []
+    unresolved_placeholders: list[dict[str, str]] = []
+    lookup_count = 0
+    resolved_count = 0
+    for draft in provider_payload_drafts:
+        if not isinstance(draft, dict):
+            continue
+        payload = draft.get("payload") if isinstance(draft.get("payload"), dict) else {}
+        resolution = resolve_create_lookup_placeholders(db_path=db_path, payload=payload)
+        lookup_count += int(resolution.get("lookup_count") or 0)
+        resolved_count += int(resolution.get("resolved_count") or 0)
+        for item in resolution.get("unresolved_placeholders") or []:
+            if not isinstance(item, dict):
+                continue
+            unresolved_placeholders.append(
+                {
+                    "operation": str(draft.get("operation") or ""),
+                    "field": str(item.get("field") or ""),
+                    "placeholder": str(item.get("placeholder") or ""),
+                    "local_key": str(item.get("local_key") or ""),
+                }
+            )
+        resolved_drafts.append(
+            {
+                **draft,
+                "payload": resolution["resolved_payload"],
+                "executable": False,
+                "live_api_payload": False,
+                "lookup_resolution_status": str(resolution.get("status") or ""),
+            }
+        )
+    return {
+        "status": "resolved" if not unresolved_placeholders else "blocked",
+        "draft_count": len(resolved_drafts),
+        "lookup_count": lookup_count,
+        "resolved_count": resolved_count,
+        "unresolved_count": len(unresolved_placeholders),
+        "unresolved_placeholders": unresolved_placeholders,
+        "resolved_provider_payload_drafts": resolved_drafts,
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "actions": [],
+    }

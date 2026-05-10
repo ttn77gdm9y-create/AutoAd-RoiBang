@@ -47,6 +47,7 @@ def run_from_args(argv: list[str] | None = None) -> int:
             }
         },
         runs_dir=config.runs_dir,
+        db_path=config.database_path,
     )
     print(
         json.dumps(
