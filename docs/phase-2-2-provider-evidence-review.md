@@ -301,3 +301,33 @@ PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_live_execute
 - `injected_test_transport` 表示测试注入发送层，不计入 `external_api_calls`。
 - `create_http` 表示真实创建 HTTP 发送层，除非 policy 中 `allow_create_http_transport=true`，否则 runner 会 blocked 且不会调用 transport。
 - 当前示例策略中 `allow_create_http_transport=false`，所以真实 HTTP 创建仍然关闭。
+
+## first live approval 文件
+
+`create_live_approval` 是首单真实创建前的人工批准记录校验。它不是执行开关，只会生成本地 approval artifact（批准产物），继续保持：
+
+- `execution_enabled=false`
+- `external_api_calls=0`
+- `actions=[]`
+
+批准文件必须包含：
+
+- `approval_id`：批准编号，用来追溯这一次人工批准。
+- `approved_by`：批准人。
+- `approved_at`：批准时间。
+- `expires_at`：过期时间，过期后自动 blocked（阻断）。
+- `target_workflow=create_live_execute_runner`：批准对象必须是 live runner（真实执行器）。
+- `allow_create_http_transport`：是否允许真实 HTTP transport（HTTP 请求发送层）。
+- `scope`：必须和 `create_first_live_runbook.scope` 完全一致。
+- `approved_artifacts`：必须绑定当前三个 artifact 的 sha256 digest（摘要指纹）：
+  - `create_execute`
+  - `create_first_live_runbook`
+  - `create_live_payload_adapter_scaffold`
+
+生成命令：
+
+```bash
+PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_live_approval.py --config configs/runtime.example.json --approval-file /path/to/approval.json
+```
+
+`create_live_execute_runner` 现在必须看到 `create_live_approval` artifact 才会认为 `human_approval_record_present=true`。只在 policy（策略配置）里写 `human_approval.approved=true` 不再能开闸。

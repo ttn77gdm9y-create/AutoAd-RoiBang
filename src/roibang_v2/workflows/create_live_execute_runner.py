@@ -39,8 +39,15 @@ def _runner_policy(policy: dict[str, Any]) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
-def _human_approval(policy: dict[str, Any]) -> dict[str, Any]:
+def _human_approval_from_policy(policy: dict[str, Any]) -> dict[str, Any]:
     value = _runner_policy(policy).get("human_approval")
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _approval_from_artifact(approval_artifact: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(approval_artifact, dict):
+        return {}
+    value = approval_artifact.get("approval")
     return dict(value) if isinstance(value, dict) else {}
 
 
@@ -83,13 +90,29 @@ def _policy_live_payload_generation_enabled(policy: dict[str, Any]) -> bool:
     return bool(_payload_schema_policy(policy).get("live_payload_generation_enabled", False))
 
 
-def _human_approval_present(policy: dict[str, Any]) -> bool:
-    approval = _human_approval(policy)
-    return bool(approval.get("approved", False)) and bool(str(approval.get("approval_id") or "").strip())
+def _live_approval_artifact_present(approval_artifact: dict[str, Any] | None) -> bool:
+    if not isinstance(approval_artifact, dict):
+        return False
+    return (
+        bool(approval_artifact.get("ok", False))
+        and str(approval_artifact.get("status") or "") == "approved"
+        and not bool(approval_artifact.get("execution_enabled", False))
+        and int(approval_artifact.get("external_api_calls") or 0) == 0
+    )
 
 
-def _allow_create_http_transport(policy: dict[str, Any]) -> bool:
-    return bool(_runner_policy(policy).get("allow_create_http_transport", False))
+def _human_approval_present(approval_artifact: dict[str, Any] | None) -> bool:
+    approval = _approval_from_artifact(approval_artifact)
+    return _live_approval_artifact_present(approval_artifact) and bool(approval.get("approved", False)) and bool(
+        str(approval.get("approval_id") or "").strip()
+    )
+
+
+def _allow_create_http_transport(policy: dict[str, Any], approval_artifact: dict[str, Any] | None) -> bool:
+    approval = _approval_from_artifact(approval_artifact)
+    return bool(_runner_policy(policy).get("allow_create_http_transport", False)) and bool(
+        approval.get("allow_create_http_transport", False)
+    )
 
 
 def _rows(value: Any) -> list[dict[str, Any]]:
@@ -141,6 +164,7 @@ def _runner_gate(
     create_execute_artifact: dict[str, Any],
     create_first_live_runbook_artifact: dict[str, Any],
     create_live_payload_adapter_scaffold_artifact: dict[str, Any],
+    create_live_approval_artifact: dict[str, Any] | None,
     policy: dict[str, Any],
     runtime: dict[str, Any],
     transport: Transport | None,
@@ -148,7 +172,7 @@ def _runner_gate(
 ) -> dict[str, Any]:
     adapter_gates = _adapter_required_gates(create_live_payload_adapter_scaffold_artifact)
     normalized_transport_mode = str(transport_mode or "injected_test_transport")
-    create_http_allowed = _allow_create_http_transport(policy)
+    create_http_allowed = _allow_create_http_transport(policy, create_live_approval_artifact)
     transport_allowed = normalized_transport_mode == "injected_test_transport" or create_http_allowed
     external_api_call_accounting = (
         "test_transport_not_counted_as_external_api"
@@ -165,7 +189,8 @@ def _runner_gate(
         "phase_gate_allows_live_execute": bool(adapter_gates.get("phase_gate_allows_live_execute", False))
         or bool(_adapter_gate(create_live_payload_adapter_scaffold_artifact).get("ready_for_live_execute", False)),
         "runbook_ready_for_human_approval": _runbook_ready(create_first_live_runbook_artifact),
-        "human_approval_record_present": _human_approval_present(policy),
+        "live_approval_artifact_present": _live_approval_artifact_present(create_live_approval_artifact),
+        "human_approval_record_present": _human_approval_present(create_live_approval_artifact),
         "transport_injected_for_test": transport is not None,
         "no_unresolved_lookup_placeholders": _unresolved_lookup_count(create_execute_artifact) == 0,
     }
@@ -207,6 +232,7 @@ def _blocking_reasons(gate: dict[str, Any]) -> list[str]:
         "policy_live_payload_generation_enabled": "policy.create_execute.payload_schema.live_payload_generation_enabled is false",
         "phase_gate_allows_live_execute": "phase gate has not allowed live execute",
         "runbook_ready_for_human_approval": "first live runbook is not ready for human approval",
+        "live_approval_artifact_present": "create_live_approval artifact is missing or not approved",
         "human_approval_record_present": "human approval record is missing",
         "transport_injected_for_test": "test transport is not injected",
     }
@@ -246,6 +272,7 @@ def _empty_result(
     create_execute_artifact: dict[str, Any],
     create_first_live_runbook_artifact: dict[str, Any],
     create_live_payload_adapter_scaffold_artifact: dict[str, Any],
+    create_live_approval_artifact: dict[str, Any] | None,
     policy: dict[str, Any],
     runtime: dict[str, Any],
     transport: Transport | None,
@@ -255,6 +282,7 @@ def _empty_result(
         create_execute_artifact=create_execute_artifact,
         create_first_live_runbook_artifact=create_first_live_runbook_artifact,
         create_live_payload_adapter_scaffold_artifact=create_live_payload_adapter_scaffold_artifact,
+        create_live_approval_artifact=create_live_approval_artifact,
         policy=policy,
         runtime=runtime,
         transport=transport,
@@ -390,6 +418,7 @@ def build_create_live_execute_runner(
     create_execute_artifact: dict[str, Any],
     create_first_live_runbook_artifact: dict[str, Any],
     create_live_payload_adapter_scaffold_artifact: dict[str, Any],
+    create_live_approval_artifact: dict[str, Any] | None = None,
     policy: dict[str, Any],
     runtime: dict[str, Any],
     db_path: str | Path,
@@ -401,6 +430,7 @@ def build_create_live_execute_runner(
         create_execute_artifact=create_execute_artifact,
         create_first_live_runbook_artifact=create_first_live_runbook_artifact,
         create_live_payload_adapter_scaffold_artifact=create_live_payload_adapter_scaffold_artifact,
+        create_live_approval_artifact=create_live_approval_artifact,
         policy=policy,
         runtime=runtime,
         transport=transport,
@@ -530,6 +560,7 @@ def run_create_live_execute_runner_request(
     create_execute = cfg.get("create_execute_artifact")
     runbook = cfg.get("create_first_live_runbook_artifact")
     scaffold = cfg.get("create_live_payload_adapter_scaffold_artifact")
+    live_approval = cfg.get("create_live_approval_artifact")
     if not isinstance(create_execute, dict):
         raise ValueError("create live execute runner requires create_execute_artifact")
     if not isinstance(runbook, dict):
@@ -542,6 +573,7 @@ def run_create_live_execute_runner_request(
         create_execute_artifact=create_execute,
         create_first_live_runbook_artifact=runbook,
         create_live_payload_adapter_scaffold_artifact=scaffold,
+        create_live_approval_artifact=live_approval if isinstance(live_approval, dict) else None,
         policy=policy,
         runtime=runtime,
         db_path=db_path,

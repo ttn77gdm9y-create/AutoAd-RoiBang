@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from roibang_v2.config import load_json, load_runtime_config
-from roibang_v2.workflows.create_live_execute_runner import run_create_live_execute_runner_request
+from roibang_v2.workflows.create_live_approval import run_create_live_approval_request
 
 
 def _latest_artifact(runs_dir: Path, workflow: str) -> Path:
@@ -21,14 +21,6 @@ def _artifact_path(value: str, runs_dir: Path, workflow: str) -> Path:
     return Path(value) if str(value or "").strip() else _latest_artifact(runs_dir, workflow)
 
 
-def _optional_artifact_path(value: str, runs_dir: Path, workflow: str) -> Path | None:
-    if str(value or "").strip():
-        return Path(value)
-    workflow_dir = runs_dir / workflow
-    candidates = sorted(workflow_dir.glob("*.json"))
-    return candidates[-1] if candidates else None
-
-
 def _load_artifact(path: Path) -> dict:
     artifact = load_json(path)
     artifact["artifact_path"] = str(path)
@@ -36,18 +28,17 @@ def _load_artifact(path: Path) -> dict:
 
 
 def run_from_args(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Build blocked live create runner review artifact.")
+    parser = argparse.ArgumentParser(description="Validate one-shot first live create approval without execution.")
     parser.add_argument("--config", default="configs/runtime.example.json")
-    parser.add_argument("--policy", default="policies/strategy.example.json")
+    parser.add_argument("--approval-file", required=True)
     parser.add_argument("--create-execute-artifact", default="")
     parser.add_argument("--create-first-live-runbook-artifact", default="")
     parser.add_argument("--create-live-payload-adapter-scaffold-artifact", default="")
-    parser.add_argument("--create-live-approval-artifact", default="")
     args = parser.parse_args(argv)
 
     config = load_runtime_config(args.config)
     if config.external_api_enabled or config.execution_enabled:
-        raise RuntimeError("create live execute runner CLI requires external_api_enabled=false and execution_enabled=false")
+        raise RuntimeError("create live approval requires external_api_enabled=false and execution_enabled=false")
 
     execute_path = _artifact_path(args.create_execute_artifact, config.runs_dir, "create_execute")
     runbook_path = _artifact_path(
@@ -60,28 +51,16 @@ def run_from_args(argv: list[str] | None = None) -> int:
         config.runs_dir,
         "create_live_payload_adapter_scaffold",
     )
-    approval_path = _optional_artifact_path(
-        args.create_live_approval_artifact,
-        config.runs_dir,
-        "create_live_approval",
-    )
-    policy = load_json(args.policy)
-    runner_request = {
-        "create_execute_artifact": _load_artifact(execute_path),
-        "create_first_live_runbook_artifact": _load_artifact(runbook_path),
-        "create_live_payload_adapter_scaffold_artifact": _load_artifact(scaffold_path),
-        "policy": policy,
-        "runtime": {
-            "execution_enabled": config.execution_enabled,
-            "external_api_enabled": config.external_api_enabled,
+    result = run_create_live_approval_request(
+        {
+            "create_live_approval": {
+                "approval_request": load_json(args.approval_file),
+                "create_execute_artifact": _load_artifact(execute_path),
+                "create_first_live_runbook_artifact": _load_artifact(runbook_path),
+                "create_live_payload_adapter_scaffold_artifact": _load_artifact(scaffold_path),
+            }
         },
-    }
-    if approval_path is not None:
-        runner_request["create_live_approval_artifact"] = _load_artifact(approval_path)
-    result = run_create_live_execute_runner_request(
-        {"create_live_execute_runner": runner_request},
         runs_dir=config.runs_dir,
-        db_path=config.database_path,
     )
     print(
         json.dumps(
@@ -90,18 +69,18 @@ def run_from_args(argv: list[str] | None = None) -> int:
                 "workflow": result["workflow"],
                 "phase": result["phase"],
                 "execution_enabled": result["execution_enabled"],
-                "live_execute_enabled": result["live_execute_enabled"],
                 "external_api_calls": result["external_api_calls"],
                 "status": result["status"],
-                "runner_gate": result["runner_gate"],
-                "blocking_reasons": result["blocking_reasons"],
+                "approval": result["approval"],
+                "scope": result["scope"],
+                "violations": result["violations"],
                 "artifact_path": result["artifact_path"],
             },
             ensure_ascii=False,
             indent=2,
         )
     )
-    return 0
+    return 0 if result["ok"] else 1
 
 
 def main() -> int:

@@ -8218,6 +8218,7 @@ def test_create_live_execute_runner_blocks_without_explicit_gates(tmp_path: Path
         "policy_live_payload_generation_enabled": False,
         "phase_gate_allows_live_execute": False,
         "runbook_ready_for_human_approval": True,
+        "live_approval_artifact_present": False,
         "human_approval_record_present": False,
         "transport_injected_for_test": False,
         "no_unresolved_lookup_placeholders": False,
@@ -8278,6 +8279,19 @@ def test_create_live_execute_runner_uses_injected_test_transport_in_fixed_order(
                     "bind_material": "/open_api/2/file/material/bind/",
                 },
                 "transport": "injected_test_transport",
+            },
+        },
+        create_live_approval_artifact={
+            "workflow": "create_live_approval",
+            "ok": True,
+            "status": "approved",
+            "execution_enabled": False,
+            "external_api_calls": 0,
+            "approval": {
+                "approved": True,
+                "approval_id": "unit-test-approval",
+                "approved_by": "tester",
+                "allow_create_http_transport": False,
             },
         },
         policy={
@@ -8404,6 +8418,58 @@ def test_create_live_execute_runner_blocks_create_http_transport_until_policy_al
     assert result["actions"] == []
 
 
+def test_create_live_execute_runner_requires_live_approval_artifact_even_when_policy_claims_approval(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    plan = build_create_strategy_plan(request=_create_request()["create_request"], db_path=db_path, policy={})
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+    dry_run = build_create_dry_run(create_strategy_plan_artifact=plan, create_preflight_artifact=preflight, policy={})
+    approval = build_create_approval(create_dry_run_artifact=dry_run, policy={"auto_approve_phase1": True})
+    execute = build_create_execute(create_approval_artifact=approval, policy={}, db_path=db_path)
+    calls: list[dict] = []
+
+    result = build_create_live_execute_runner(
+        create_execute_artifact=execute,
+        create_first_live_runbook_artifact={
+            "workflow": "create_first_live_runbook",
+            "ok": True,
+            "status": "ready_for_human_approval",
+            "execution_enabled": False,
+            "external_api_calls": 0,
+        },
+        create_live_payload_adapter_scaffold_artifact={
+            "workflow": "create_live_payload_adapter_scaffold",
+            "execution_enabled": False,
+            "external_api_calls": 0,
+            "live_adapter_gate": {
+                "ready_for_live_execute": True,
+                "required_gates": {"phase_gate_allows_live_execute": True},
+            },
+        },
+        policy={
+            "create_execute": {
+                "live_api": {"enabled": True},
+                "payload_schema": {"live_payload_generation_enabled": True},
+            },
+            "create_live_execute_runner": {
+                "human_approval": {"approved": True, "approval_id": "policy-only", "approved_by": "tester"}
+            },
+        },
+        runtime={"execution_enabled": True, "external_api_enabled": True},
+        db_path=db_path,
+        transport=lambda call: calls.append(call) or {"code": 0},
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "blocked"
+    assert result["runner_gate"]["required_gates"]["live_approval_artifact_present"] is False
+    assert result["runner_gate"]["required_gates"]["human_approval_record_present"] is False
+    assert "create_live_approval artifact is missing or not approved" in result["blocking_reasons"]
+    assert calls == []
+    assert result["external_api_calls"] == 0
+    assert result["actions"] == []
+
+
 def test_create_live_execute_runner_stops_on_first_test_transport_error(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     _seed_create_db(db_path)
@@ -8434,6 +8500,19 @@ def test_create_live_execute_runner_stops_on_first_test_transport_error(tmp_path
             "live_adapter_gate": {
                 "ready_for_live_execute": True,
                 "required_gates": {"phase_gate_allows_live_execute": True},
+            },
+        },
+        create_live_approval_artifact={
+            "workflow": "create_live_approval",
+            "ok": True,
+            "status": "approved",
+            "execution_enabled": False,
+            "external_api_calls": 0,
+            "approval": {
+                "approved": True,
+                "approval_id": "unit-test-approval",
+                "approved_by": "tester",
+                "allow_create_http_transport": False,
             },
         },
         policy={
@@ -8493,6 +8572,14 @@ def test_run_create_live_execute_runner_request_writes_blocked_artifact(tmp_path
                     "external_api_calls": 0,
                     "live_adapter_gate": {"ready_for_live_execute": False},
                 },
+                "create_live_approval_artifact": {
+                    "workflow": "create_live_approval",
+                    "ok": False,
+                    "status": "blocked",
+                    "execution_enabled": False,
+                    "external_api_calls": 0,
+                    "approval": {"approved": False},
+                },
                 "policy": {},
                 "runtime": {"execution_enabled": False, "external_api_enabled": False},
             }
@@ -8534,6 +8621,14 @@ def test_create_live_execute_runner_cli_uses_latest_artifacts_and_keeps_blocked(
             "execution_enabled": False,
             "external_api_calls": 0,
             "live_adapter_gate": {"ready_for_live_execute": False},
+        },
+        "create_live_approval": {
+            "workflow": "create_live_approval",
+            "ok": False,
+            "status": "blocked",
+            "execution_enabled": False,
+            "external_api_calls": 0,
+            "approval": {"approved": False},
         },
     }
     for workflow, artifact in artifacts.items():
