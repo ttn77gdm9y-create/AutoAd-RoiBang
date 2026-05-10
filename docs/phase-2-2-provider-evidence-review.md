@@ -330,9 +330,10 @@ PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_live_execute
 - 默认 `enabled=false`，无法构造。
 - 必须显式设置 `allow_mutation=true`，mutation 是变更操作，表示可能创建或修改线上对象。
 - 必须有 `approval_id`，也就是人工批准编号。
-- 只允许三个 endpoint（接口地址）：
+- 只允许四个 endpoint（接口地址）：
   - `create_project`: `/open_api/2/project/create/`
   - `create_unit`: `/open_api/2/promotion/create/`
+  - `lookup_target_material`: `/open_api/2/file/video/get/`
   - `bind_material`: `/open_api/2/file/material/bind/`
 - `bind_material` 仍是素材推送绑定，不接收 `project_id` 或 `promotion_id`。
 - 变更型请求不做 retry（重试），避免重复创建。
@@ -475,7 +476,7 @@ PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_first_live_p
 固定脚本：
 
 ```bash
-PYTHONPATH=src python3 scripts/run_create_first_live_local_chain.py --config configs/runtime.example.json --preview-config configs/create/yzt-wx-mini-game.preview.example.json --policy policies/strategy.example.json
+PYTHONPATH=src python3 scripts/run_create_first_live_local_chain.py --config configs/runtime.example.json --preview-config configs/create/yzt-wx-mini-game.preview.local.json --policy policies/strategy.example.json
 ```
 
 安全边界保持不变：
@@ -484,3 +485,5 @@ PYTHONPATH=src python3 scripts/run_create_first_live_local_chain.py --config con
 - `external_api_calls=0`，外部接口调用数为 0。
 - `approved_for_execute=false`，不批准执行。
 - `actions=[]`，不生成真实动作。
+
+首单固定脚本入口现在会直接阻断 `.example.json` 示例配置和 `target-advertiser-id` / `source-advertiser-id` 这类占位 ID。首单链路必须读取本地真实配置，例如 `configs/create/yzt-wx-mini-game.preview.local.json`；该文件属于本地私有配置，不提交到 Git。

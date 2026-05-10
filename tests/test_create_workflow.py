@@ -3482,6 +3482,62 @@ def test_create_first_live_local_chain_cli_uses_manual_config_without_execute(tm
     assert artifact["actions"] == []
 
 
+def test_create_first_live_local_chain_cli_blocks_example_or_placeholder_config(tmp_path: Path, capsys):
+    db_path = tmp_path / "roibang.sqlite3"
+    runtime_path = _runtime_config(tmp_path, db_path)
+    preview_path = tmp_path / "yzt-preview.example.json"
+    policy_path = tmp_path / "strategy.json"
+    preview_path.write_text(
+        json.dumps(
+            {
+                "yzt_create_preview": {
+                    "template_name": "微小每付7R男",
+                    "owner": "郭靖",
+                    "target_date": "2026-05-09",
+                    "batch_generated_at": "2026-05-09T14:45:00+08:00",
+                    "source_advertiser_id": "source-advertiser-id",
+                    "pool_key": "pool-yzt-wx-7r",
+                    "defaults": {"daily_budget": 300, "project_count": 1, "units_per_project": 1},
+                    "roi_coefficient": 0.41,
+                    "accounts": [{"advertiser_id": "target-advertiser-id"}],
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    policy_path.write_text(json.dumps({"first_live_run": {"advertiser_id": "target-advertiser-id"}}, ensure_ascii=False), encoding="utf-8")
+    module = _load_script("run_create_first_live_local_chain")
+
+    exit_code = module.run_from_args(
+        [
+            "--config",
+            str(runtime_path),
+            "--preview-config",
+            str(preview_path),
+            "--policy",
+            str(policy_path),
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    artifact = json.loads(Path(output["artifact_path"]).read_text(encoding="utf-8"))
+    assert exit_code == 1
+    assert output["workflow"] == "create_first_live_local_chain"
+    assert output["status"] == "blocked"
+    assert output["execution_enabled"] is False
+    assert output["external_api_calls"] == 0
+    assert output["summary"]["project_count"] == 0
+    assert output["chain_steps"] == []
+    assert any("示例配置" in item for item in output["human_next_steps"])
+    assert any("占位" in item for item in output["human_next_steps"])
+    assert artifact["first_live_scope"]["derived_preview_config"] == {}
+    assert artifact["artifacts"] == {"dry_chain": ""}
+    assert artifact["preparation_check"] == {}
+    assert artifact["dry_chain"] == {}
+    assert artifact["actions"] == []
+
+
 def test_create_phase2_yzt_dry_chain_summarizes_blocked_manual_config_in_chinese(tmp_path: Path):
     from roibang_v2.workflows.create_phase2_yzt_dry_chain import run_create_phase2_yzt_dry_chain_request
 
