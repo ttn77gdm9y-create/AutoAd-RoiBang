@@ -17,6 +17,9 @@ from roibang_v2.workflows.create_provider_id_ledger import resolve_provider_payl
 from roibang_v2.workflows.create_provider_readiness import not_ready_provider_readiness_contract
 
 
+_PAYLOAD_REVIEW_OPERATIONS = ("create_project", "create_unit", "bind_material")
+
+
 def _execute_config(request: dict[str, Any]) -> dict[str, Any]:
     value = request.get("create_execute")
     return dict(value) if isinstance(value, dict) else dict(request)
@@ -290,6 +293,39 @@ def _contains_lookup_placeholder(value: Any) -> bool:
     return False
 
 
+def _lookup_placeholder_count(value: Any) -> int:
+    if isinstance(value, str):
+        return 1 if _contains_lookup_placeholder(value) else 0
+    if isinstance(value, dict):
+        return sum(_lookup_placeholder_count(item) for item in value.values())
+    if isinstance(value, list):
+        return sum(_lookup_placeholder_count(item) for item in value)
+    return 0
+
+
+def _draft_live_payload_count(draft: dict[str, Any]) -> int:
+    return 1 if bool(draft.get("live_api_payload", False)) or bool(draft.get("live_payload", False)) else 0
+
+
+def _payload_operation_summary(drafts: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "payload_count": len(drafts),
+        "executable_true_count": sum(1 for draft in drafts if bool(draft.get("executable", False))),
+        "live_payload_count": sum(_draft_live_payload_count(draft) for draft in drafts),
+        "unresolved_lookup_placeholder_count": sum(
+            _lookup_placeholder_count(draft.get("payload") if isinstance(draft.get("payload"), dict) else {})
+            for draft in drafts
+        ),
+    }
+
+
+def _drafts_by_operation(drafts: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    return {
+        operation: [draft for draft in drafts if str(draft.get("operation") or "") == operation]
+        for operation in _PAYLOAD_REVIEW_OPERATIONS
+    }
+
+
 def _resolved_payload_contract(
     *,
     resolved_provider_payload_drafts: list[dict[str, Any]],
@@ -327,6 +363,91 @@ def _resolved_payload_contract(
         "execution_enabled": False,
         "external_api_calls": 0,
         "actions": [],
+    }
+
+
+def _chain_boundary_contract(
+    *,
+    approval: dict[str, Any],
+    approval_boundary: dict[str, Any],
+    provider_id_ledger_gate: dict[str, Any],
+    provider_payload_resolution: dict[str, Any],
+    resolved_payload_contract: dict[str, Any],
+    resolved_provider_payload_drafts: list[dict[str, Any]],
+) -> dict[str, Any]:
+    total_summary = _payload_operation_summary(resolved_provider_payload_drafts)
+    unresolved_count = int(resolved_payload_contract.get("unresolved_lookup_count") or 0)
+    return {
+        "status": "hard_blocked_missing_provider_ids" if unresolved_count else "hard_blocked_review_only",
+        "approval_recorded": str(approval.get("status") or "") == "recorded",
+        "approval_is_record_only": not bool(approval.get("execute_allowed", False))
+        and not bool(approval.get("approved_for_execute", False)),
+        "execute_hard_blocked": True,
+        "execution_enabled_false": True,
+        "external_api_calls_zero": True,
+        "actions_empty": True,
+        "no_live_payloads": int(total_summary["live_payload_count"]) == 0
+        and int(resolved_payload_contract.get("live_payload_count") or 0) == 0,
+        "no_executable_payloads": int(total_summary["executable_true_count"]) == 0
+        and int(resolved_payload_contract.get("executable_draft_count") or 0) == 0,
+        "payload_digest_consistent": bool(approval_boundary.get("provider_payload_digest_consistent", False)),
+        "resolved_payload_contract": str(resolved_payload_contract.get("status") or ""),
+        "provider_payload_resolution": str(provider_payload_resolution.get("status") or ""),
+        "provider_id_ledger_gate": str(provider_id_ledger_gate.get("status") or ""),
+        "approved_for_execute": False,
+        "external_api_calls": 0,
+        "actions": [],
+    }
+
+
+def _execute_review_pack(
+    *,
+    approval: dict[str, Any],
+    resolved_provider_payload_drafts: list[dict[str, Any]],
+    resolved_payload_contract: dict[str, Any],
+) -> dict[str, Any]:
+    drafts_by_operation = _drafts_by_operation(resolved_provider_payload_drafts)
+    by_operation = {
+        operation: _payload_operation_summary(operation_drafts)
+        for operation, operation_drafts in drafts_by_operation.items()
+    }
+    total_summary = _payload_operation_summary(resolved_provider_payload_drafts)
+    payload_counts = {operation: int(summary["payload_count"]) for operation, summary in by_operation.items()}
+    payload_counts["total"] = int(total_summary["payload_count"])
+    unresolved_count = int(resolved_payload_contract.get("unresolved_lookup_count") or 0)
+    status = "hard_blocked_missing_provider_ids" if unresolved_count else "hard_blocked_ready_for_manual_review"
+    if unresolved_count:
+        plain_language = (
+            "execute 只是最终本地复核边界，不会执行真实创建；"
+            f"{unresolved_count} 个 lookup 占位符仍未解析。"
+        )
+    else:
+        plain_language = (
+            "execute 只是最终本地复核边界，不会执行真实创建；"
+            f"{int(total_summary['payload_count'])} 个 resolved payload 草稿可人工核对。"
+        )
+    return {
+        "drafts_by_operation": drafts_by_operation,
+        "manual_review_summary": {
+            "status": status,
+            "plain_language": plain_language,
+            "payload_counts": payload_counts,
+            "checks": {
+                "execute_hard_blocked": True,
+                "approval_is_record_only": not bool(approval.get("execute_allowed", False))
+                and not bool(approval.get("approved_for_execute", False)),
+                "all_payloads_executable_false": int(total_summary["executable_true_count"]) == 0,
+                "live_payload_count_zero": int(total_summary["live_payload_count"]) == 0,
+                "actions_empty": True,
+                "external_api_calls_zero": True,
+                "unresolved_lookup_placeholders_present": unresolved_count > 0,
+            },
+            "counts": total_summary,
+            "by_operation": by_operation,
+            "execution_enabled": False,
+            "external_api_calls": 0,
+            "actions": [],
+        },
     }
 
 
@@ -482,6 +603,19 @@ def build_create_execute(
         resolved_payload_contract=resolved_payload_contract,
     )
     approval_boundary = _approval_boundary_contract(create_approval_artifact)
+    chain_boundary = _chain_boundary_contract(
+        approval=create_approval_artifact,
+        approval_boundary=approval_boundary,
+        provider_id_ledger_gate=provider_id_gate,
+        provider_payload_resolution=payload_resolution,
+        resolved_payload_contract=resolved_payload_contract,
+        resolved_provider_payload_drafts=resolved_provider_payload_drafts,
+    )
+    execute_review_pack = _execute_review_pack(
+        approval=create_approval_artifact,
+        resolved_provider_payload_drafts=resolved_provider_payload_drafts,
+        resolved_payload_contract=resolved_payload_contract,
+    )
     return {
         "ok": not violations,
         "workflow": "create_execute",
@@ -516,6 +650,8 @@ def build_create_execute(
         "resolved_provider_payload_drafts": resolved_provider_payload_drafts,
         "resolved_payload_contract": resolved_payload_contract,
         "execute_review_summary": execute_review_summary,
+        "chain_boundary_contract": chain_boundary,
+        "execute_review_pack": execute_review_pack,
         "provider_readiness_contract": _provider_readiness(create_approval_artifact),
         "provider_id_ledger_requirements": provider_id_requirements,
         "provider_id_ledger_gate": provider_id_gate,

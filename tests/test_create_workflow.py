@@ -5990,12 +5990,52 @@ def test_create_chain_final_report_summarizes_index_and_blockers_for_humans():
         },
         "review_contract": {"safe_to_review": True},
     }
+    create_execute = {
+        "workflow": "create_execute",
+        "ok": True,
+        "status": "blocked",
+        "reason": "phase1_execute_disabled",
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "chain_boundary_contract": {
+            "status": "hard_blocked_missing_provider_ids",
+            "execute_hard_blocked": True,
+            "external_api_calls_zero": True,
+            "actions_empty": True,
+            "no_live_payloads": True,
+            "no_executable_payloads": True,
+            "approved_for_execute": False,
+        },
+        "execute_review_pack": {
+            "manual_review_summary": {
+                "status": "hard_blocked_missing_provider_ids",
+                "payload_counts": {"create_project": 1, "create_unit": 2, "bind_material": 4, "total": 7},
+                "counts": {
+                    "payload_count": 7,
+                    "executable_true_count": 0,
+                    "live_payload_count": 0,
+                    "unresolved_lookup_placeholder_count": 2,
+                },
+                "checks": {
+                    "execute_hard_blocked": True,
+                    "approval_is_record_only": True,
+                    "all_payloads_executable_false": True,
+                    "live_payload_count_zero": True,
+                    "actions_empty": True,
+                    "external_api_calls_zero": True,
+                    "unresolved_lookup_placeholders_present": True,
+                },
+            }
+        },
+        "actions": [],
+    }
 
     result = build_create_chain_final_report(
         create_chain_index_artifact=chain_index,
         create_readiness_matrix_artifact=readiness_matrix,
         create_live_execute_phase_gate_artifact=phase_gate,
         create_adapter_review_pack_artifact=adapter_review,
+        create_execute_artifact=create_execute,
     )
 
     assert result["ok"] is True
@@ -6037,9 +6077,32 @@ def test_create_chain_final_report_summarizes_index_and_blockers_for_humans():
     ]
     assert result["recommended_next_steps"] == [
         "保持 create_execute 硬阻断",
-        "审阅字段映射和模板槽位",
-        "准备后续由你确认是否参考老项目成熟模板",
+        "补齐 provider ID ledger（平台 ID 台账）后重新复核 execute payload",
+        "审阅字段映射、模板槽位和 execute_review_pack",
     ]
+    assert result["creation_boundary_summary"] == {
+        "status": "hard_blocked_missing_provider_ids",
+        "plain_language": "真实创建仍被 create_execute 硬阻断；当前 execute 复核包还有 2 个 lookup 占位符未解析。",
+        "checks": {
+            "execute_hard_blocked": True,
+            "external_api_calls_zero": True,
+            "actions_empty": True,
+            "no_live_payloads": True,
+            "no_executable_payloads": True,
+            "approved_for_execute": False,
+        },
+        "payload_counts": {"create_project": 1, "create_unit": 2, "bind_material": 4, "total": 7},
+        "counts": {
+            "payload_count": 7,
+            "executable_true_count": 0,
+            "live_payload_count": 0,
+            "unresolved_lookup_placeholder_count": 2,
+        },
+        "next_focus": "provider_id_ledger",
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "actions": [],
+    }
     assert result["actions"] == []
 
 
@@ -6166,6 +6229,45 @@ def test_create_chain_final_report_cli_uses_latest_artifacts(tmp_path: Path, cap
             "required_user_input_now": False,
             "summary": {},
             "review_contract": {"safe_to_review": True},
+        },
+        "create_execute": {
+            "workflow": "create_execute",
+            "ok": True,
+            "status": "blocked",
+            "reason": "phase1_execute_disabled",
+            "execution_enabled": False,
+            "external_api_calls": 0,
+            "chain_boundary_contract": {
+                "status": "hard_blocked_review_only",
+                "execute_hard_blocked": True,
+                "external_api_calls_zero": True,
+                "actions_empty": True,
+                "no_live_payloads": True,
+                "no_executable_payloads": True,
+                "approved_for_execute": False,
+            },
+            "execute_review_pack": {
+                "manual_review_summary": {
+                    "status": "hard_blocked_ready_for_manual_review",
+                    "payload_counts": {"create_project": 1, "create_unit": 2, "bind_material": 4, "total": 7},
+                    "counts": {
+                        "payload_count": 7,
+                        "executable_true_count": 0,
+                        "live_payload_count": 0,
+                        "unresolved_lookup_placeholder_count": 0,
+                    },
+                    "checks": {
+                        "execute_hard_blocked": True,
+                        "approval_is_record_only": True,
+                        "all_payloads_executable_false": True,
+                        "live_payload_count_zero": True,
+                        "actions_empty": True,
+                        "external_api_calls_zero": True,
+                        "unresolved_lookup_placeholders_present": False,
+                    },
+                }
+            },
+            "actions": [],
         },
     }
     for workflow, payload in artifacts.items():
@@ -7430,6 +7532,76 @@ def test_create_execute_resolves_provider_payload_drafts_from_id_ledger(tmp_path
     assert result["execution_plan"]["live_api_payloads"] == []
     assert result["resolved_provider_payload_drafts"]
     assert {draft["executable"] for draft in result["resolved_provider_payload_drafts"]} == {False}
+    assert result["chain_boundary_contract"] == {
+        "status": "hard_blocked_review_only",
+        "approval_recorded": True,
+        "approval_is_record_only": True,
+        "execute_hard_blocked": True,
+        "execution_enabled_false": True,
+        "external_api_calls_zero": True,
+        "actions_empty": True,
+        "no_live_payloads": True,
+        "no_executable_payloads": True,
+        "payload_digest_consistent": True,
+        "resolved_payload_contract": "passed",
+        "provider_payload_resolution": "resolved",
+        "provider_id_ledger_gate": "hard_blocked_phase1",
+        "approved_for_execute": False,
+        "external_api_calls": 0,
+        "actions": [],
+    }
+    assert result["execute_review_pack"]["manual_review_summary"] == {
+        "status": "hard_blocked_ready_for_manual_review",
+        "plain_language": "execute 只是最终本地复核边界，不会执行真实创建；7 个 resolved payload 草稿可人工核对。",
+        "payload_counts": {
+            "create_project": 1,
+            "create_unit": 2,
+            "bind_material": 4,
+            "total": 7,
+        },
+        "checks": {
+            "execute_hard_blocked": True,
+            "approval_is_record_only": True,
+            "all_payloads_executable_false": True,
+            "live_payload_count_zero": True,
+            "actions_empty": True,
+            "external_api_calls_zero": True,
+            "unresolved_lookup_placeholders_present": False,
+        },
+        "counts": {
+            "payload_count": 7,
+            "executable_true_count": 0,
+            "live_payload_count": 0,
+            "unresolved_lookup_placeholder_count": 0,
+        },
+        "by_operation": {
+            "create_project": {
+                "payload_count": 1,
+                "executable_true_count": 0,
+                "live_payload_count": 0,
+                "unresolved_lookup_placeholder_count": 0,
+            },
+            "create_unit": {
+                "payload_count": 2,
+                "executable_true_count": 0,
+                "live_payload_count": 0,
+                "unresolved_lookup_placeholder_count": 0,
+            },
+            "bind_material": {
+                "payload_count": 4,
+                "executable_true_count": 0,
+                "live_payload_count": 0,
+                "unresolved_lookup_placeholder_count": 0,
+            },
+        },
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "actions": [],
+    }
+    assert set(result["execute_review_pack"]["drafts_by_operation"]) == {"create_project", "create_unit", "bind_material"}
+    assert len(result["execute_review_pack"]["drafts_by_operation"]["create_project"]) == 1
+    assert len(result["execute_review_pack"]["drafts_by_operation"]["create_unit"]) == 2
+    assert len(result["execute_review_pack"]["drafts_by_operation"]["bind_material"]) == 4
     unit_draft = next(draft for draft in result["resolved_provider_payload_drafts"] if draft["operation"] == "create_unit")
     assert unit_draft["payload"]["project_id"] == "project_123"
     material_drafts = [
@@ -7497,6 +7669,25 @@ def test_create_execute_resolved_payload_contract_blocks_unresolved_lookups(tmp_
         "actions": [],
     }
     assert result["execution_plan"]["live_api_payloads"] == []
+    assert result["chain_boundary_contract"]["status"] == "hard_blocked_missing_provider_ids"
+    assert result["chain_boundary_contract"]["execute_hard_blocked"] is True
+    assert result["chain_boundary_contract"]["external_api_calls_zero"] is True
+    assert result["execute_review_pack"]["manual_review_summary"]["status"] == "hard_blocked_missing_provider_ids"
+    assert result["execute_review_pack"]["manual_review_summary"]["checks"] == {
+        "execute_hard_blocked": True,
+        "approval_is_record_only": True,
+        "all_payloads_executable_false": True,
+        "live_payload_count_zero": True,
+        "actions_empty": True,
+        "external_api_calls_zero": True,
+        "unresolved_lookup_placeholders_present": True,
+    }
+    assert result["execute_review_pack"]["manual_review_summary"]["payload_counts"] == {
+        "create_project": 1,
+        "create_unit": 2,
+        "bind_material": 4,
+        "total": 7,
+    }
     assert result["execution_enabled"] is False
     assert result["external_api_calls"] == 0
     assert result["actions"] == []

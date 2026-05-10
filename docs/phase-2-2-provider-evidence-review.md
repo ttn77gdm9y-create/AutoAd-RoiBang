@@ -225,3 +225,18 @@ configs/provider-evidence/oceanengine.create.phase2-review.example.json
 - `external_api_calls` 是否仍为 0。
 
 这份摘要只服务人工复核，不是执行开关。即使 approve 记录为 `would_approve`，真实创建也仍必须继续停在 `create_execute` 的硬阻断边界。
+
+## execute 与链路总报告边界增强
+
+`create_execute` 现在会输出两个最终复核字段：
+
+- `execute_review_pack`：按 `create_project`、`create_unit`、`bind_material` 展示 resolved payload 草稿。`resolved` 的意思是“已经用本地 provider ID ledger（平台 ID 台账）尝试替换 `<lookup:...>` 占位符”。
+- `chain_boundary_contract`：汇总 approve 是否仍是 record-only、execute 是否仍 hard-block、是否没有 live payload、是否没有可执行 payload、是否 `external_api_calls=0`、是否 `actions=[]`。
+
+`create_chain_final_report` 现在会读取最新 `create_execute` 产物，并输出 `creation_boundary_summary`：
+
+- 如果还有 `<lookup:...>` 占位符，`next_focus=provider_id_ledger`。
+- 如果占位符已解析，`next_focus=manual_payload_review`。
+- 两种情况都继续保持 `create_execute` 硬阻断，不执行真实创建。
+
+这一步把 `dry-run -> approve -> execute -> final_report` 串成了一个完整的本地复核边界包。后续如果要推进真实创建开发，必须另起明确批准阶段，不能从这些复核字段直接推导出可执行权限。

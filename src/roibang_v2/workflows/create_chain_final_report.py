@@ -54,6 +54,89 @@ def _business_summary(overall_status: str) -> str:
     )
 
 
+def _execute_manual_summary(create_execute: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(create_execute, dict):
+        return {}
+    review_pack = create_execute.get("execute_review_pack")
+    if not isinstance(review_pack, dict):
+        return {}
+    summary = review_pack.get("manual_review_summary")
+    return dict(summary) if isinstance(summary, dict) else {}
+
+
+def _creation_boundary_summary(create_execute: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(create_execute, dict):
+        return {
+            "status": "missing_create_execute_review",
+            "plain_language": "最终报告未收到 create_execute 复核产物，无法汇总真实创建前最后边界。",
+            "checks": {
+                "execute_hard_blocked": False,
+                "external_api_calls_zero": False,
+                "actions_empty": False,
+                "no_live_payloads": False,
+                "no_executable_payloads": False,
+                "approved_for_execute": False,
+            },
+            "payload_counts": {"create_project": 0, "create_unit": 0, "bind_material": 0, "total": 0},
+            "counts": {
+                "payload_count": 0,
+                "executable_true_count": 0,
+                "live_payload_count": 0,
+                "unresolved_lookup_placeholder_count": 0,
+            },
+            "next_focus": "run_create_execute",
+            "execution_enabled": False,
+            "external_api_calls": 0,
+            "actions": [],
+        }
+    contract = create_execute.get("chain_boundary_contract")
+    contract = contract if isinstance(contract, dict) else {}
+    manual_summary = _execute_manual_summary(create_execute)
+    counts = manual_summary.get("counts") if isinstance(manual_summary.get("counts"), dict) else {}
+    payload_counts = manual_summary.get("payload_counts") if isinstance(manual_summary.get("payload_counts"), dict) else {}
+    unresolved_count = int(counts.get("unresolved_lookup_placeholder_count") or 0)
+    status = str(contract.get("status") or manual_summary.get("status") or "unknown")
+    if unresolved_count:
+        plain_language = (
+            "真实创建仍被 create_execute 硬阻断；"
+            f"当前 execute 复核包还有 {unresolved_count} 个 lookup 占位符未解析。"
+        )
+        next_focus = "provider_id_ledger"
+    else:
+        plain_language = (
+            "真实创建仍被 create_execute 硬阻断；execute 复核包已可人工核对 resolved payload。"
+        )
+        next_focus = "manual_payload_review"
+    return {
+        "status": status,
+        "plain_language": plain_language,
+        "checks": {
+            "execute_hard_blocked": bool(contract.get("execute_hard_blocked", False)),
+            "external_api_calls_zero": bool(contract.get("external_api_calls_zero", False)),
+            "actions_empty": bool(contract.get("actions_empty", False)),
+            "no_live_payloads": bool(contract.get("no_live_payloads", False)),
+            "no_executable_payloads": bool(contract.get("no_executable_payloads", False)),
+            "approved_for_execute": bool(contract.get("approved_for_execute", False)),
+        },
+        "payload_counts": {
+            "create_project": int(payload_counts.get("create_project") or 0),
+            "create_unit": int(payload_counts.get("create_unit") or 0),
+            "bind_material": int(payload_counts.get("bind_material") or 0),
+            "total": int(payload_counts.get("total") or 0),
+        },
+        "counts": {
+            "payload_count": int(counts.get("payload_count") or 0),
+            "executable_true_count": int(counts.get("executable_true_count") or 0),
+            "live_payload_count": int(counts.get("live_payload_count") or 0),
+            "unresolved_lookup_placeholder_count": unresolved_count,
+        },
+        "next_focus": next_focus,
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "actions": [],
+    }
+
+
 def _summary(
     *,
     chain_index: dict[str, Any],
@@ -92,9 +175,23 @@ def _pending_confirmations(overall_status: str) -> list[str]:
     ]
 
 
-def _recommended_next_steps(overall_status: str) -> list[str]:
+def _recommended_next_steps(overall_status: str, creation_boundary: dict[str, Any] | None = None) -> list[str]:
     if overall_status == "invalid_chain_artifacts":
         return ["先修复本地链路产物", "重新跑创建链路索引", "继续保持 create_execute 硬阻断"]
+    if isinstance(creation_boundary, dict):
+        next_focus = str(creation_boundary.get("next_focus") or "")
+        if next_focus == "provider_id_ledger":
+            return [
+                "保持 create_execute 硬阻断",
+                "补齐 provider ID ledger（平台 ID 台账）后重新复核 execute payload",
+                "审阅字段映射、模板槽位和 execute_review_pack",
+            ]
+        if next_focus == "manual_payload_review":
+            return [
+                "保持 create_execute 硬阻断",
+                "人工复核 execute_review_pack 的 resolved payload",
+                "准备后续由你单独确认是否进入真实执行开发阶段",
+            ]
     return [
         "保持 create_execute 硬阻断",
         "审阅字段映射和模板槽位",
@@ -117,6 +214,7 @@ def build_create_chain_final_report(
     create_readiness_matrix_artifact: dict[str, Any],
     create_live_execute_phase_gate_artifact: dict[str, Any],
     create_adapter_review_pack_artifact: dict[str, Any],
+    create_execute_artifact: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     blocking = _blocking_reasons(
         readiness=create_readiness_matrix_artifact,
@@ -128,6 +226,15 @@ def build_create_chain_final_report(
         phase_gate=create_live_execute_phase_gate_artifact,
     )
     violations = _violations(create_chain_index_artifact, create_live_execute_phase_gate_artifact)
+    creation_boundary = _creation_boundary_summary(create_execute_artifact)
+    source_workflows = [
+        str(create_chain_index_artifact.get("workflow") or ""),
+        str(create_readiness_matrix_artifact.get("workflow") or ""),
+        str(create_live_execute_phase_gate_artifact.get("workflow") or ""),
+        str(create_adapter_review_pack_artifact.get("workflow") or ""),
+    ]
+    if isinstance(create_execute_artifact, dict):
+        source_workflows.append(str(create_execute_artifact.get("workflow") or ""))
     return {
         "ok": overall not in {"invalid_chain_artifacts", "unsafe_live_execute_allowed"} and not violations,
         "workflow": "create_chain_final_report",
@@ -146,13 +253,9 @@ def build_create_chain_final_report(
         "completed_sections": _completed_sections(),
         "pending_confirmations": _pending_confirmations(overall),
         "blocking_reasons": blocking,
-        "recommended_next_steps": _recommended_next_steps(overall),
-        "source_workflows": [
-            str(create_chain_index_artifact.get("workflow") or ""),
-            str(create_readiness_matrix_artifact.get("workflow") or ""),
-            str(create_live_execute_phase_gate_artifact.get("workflow") or ""),
-            str(create_adapter_review_pack_artifact.get("workflow") or ""),
-        ],
+        "recommended_next_steps": _recommended_next_steps(overall, creation_boundary),
+        "creation_boundary_summary": creation_boundary,
+        "source_workflows": source_workflows,
         "adapter_review_status": str(create_adapter_review_pack_artifact.get("status") or ""),
         "required_user_input_now": False,
         "violations": violations,
@@ -180,6 +283,9 @@ def run_create_chain_final_report_request(
         create_readiness_matrix_artifact=cfg["create_readiness_matrix_artifact"],
         create_live_execute_phase_gate_artifact=cfg["create_live_execute_phase_gate_artifact"],
         create_adapter_review_pack_artifact=cfg["create_adapter_review_pack_artifact"],
+        create_execute_artifact=cfg.get("create_execute_artifact")
+        if isinstance(cfg.get("create_execute_artifact"), dict)
+        else None,
     )
     artifact_path = write_run_artifact(runs_dir, "create_chain_final_report", payload)
     return {**payload, "artifact_path": str(artifact_path)}

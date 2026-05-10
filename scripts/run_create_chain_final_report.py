@@ -35,6 +35,7 @@ def run_from_args(argv: list[str] | None = None) -> int:
     artifacts = {
         workflow: _load_artifact(_latest_artifact(config.runs_dir, workflow))
         for workflow in [
+            "create_execute",
             "create_chain_index",
             "create_readiness_matrix",
             "create_live_execute_phase_gate",
@@ -48,6 +49,7 @@ def run_from_args(argv: list[str] | None = None) -> int:
                 "create_readiness_matrix_artifact": artifacts["create_readiness_matrix"],
                 "create_live_execute_phase_gate_artifact": artifacts["create_live_execute_phase_gate"],
                 "create_adapter_review_pack_artifact": artifacts["create_adapter_review_pack"],
+                "create_execute_artifact": artifacts["create_execute"],
             }
         },
         runs_dir=config.runs_dir,
@@ -63,6 +65,7 @@ def run_from_args(argv: list[str] | None = None) -> int:
                 "status": result["status"],
                 "overall_status": result["overall_status"],
                 "summary": result["summary"],
+                "creation_boundary_summary": result["creation_boundary_summary"],
                 "artifact_path": result["artifact_path"],
             },
             ensure_ascii=False,
