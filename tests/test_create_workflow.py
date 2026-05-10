@@ -1923,6 +1923,43 @@ def test_create_provider_evidence_review_flags_unreviewed_phase2_evidence():
         ],
         "next_command": "PYTHONPATH=src python3 scripts/run_create_provider_evidence_review.py --config configs/runtime.example.json --policy policies/strategy.example.json",
     }
+    assert result["evidence_worksheet"]["summary"] == {
+        "worksheet_version": "phase2.provider_evidence_worksheet.v1",
+        "row_count": 18,
+        "requires_evidence_review_count": 10,
+        "requires_local_confirmation_count": 4,
+        "requires_provider_field_count": 4,
+        "ready_row_count": 0,
+    }
+    assert result["evidence_worksheet"]["rows"][0] == {
+        "operation": "create_project",
+        "internal_field": "advertiser_id",
+        "provider_field": "advertiser_id",
+        "mapping_kind": "direct",
+        "evidence_status": "needs_evidence_review",
+        "evidence_refs": ["oceanengine_openapi_project_create_request"],
+        "fill_required": [
+            "source_url_or_captured_request_ref",
+            "reviewed_by",
+            "reviewed_at",
+            "set_evidence_reviewed_true_after_manual_check",
+            "set_field_verified_true_after_evidence_check",
+        ],
+        "do_not_change": [
+            "execution_enabled",
+            "external_api_calls",
+            "actions",
+        ],
+    }
+    local_only_row = [
+        row
+        for row in result["evidence_worksheet"]["rows"]
+        if row["operation"] == "create_unit" and row["internal_field"] == "project_key"
+    ][0]
+    assert local_only_row["fill_required"] == [
+        "confirm_field_is_local_only",
+        "set_local_only_confirmed_true_after_manual_check",
+    ]
     assert result["violations"] == []
     assert result["actions"] == []
 
@@ -1981,6 +2018,8 @@ def test_create_provider_evidence_review_cli_uses_policy_config(tmp_path: Path, 
     assert artifact["phase"] == "phase2_preparation"
     assert artifact["summary"]["evidence_catalog_path"] == "configs/provider-evidence/oceanengine.create.phase2-review.example.json"
     assert output["operator_guide"]["status"] == "needs_review"
+    assert output["evidence_worksheet_summary"]["row_count"] == 18
+    assert artifact["evidence_worksheet"]["summary"]["requires_evidence_review_count"] == 10
     assert artifact["execution_enabled"] is False
     assert artifact["external_api_calls"] == 0
     assert artifact["actions"] == []

@@ -45,6 +45,7 @@ It also reports:
 
 - `evidence_status_counts`: 证据状态计数, grouped by unresolved reason.
 - `operator_guide`: 操作员指南, the exact human next steps.
+- `evidence_worksheet`: 证据填写清单, one row per reviewed field.
 
 Common status meanings:
 
@@ -92,8 +93,23 @@ Current expected result:
 - 0 evidence entries reviewed.
 - 18 fields unresolved.
 - `operator_guide.status=needs_review`.
+- `evidence_worksheet.summary.row_count=18`.
 - live payload development remains not ready.
 - live execute remains not ready.
+
+## Evidence Worksheet
+
+`evidence_worksheet` is a human-fillable checklist. It groups each field into a
+row and tells the operator what must be filled before that row can be marked
+ready.
+
+Important fields:
+
+- `fill_required`: 需要补的内容, such as `source_url` or reviewer metadata.
+- `do_not_change`: 禁止改动的安全字段, such as `execution_enabled`.
+- `ready_row_count`: 已就绪字段行数.
+
+The worksheet is not an approval artifact and cannot enable live execution.
 
 ## Next Manual Review
 

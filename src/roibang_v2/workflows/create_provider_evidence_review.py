@@ -282,6 +282,92 @@ def _operator_guide(*, status: str) -> dict[str, Any]:
     }
 
 
+def _fill_required(status: str) -> list[str]:
+    if status == "needs_evidence_review":
+        return [
+            "source_url_or_captured_request_ref",
+            "reviewed_by",
+            "reviewed_at",
+            "set_evidence_reviewed_true_after_manual_check",
+            "set_field_verified_true_after_evidence_check",
+        ]
+    if status == "local_only_needs_confirmation":
+        return [
+            "confirm_field_is_local_only",
+            "set_local_only_confirmed_true_after_manual_check",
+        ]
+    if status == "needs_provider_field":
+        return [
+            "provider_field",
+            "mapping_kind",
+            "evidence_refs",
+        ]
+    if status == "needs_evidence_ref":
+        return [
+            "evidence_refs",
+            "source_url_or_captured_request_ref",
+        ]
+    if status == "missing_evidence":
+        return [
+            "add_missing_evidence_catalog_entry",
+            "source_url_or_captured_request_ref",
+            "reviewed_by",
+            "reviewed_at",
+        ]
+    if status == "needs_mapping_verification":
+        return ["set_field_verified_true_after_evidence_check"]
+    return []
+
+
+def _evidence_worksheet(sections: list[dict[str, Any]]) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    for section in sections:
+        operation = str(section.get("operation") or "")
+        for field in section.get("fields") if isinstance(section.get("fields"), list) else []:
+            if not isinstance(field, dict):
+                continue
+            status = str(field.get("evidence_status") or "")
+            rows.append(
+                {
+                    "operation": operation,
+                    "internal_field": str(field.get("internal_field") or ""),
+                    "provider_field": str(field.get("provider_field") or ""),
+                    "mapping_kind": str(field.get("mapping_kind") or ""),
+                    "evidence_status": status,
+                    "evidence_refs": list(field.get("evidence_refs") or []),
+                    "fill_required": _fill_required(status),
+                    "do_not_change": [
+                        "execution_enabled",
+                        "external_api_calls",
+                        "actions",
+                    ],
+                }
+            )
+    summary = {
+        "worksheet_version": "phase2.provider_evidence_worksheet.v1",
+        "row_count": len(rows),
+        "requires_evidence_review_count": sum(
+            1 for row in rows if str(row.get("evidence_status") or "") == "needs_evidence_review"
+        ),
+        "requires_local_confirmation_count": sum(
+            1 for row in rows if str(row.get("evidence_status") or "") == "local_only_needs_confirmation"
+        ),
+        "requires_provider_field_count": sum(
+            1 for row in rows if str(row.get("evidence_status") or "") == "needs_provider_field"
+        ),
+        "ready_row_count": sum(1 for row in rows if str(row.get("evidence_status") or "") == "verified"),
+    }
+    return {
+        "summary": summary,
+        "instructions": [
+            "逐行补齐 fill_required 里列出的字段或确认项。",
+            "不要修改 do_not_change 里的安全字段。",
+            "补完后重新运行 create_provider_evidence_review。",
+        ],
+        "rows": rows,
+    }
+
+
 def build_create_provider_evidence_review(*, policy: dict[str, Any]) -> dict[str, Any]:
     field_map = load_provider_field_map(policy)
     field_contract = provider_field_map_contract(field_map, policy)
@@ -312,6 +398,7 @@ def build_create_provider_evidence_review(*, policy: dict[str, Any]) -> dict[str
         "provider_evidence_catalog": catalog,
         "evidence_review_sections": sections,
         "unresolved_evidence_items": _unresolved_items(sections),
+        "evidence_worksheet": _evidence_worksheet(sections),
         "operator_guide": _operator_guide(status=status),
         "violations": violations,
         "actions": [],
