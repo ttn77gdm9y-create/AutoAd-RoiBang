@@ -738,7 +738,6 @@ def test_create_dry_run_outputs_non_executable_project_unit_material_combination
         "payload": {
             "advertiser_id": "target-1",
             "project_name": "0508_郭靖_勇者突进_微小每付7R通投_B80C4C430_01",
-            "project_type": "WX_PAY_7R_GENERAL",
             "daily_budget": 300.0,
             "field_defaults": {
                 "landing_type": "MICRO_GAME",
@@ -764,10 +763,11 @@ def test_create_dry_run_outputs_non_executable_project_unit_material_combination
     assert result["payload_schema"]["required_fields"]["create_project"] == [
         "advertiser_id",
         "project_name",
-        "project_type",
         "daily_budget",
         "field_defaults",
     ]
+    assert task["project_type"] == "WX_PAY_7R_GENERAL"
+    assert "project_type" not in task["redacted_payload_drafts"][0]["payload"]
     assert result["payload_schema"]["required_fields"]["create_unit"] == [
         "advertiser_id",
         "project_key",
@@ -1124,7 +1124,7 @@ def test_create_dry_run_can_load_provider_field_map_from_json_config(tmp_path: P
     assert result["provider_payload_drafts"][0]["field_mapping_applied"] is True
     assert result["provider_payload_drafts"][0]["payload"]["advertiser_id"] == "target-1"
     assert result["provider_payload_drafts"][0]["payload"]["name"] == "0508_郭靖_勇者突进_微小每付7R通投_B80C4C430_01"
-    assert result["provider_payload_drafts"][0]["payload"]["landing_type"] == "WX_PAY_7R_GENERAL"
+    assert "landing_type" not in result["provider_payload_drafts"][0]["payload"]
     assert result["provider_payload_drafts"][0]["payload"]["budget"] == 300.0
     assert "project_name" not in result["provider_payload_drafts"][0]["payload"]
     assert "daily_budget" not in result["provider_payload_drafts"][0]["payload"]
@@ -2033,25 +2033,16 @@ def test_create_provider_evidence_review_flags_unreviewed_phase2_evidence():
         "review_version": "phase2.project_type_local_usage_review.v1",
         "internal_field": "project_type",
         "local_usage_evidence_count": 6,
-        "blocking_item_count": 2,
+        "blocking_item_count": 0,
         "manual_confirmation_required": True,
-        "ready_to_mark_local_only": False,
+        "ready_to_mark_local_only": True,
     }
     assert result["project_type_local_usage_review"]["local_usage_evidence"][0] == {
         "usage_kind": "template_selector",
         "source": "create_phase2_yzt_create_preview._project_type",
         "meaning": "从项目模板名称推导本地 project_type，用于区分 WX_PAY 和 WX_PAY_7R。",
     }
-    assert result["project_type_local_usage_review"]["blocking_items"] == [
-        {
-            "source": "create_payload_schema.disabled_create_payload_schema.required_fields.create_project",
-            "reason": "禁用版 schema 仍把 project_type 列在 create_project required_fields 中。",
-        },
-        {
-            "source": "create_dry_run._task_payload_drafts.create_project.payload",
-            "reason": "dry-run 草稿仍把 project_type 放在 disabled_schema_only payload 中。",
-        },
-    ]
+    assert result["project_type_local_usage_review"]["blocking_items"] == []
     assert result["violations"] == []
     assert result["actions"] == []
 
@@ -2151,11 +2142,11 @@ def test_create_provider_evidence_review_cli_uses_policy_config(tmp_path: Path, 
     assert output["evidence_worksheet_summary"]["row_count"] == 18
     assert output["provider_field_gap_summary"]["gap_count"] == 4
     assert output["provider_field_gap_resolution_summary"]["gap_count"] == 4
-    assert output["project_type_local_usage_summary"]["ready_to_mark_local_only"] is False
+    assert output["project_type_local_usage_summary"]["ready_to_mark_local_only"] is True
     assert artifact["evidence_worksheet"]["summary"]["requires_evidence_review_count"] == 10
     assert artifact["provider_field_gap_report"]["summary"]["operation_counts"]["create_project"] == 2
     assert artifact["provider_field_gap_resolution_plan"]["summary"]["manual_review_required"] is True
-    assert artifact["project_type_local_usage_review"]["summary"]["blocking_item_count"] == 2
+    assert artifact["project_type_local_usage_review"]["summary"]["blocking_item_count"] == 0
     assert artifact["execution_enabled"] is False
     assert artifact["external_api_calls"] == 0
     assert artifact["actions"] == []
@@ -7320,7 +7311,6 @@ def test_create_execute_is_hard_blocked_in_phase1_even_after_recorded_approval(t
                 "create_project": [
                     "advertiser_id",
                     "project_name",
-                    "project_type",
                     "daily_budget",
                     "field_defaults",
                 ],

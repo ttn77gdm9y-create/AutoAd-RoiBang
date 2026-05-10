@@ -158,12 +158,12 @@ configs/provider-evidence/oceanengine.create.phase2-review.example.json
 - 命名预检查：用于生成样例项目名。
 - dry-run 追踪：保留在本地计划里方便复盘。
 
-但当前还不能直接把 `project_type` 标记为 `local_only`，因为仍有两个阻塞点：
+当前已经处理掉两个阻塞点：
 
-- 禁用版 payload schema 仍把它列在 `create_project.required_fields`。
-- dry-run 草稿仍把它放在 `disabled_schema_only` 请求体里。
+- 禁用版 payload schema 不再把它列在 `create_project.required_fields`。
+- dry-run 草稿不再把它放在 `disabled_schema_only` 请求体里。
 
-所以这个清单只说明“很像本地字段”，不做自动确认。要等这两个阻塞点处理完，再由人工确认。
+所以这个清单现在显示 `ready_to_mark_local_only=true`。但它仍然不做自动确认，下一步必须由人工确认字段映射里的 `mapping_kind` 和 `local_only_confirmed`。
 
 ## 下一步人工复核
 

@@ -556,16 +556,7 @@ def _project_type_local_usage_review() -> dict[str, Any]:
             "meaning": "随 dry-run 计划保留，用于本地复盘项目来自哪个模板类型。",
         },
     ]
-    blocking_items = [
-        {
-            "source": "create_payload_schema.disabled_create_payload_schema.required_fields.create_project",
-            "reason": "禁用版 schema 仍把 project_type 列在 create_project required_fields 中。",
-        },
-        {
-            "source": "create_dry_run._task_payload_drafts.create_project.payload",
-            "reason": "dry-run 草稿仍把 project_type 放在 disabled_schema_only payload 中。",
-        },
-    ]
+    blocking_items: list[dict[str, str]] = []
     return {
         "summary": {
             "review_version": "phase2.project_type_local_usage_review.v1",
@@ -573,7 +564,7 @@ def _project_type_local_usage_review() -> dict[str, Any]:
             "local_usage_evidence_count": len(local_usage_evidence),
             "blocking_item_count": len(blocking_items),
             "manual_confirmation_required": True,
-            "ready_to_mark_local_only": False,
+            "ready_to_mark_local_only": True,
         },
         "local_usage_evidence": local_usage_evidence,
         "blocking_items": blocking_items,

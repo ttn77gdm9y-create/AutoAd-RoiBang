@@ -146,7 +146,6 @@ def _task_payload_drafts(project: dict[str, Any], *, payload_schema: dict[str, A
             "payload": {
                 "advertiser_id": str(project.get("advertiser_id") or ""),
                 "project_name": str(project.get("project_name") or ""),
-                "project_type": str(project.get("project_type") or ""),
                 "daily_budget": float(project.get("daily_budget") or 0),
                 "field_defaults": project.get("field_defaults") if isinstance(project.get("field_defaults"), dict) else {},
             },
