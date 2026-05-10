@@ -294,6 +294,37 @@ def bootstrap_database(database_path: str | Path) -> None:
               ON create_provider_id_ledger (plan_id, entity_type)
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS create_material_bind_ledger (
+              bind_key TEXT PRIMARY KEY,
+              source_advertiser_id TEXT NOT NULL,
+              target_advertiser_ids_json TEXT NOT NULL DEFAULT '[]',
+              source_video_ids_json TEXT NOT NULL DEFAULT '[]',
+              provider_task_id TEXT NOT NULL DEFAULT '',
+              plan_id TEXT NOT NULL DEFAULT '',
+              request_id TEXT NOT NULL DEFAULT '',
+              status TEXT NOT NULL,
+              source_workflow TEXT NOT NULL,
+              execution_enabled INTEGER NOT NULL,
+              response_payload_json TEXT NOT NULL DEFAULT '{}',
+              first_seen_at TEXT NOT NULL,
+              last_seen_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_create_material_bind_ledger_plan
+              ON create_material_bind_ledger (plan_id, status)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_create_material_bind_ledger_source
+              ON create_material_bind_ledger (source_advertiser_id, status)
+            """
+        )
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:

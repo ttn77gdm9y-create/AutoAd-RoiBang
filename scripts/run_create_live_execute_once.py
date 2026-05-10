@@ -129,6 +129,7 @@ def run_from_args(argv: list[str] | None = None) -> int:
                 "blocking_reasons": result["blocking_reasons"],
                 "transport_call_count": result["transport_call_count"],
                 "idempotency": result["idempotency"],
+                "material_bind_records": result["material_bind_records"],
                 "artifact_path": result["artifact_path"],
             },
             ensure_ascii=False,

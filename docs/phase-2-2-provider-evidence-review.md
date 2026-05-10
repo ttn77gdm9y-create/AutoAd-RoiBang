@@ -379,6 +379,7 @@ PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_live_execute
 - `live_execute_enabled=true`：本次确实进入真实执行路径。
 - `external_api_calls`：真实发送层调用次数。
 - `provider_id_records`：平台返回的 `project_id`（平台项目 ID）和 `promotion_id`（平台单元 ID）写入本地台账的记录。
+- `material_bind_records`：`bind_material`（素材推送）成功后的结果台账记录。
 
 失败策略保持不变：创建项目失败就不创建单元；创建单元失败就不做素材推送；素材推送失败则停止并保留已创建的 ID 供人工复核。变更请求不自动 retry（重试），避免重复创建。
 
@@ -389,7 +390,10 @@ PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_live_execute
 - 执行前先查 SQLite（本地数据库）里的 `create_provider_id_ledger`（平台 ID 台账）。
 - 如果某个 `create_project`（创建项目）已有 active（有效）`project_id`（平台项目 ID），就跳过这个项目创建，不再调用真实接口。
 - 如果某个 `create_unit`（创建单元）已有 active（有效）`promotion_id`（平台单元 ID），就跳过这个单元创建，不再调用真实接口。
-- 跳过记录会写入 `idempotency.skipped_provider_id_records`，便于人工复核。
+- 项目和单元跳过记录会写入 `idempotency.skipped_provider_id_records`，便于人工复核。
+- 素材推送成功后会写入 `create_material_bind_ledger`（素材推送台账）。
+- 如果某次 `bind_material`（素材推送）已有 active（有效）台账记录，就跳过这次素材推送，不再调用真实接口。
+- 素材推送跳过记录会写入 `idempotency.skipped_material_bind_records`。
 - 后续 payload（请求体）里的 lookup placeholder（本地占位符）会继续从 SQLite 台账解析成真实平台 ID。
 
-这意味着首单执行如果中途失败，下一次运行可以从已写入台账的位置继续，不会重复创建已经成功的平台项目或单元。当前幂等范围先覆盖项目和单元；`bind_material`（素材推送）后续进入小批量前还会补素材推送结果台账，进一步减少重复推送风险。
+这意味着首单执行如果中途失败，下一次运行可以从已写入台账的位置继续，不会重复创建已经成功的平台项目、单元，也不会重复推送已经记录成功的同一组素材。

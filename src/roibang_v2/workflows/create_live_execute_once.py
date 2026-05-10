@@ -5,6 +5,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 from roibang_v2.runs import write_run_artifact
+from roibang_v2.workflows.create_material_bind_ledger import (
+    existing_material_bind_result,
+    record_create_material_bind_from_payload,
+)
 from roibang_v2.workflows.create_provider_id_ledger import (
     record_create_provider_id,
     resolve_provider_payload_drafts,
@@ -74,7 +78,10 @@ def _blocked_result(
             "status": "not_checked",
             "skipped_existing_provider_id_count": 0,
             "skipped_provider_id_records": [],
+            "skipped_existing_material_bind_count": 0,
+            "skipped_material_bind_records": [],
         },
+        "material_bind_records": [],
         "runner_result": None,
         "failure": None,
         "actions": [],
@@ -198,6 +205,17 @@ def _promotion_id(response: dict[str, Any]) -> str:
     return str(data.get("promotion_id") or response.get("promotion_id") or "")
 
 
+def _material_bind_task_id(response: dict[str, Any]) -> str:
+    data = _response_data(response)
+    return str(
+        data.get("task_id")
+        or data.get("bind_task_id")
+        or response.get("task_id")
+        or response.get("bind_task_id")
+        or ""
+    )
+
+
 def _safe_response(response: dict[str, Any]) -> dict[str, Any]:
     return {
         "code": _response_code(response),
@@ -290,6 +308,64 @@ def _split_existing_provider_ids(
     return pending, skipped
 
 
+def _split_existing_material_binds(
+    *,
+    db_path: str | Path,
+    drafts: list[dict[str, Any]],
+) -> tuple[list[tuple[int, dict[str, Any]]], list[dict[str, Any]]]:
+    pending: list[tuple[int, dict[str, Any]]] = []
+    skipped: list[dict[str, Any]] = []
+    for index, draft in enumerate(drafts):
+        payload = draft.get("payload") if isinstance(draft.get("payload"), dict) else {}
+        existing = existing_material_bind_result(db_path=db_path, payload=payload)
+        if existing is None:
+            pending.append((index, draft))
+            continue
+        skipped.append(
+            {
+                "operation": "bind_material",
+                "index": index,
+                "bind_key": str(existing.get("bind_key") or ""),
+                "provider_task_id": str(existing.get("provider_task_id") or ""),
+                "status": "skipped_existing_material_bind",
+            }
+        )
+    return pending, skipped
+
+
+def _record_material_bind(
+    *,
+    db_path: str | Path,
+    create_execute_artifact: dict[str, Any],
+    payload: dict[str, Any],
+    response: dict[str, Any],
+) -> dict[str, Any]:
+    summary = _summary(create_execute_artifact)
+    return record_create_material_bind_from_payload(
+        db_path=db_path,
+        payload=payload,
+        provider_task_id=_material_bind_task_id(response),
+        plan_id=str(summary.get("plan_id") or ""),
+        request_id=str(summary.get("request_id") or ""),
+        source_workflow="create_live_execute_once",
+        response_payload=_safe_response(response),
+    )
+
+
+def _idempotency_summary(
+    *,
+    skipped_provider_id_records: list[dict[str, Any]],
+    skipped_material_bind_records: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "status": "checked",
+        "skipped_existing_provider_id_count": len(skipped_provider_id_records),
+        "skipped_provider_id_records": skipped_provider_id_records,
+        "skipped_existing_material_bind_count": len(skipped_material_bind_records),
+        "skipped_material_bind_records": skipped_material_bind_records,
+    }
+
+
 def _resumable_create_http_run(
     *,
     create_execute_artifact: dict[str, Any],
@@ -300,26 +376,35 @@ def _resumable_create_http_run(
 ) -> dict[str, Any]:
     endpoints = _endpoints(policy, create_live_payload_adapter_scaffold_artifact)
     provider_id_records: list[dict[str, Any]] = []
+    material_bind_records: list[dict[str, Any]] = []
     skipped_provider_id_records: list[dict[str, Any]] = []
+    skipped_material_bind_records: list[dict[str, Any]] = []
     ordered_steps: list[dict[str, Any]] = []
     transport_call_count = 0
     sequence = 0
 
     for operation in OPERATION_ORDER:
         drafts = _drafts_for_operation(create_execute_artifact, operation)
-        pending, skipped = _split_existing_provider_ids(
-            db_path=db_path,
-            create_execute_artifact=create_execute_artifact,
-            operation=operation,
-            drafts=drafts,
-        )
-        skipped_provider_id_records.extend(skipped)
+        if operation == "bind_material":
+            pending, skipped_binds = _split_existing_material_binds(db_path=db_path, drafts=drafts)
+            skipped_material_bind_records.extend(skipped_binds)
+            skipped = skipped_binds
+            skipped_status = "skipped_existing_material_bind"
+        else:
+            pending, skipped = _split_existing_provider_ids(
+                db_path=db_path,
+                create_execute_artifact=create_execute_artifact,
+                operation=operation,
+                drafts=drafts,
+            )
+            skipped_provider_id_records.extend(skipped)
+            skipped_status = "skipped_existing_provider_id"
         if drafts and not pending:
             ordered_steps.append(
                 {
                     "operation": operation,
                     "planned_count": len(drafts),
-                    "status": "skipped_existing_provider_id",
+                    "status": skipped_status,
                     "test_transport_call_count": 0,
                 }
             )
@@ -334,6 +419,7 @@ def _resumable_create_http_run(
                 "blocking_reasons": ["lookup placeholders unresolved before operation"],
                 "ordered_steps": ordered_steps,
                 "provider_id_records": provider_id_records,
+                "material_bind_records": material_bind_records,
                 "transport_call_count": transport_call_count,
                 "external_api_calls": transport_call_count,
                 "failure": {
@@ -342,11 +428,10 @@ def _resumable_create_http_run(
                     "message": "lookup placeholders unresolved before operation",
                     "code": -1,
                 },
-                "idempotency": {
-                    "status": "checked",
-                    "skipped_existing_provider_id_count": len(skipped_provider_id_records),
-                    "skipped_provider_id_records": skipped_provider_id_records,
-                },
+                "idempotency": _idempotency_summary(
+                    skipped_provider_id_records=skipped_provider_id_records,
+                    skipped_material_bind_records=skipped_material_bind_records,
+                ),
             }
 
         resolved_drafts = _rows(resolution.get("resolved_provider_payload_drafts"))
@@ -371,14 +456,14 @@ def _resumable_create_http_run(
                     "blocking_reasons": [],
                     "ordered_steps": ordered_steps,
                     "provider_id_records": provider_id_records,
+                    "material_bind_records": material_bind_records,
                     "transport_call_count": transport_call_count,
                     "external_api_calls": transport_call_count,
                     "failure": _failure(operation, original_index, response),
-                    "idempotency": {
-                        "status": "checked",
-                        "skipped_existing_provider_id_count": len(skipped_provider_id_records),
-                        "skipped_provider_id_records": skipped_provider_id_records,
-                    },
+                    "idempotency": _idempotency_summary(
+                        skipped_provider_id_records=skipped_provider_id_records,
+                        skipped_material_bind_records=skipped_material_bind_records,
+                    ),
                 }
             record = _record_provider_id(
                 db_path=db_path,
@@ -396,6 +481,7 @@ def _resumable_create_http_run(
                         "blocking_reasons": [],
                         "ordered_steps": ordered_steps,
                         "provider_id_records": provider_id_records,
+                        "material_bind_records": material_bind_records,
                         "transport_call_count": transport_call_count,
                         "external_api_calls": transport_call_count,
                         "failure": {
@@ -404,12 +490,21 @@ def _resumable_create_http_run(
                             "message": str(record.get("status") or "provider id record failed"),
                             "code": -1,
                         },
-                        "idempotency": {
-                            "status": "checked",
-                            "skipped_existing_provider_id_count": len(skipped_provider_id_records),
-                            "skipped_provider_id_records": skipped_provider_id_records,
-                        },
+                        "idempotency": _idempotency_summary(
+                            skipped_provider_id_records=skipped_provider_id_records,
+                            skipped_material_bind_records=skipped_material_bind_records,
+                        ),
                     }
+            if operation == "bind_material":
+                bind_payload = draft.get("payload") if isinstance(draft.get("payload"), dict) else {}
+                material_bind_records.append(
+                    _record_material_bind(
+                        db_path=db_path,
+                        create_execute_artifact=create_execute_artifact,
+                        payload=bind_payload,
+                        response=response,
+                    )
+                )
         ordered_steps.append(
             {
                 "operation": operation,
@@ -425,14 +520,14 @@ def _resumable_create_http_run(
         "blocking_reasons": [],
         "ordered_steps": ordered_steps,
         "provider_id_records": provider_id_records,
+        "material_bind_records": material_bind_records,
         "transport_call_count": transport_call_count,
         "external_api_calls": transport_call_count,
         "failure": None,
-        "idempotency": {
-            "status": "checked",
-            "skipped_existing_provider_id_count": len(skipped_provider_id_records),
-            "skipped_provider_id_records": skipped_provider_id_records,
-        },
+        "idempotency": _idempotency_summary(
+            skipped_provider_id_records=skipped_provider_id_records,
+            skipped_material_bind_records=skipped_material_bind_records,
+        ),
     }
 
 
@@ -488,6 +583,7 @@ def build_create_live_execute_once(
         "blocking_reasons": list(runner_result.get("blocking_reasons") or []),
         "ordered_steps": list(runner_result.get("ordered_steps") or []),
         "provider_id_records": list(runner_result.get("provider_id_records") or []),
+        "material_bind_records": list(runner_result.get("material_bind_records") or []),
         "transport_call_count": int(runner_result.get("transport_call_count") or 0),
         "idempotency": runner_result.get("idempotency")
         if isinstance(runner_result.get("idempotency"), dict)
@@ -495,6 +591,8 @@ def build_create_live_execute_once(
             "status": "not_checked",
             "skipped_existing_provider_id_count": 0,
             "skipped_provider_id_records": [],
+            "skipped_existing_material_bind_count": 0,
+            "skipped_material_bind_records": [],
         },
         "runner_result": runner_result,
         "failure": runner_result.get("failure"),

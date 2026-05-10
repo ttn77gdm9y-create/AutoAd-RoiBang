@@ -4,6 +4,7 @@ import sqlite3
 from pathlib import Path
 
 from roibang_v2.db.bootstrap import bootstrap_database
+from roibang_v2.workflows.create_material_bind_ledger import record_create_material_bind_result
 from roibang_v2.workflows.create_provider_id_ledger import record_create_provider_id
 from roibang_v2.workflows.create_live_execute_once import (
     build_create_live_execute_once,
@@ -323,6 +324,16 @@ def test_create_live_execute_once_runs_create_http_transport_in_order(tmp_path: 
         ("project", "target-1-p001", "project-001"),
         ("promotion", "target-1-p001-u01", "promotion-001"),
     ]
+    with sqlite3.connect(db_path) as conn:
+        bind_rows = conn.execute(
+            """
+            SELECT source_advertiser_id, target_advertiser_ids_json, source_video_ids_json, provider_task_id, status
+            FROM create_material_bind_ledger
+            """
+        ).fetchall()
+    assert bind_rows == [
+        ("source-1", '["target-1"]', '["video-1"]', "bind-001", "active"),
+    ]
 
 
 def test_create_live_execute_once_skips_existing_project_and_resumes_unit(tmp_path: Path):
@@ -443,6 +454,72 @@ def test_create_live_execute_once_skips_existing_project_and_unit_then_binds_mat
         "skipped_existing_provider_id",
         "skipped_existing_provider_id",
         "completed",
+    ]
+
+
+def test_create_live_execute_once_skips_existing_material_bind(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+    record_create_provider_id(
+        db_path=db_path,
+        entity_type="project",
+        local_key="target-1-p001",
+        provider_id="project-existing",
+        plan_id="plan-1",
+        request_id="req-1",
+        advertiser_id="target-1",
+        source_workflow="create_live_execute_once",
+    )
+    record_create_provider_id(
+        db_path=db_path,
+        entity_type="promotion",
+        local_key="target-1-p001-u01",
+        provider_id="promotion-existing",
+        plan_id="plan-1",
+        request_id="req-1",
+        advertiser_id="target-1",
+        parent_local_key="target-1-p001",
+        source_workflow="create_live_execute_once",
+    )
+    record_create_material_bind_result(
+        db_path=db_path,
+        source_advertiser_id="source-1",
+        target_advertiser_ids=["target-1"],
+        source_video_ids=["video-1"],
+        provider_task_id="bind-existing",
+        plan_id="plan-1",
+        request_id="req-1",
+        source_workflow="create_live_execute_once",
+        response_payload={"code": 0, "data_keys": ["task_id"]},
+    )
+    calls: list[dict] = []
+
+    def fake_transport(call: dict) -> dict:
+        calls.append(call)
+        raise AssertionError(f"{call['operation']} must not be called")
+
+    result = build_create_live_execute_once(
+        create_live_execution_pack_artifact=_execution_pack_artifact(ready=True),
+        create_execute_artifact=_execute_artifact(),
+        create_first_live_runbook_artifact=_runbook_artifact(),
+        create_live_payload_adapter_scaffold_artifact=_scaffold_artifact(),
+        create_live_approval_artifact=_approval_artifact(),
+        policy=_policy(),
+        runtime={"execution_enabled": True, "external_api_enabled": True},
+        db_path=db_path,
+        transport=fake_transport,
+    )
+
+    assert result["ok"] is True
+    assert result["status"] == "create_http_completed"
+    assert result["external_api_calls"] == 0
+    assert calls == []
+    assert result["idempotency"]["skipped_existing_provider_id_count"] == 2
+    assert result["idempotency"]["skipped_existing_material_bind_count"] == 1
+    assert [step["status"] for step in result["ordered_steps"]] == [
+        "skipped_existing_provider_id",
+        "skipped_existing_provider_id",
+        "skipped_existing_material_bind",
     ]
 
 
