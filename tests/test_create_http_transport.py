@@ -45,13 +45,14 @@ def test_create_http_transport_posts_allowed_endpoint_and_redacts_audit(monkeypa
     monkeypatch.setenv("ROIBANG_TEST_ACCESS_TOKEN", "secret-token")
     calls = []
 
-    def fake_opener(url, body, headers, timeout_seconds):
+    def fake_opener(url, body, headers, timeout_seconds, method):
         calls.append(
             {
                 "url": url,
                 "body": body,
                 "headers": headers,
                 "timeout_seconds": timeout_seconds,
+                "method": method,
             }
         )
         return HttpResponse(200, {"code": 0, "data": {"project_id": "project-001"}})
@@ -89,6 +90,7 @@ def test_create_http_transport_posts_allowed_endpoint_and_redacts_audit(monkeypa
                 "Content-Type": "application/json",
             },
             "timeout_seconds": 7,
+            "method": "POST",
         }
     ]
     assert audit["request"]["headers"] == {
@@ -96,6 +98,88 @@ def test_create_http_transport_posts_allowed_endpoint_and_redacts_audit(monkeypa
         "Content-Type": "application/json",
     }
     assert audit["approval"] == {"approval_id": "approval-001", "approved_by": "tester"}
+    assert "secret-token" not in json.dumps(audit, ensure_ascii=False)
+
+
+def test_create_http_transport_gets_target_material_lookup_and_redacts_audit(monkeypatch, tmp_path):
+    monkeypatch.setenv("ROIBANG_TEST_ACCESS_TOKEN", "secret-token")
+    calls = []
+
+    def fake_opener(url, body, headers, timeout_seconds, method):
+        calls.append(
+            {
+                "url": url,
+                "body": body,
+                "headers": headers,
+                "timeout_seconds": timeout_seconds,
+                "method": method,
+            }
+        )
+        return HttpResponse(
+            200,
+            {
+                "code": 0,
+                "data": {
+                    "list": [
+                        {
+                            "id": "target-video-001",
+                            "material_id": 12345,
+                            "video_cover_id": "target-cover-001",
+                        }
+                    ]
+                },
+            },
+        )
+
+    transport = build_create_http_transport(
+        {
+            "enabled": True,
+            "allow_mutation": True,
+            "approval_id": "approval-001",
+            "approved_by": "tester",
+            "token_env": "ROIBANG_TEST_ACCESS_TOKEN",
+            "base_url": "https://api.oceanengine.com",
+        },
+        response_dir=tmp_path,
+        opener=fake_opener,
+    )
+
+    response = transport(
+        {
+            "operation": "lookup_target_material",
+            "endpoint": "/open_api/2/file/video/get/",
+            "payload": {
+                "target_advertiser_id": "target-1",
+                "source_video_id": "source-video-1",
+                "material_id": "12345",
+            },
+        }
+    )
+    audit = json.loads((tmp_path / "create_http_responses.jsonl").read_text(encoding="utf-8").splitlines()[0])
+
+    assert response["data"]["list"][0]["id"] == "target-video-001"
+    assert calls == [
+        {
+            "url": (
+                "https://api.oceanengine.com/open_api/2/file/video/get/"
+                "?advertiser_id=target-1&filtering=%7B%22material_ids%22%3A%5B%2212345%22%5D%7D&page=1&page_size=10"
+            ),
+            "body": {
+                "advertiser_id": "target-1",
+                "filtering": {"material_ids": ["12345"]},
+                "page": 1,
+                "page_size": 10,
+            },
+            "headers": {
+                "Access-Token": "secret-token",
+                "Content-Type": "application/json",
+            },
+            "timeout_seconds": 20,
+            "method": "GET",
+        }
+    ]
+    assert audit["request"]["method"] == "GET"
+    assert audit["request"]["headers"]["Access-Token"] == "<redacted>"
     assert "secret-token" not in json.dumps(audit, ensure_ascii=False)
 
 
@@ -123,7 +207,7 @@ def test_create_http_transport_does_not_retry_mutating_requests(monkeypatch, tmp
     monkeypatch.setenv("ROIBANG_TEST_ACCESS_TOKEN", "secret-token")
     calls = {"count": 0}
 
-    def fake_opener(_url, _body, _headers, _timeout_seconds):
+    def fake_opener(_url, _body, _headers, _timeout_seconds, _method):
         calls["count"] += 1
         return HttpResponse(500, {"code": 500, "message": "server error"})
 

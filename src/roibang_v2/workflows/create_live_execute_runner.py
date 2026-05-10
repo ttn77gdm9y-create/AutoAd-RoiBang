@@ -335,6 +335,21 @@ def _response_data(response: dict[str, Any]) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
+def _first_response_item(response: dict[str, Any]) -> dict[str, Any]:
+    data = _response_data(response)
+    rows = data.get("list")
+    if isinstance(rows, list):
+        for row in rows:
+            if isinstance(row, dict):
+                return row
+    rows = response.get("list")
+    if isinstance(rows, list):
+        for row in rows:
+            if isinstance(row, dict):
+                return row
+    return {}
+
+
 def _project_id(response: dict[str, Any]) -> str:
     data = _response_data(response)
     return str(data.get("project_id") or response.get("project_id") or "")
@@ -347,15 +362,30 @@ def _promotion_id(response: dict[str, Any]) -> str:
 
 def _target_video_id(response: dict[str, Any]) -> str:
     data = _response_data(response)
-    return str(data.get("target_video_id") or data.get("video_id") or response.get("target_video_id") or response.get("video_id") or "")
+    item = _first_response_item(response)
+    return str(
+        data.get("target_video_id")
+        or data.get("video_id")
+        or item.get("target_video_id")
+        or item.get("video_id")
+        or item.get("id")
+        or response.get("target_video_id")
+        or response.get("video_id")
+        or ""
+    )
 
 
 def _target_video_cover_id(response: dict[str, Any]) -> str:
     data = _response_data(response)
+    item = _first_response_item(response)
     return str(
         data.get("target_video_cover_id")
         or data.get("video_cover_id")
         or data.get("cover_id")
+        or item.get("target_video_cover_id")
+        or item.get("video_cover_id")
+        or item.get("cover_id")
+        or item.get("image_id")
         or response.get("target_video_cover_id")
         or response.get("video_cover_id")
         or response.get("cover_id")

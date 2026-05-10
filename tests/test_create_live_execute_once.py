@@ -66,7 +66,18 @@ def _execute_artifact() -> dict:
             },
             {
                 "operation": "create_unit",
-                "payload": {"advertiser_id": "target-1", "project_id": "<lookup:target-1-p001>"},
+                "payload": {
+                    "advertiser_id": "target-1",
+                    "project_id": "<lookup:target-1-p001>",
+                    "promotion_materials": {
+                        "video_material_list": [
+                            {
+                                "video_id": "<lookup:target_video:target-1:video-1>",
+                                "video_cover_id": "<lookup:target_video_cover:target-1:video-1>",
+                            }
+                        ]
+                    },
+                },
                 "executable": False,
                 "live_api_payload": False,
             },
@@ -80,10 +91,20 @@ def _execute_artifact() -> dict:
                 "executable": False,
                 "live_api_payload": False,
             },
+            {
+                "operation": "lookup_target_material",
+                "payload": {
+                    "target_advertiser_id": "target-1",
+                    "source_video_id": "video-1",
+                    "material_id": "material-1",
+                },
+                "executable": False,
+                "live_api_payload": False,
+            },
         ],
         "resolved_payload_contract": {
             "status": "passed",
-            "checked_draft_count": 3,
+            "checked_draft_count": 4,
             "unresolved_lookup_count": 0,
             "executable_draft_count": 0,
             "live_payload_count": 0,
@@ -103,7 +124,11 @@ def _execute_artifact() -> dict:
                     "parent_local_key": "target-1-p001",
                 }
             ],
-            "required_before_create_unit": [{"local_key": "target-1-p001"}],
+            "required_before_create_unit": [
+                {"entity_type": "project", "local_key": "target-1-p001"},
+                {"entity_type": "target_video", "local_key": "target_video:target-1:video-1"},
+                {"entity_type": "target_video_cover", "local_key": "target_video_cover:target-1:video-1"},
+            ],
             "required_before_bind_material": [{"local_key": "target-1-p001-u01"}],
         },
     }
@@ -139,6 +164,7 @@ def _scaffold_artifact() -> dict:
             "endpoints": {
                 "create_project": "/open_api/2/project/create/",
                 "create_unit": "/open_api/2/promotion/create/",
+                "lookup_target_material": "/open_api/2/file/video/get/",
                 "bind_material": "/open_api/2/file/material/bind/",
             },
         },
@@ -173,6 +199,7 @@ def _policy() -> dict:
                 "endpoints": {
                     "create_project": "/open_api/2/project/create/",
                     "create_unit": "/open_api/2/promotion/create/",
+                    "lookup_target_material": "/open_api/2/file/video/get/",
                     "bind_material": "/open_api/2/file/material/bind/",
                 },
             },
@@ -284,6 +311,8 @@ def test_create_live_execute_once_runs_create_http_transport_in_order(tmp_path: 
             return {"code": 0, "data": {"promotion_id": "promotion-001"}}
         if call["operation"] == "bind_material":
             return {"code": 0, "data": {"task_id": "bind-001"}}
+        if call["operation"] == "lookup_target_material":
+            return {"code": 0, "data": {"target_video_id": "target-video-001", "target_video_cover_id": "target-cover-001"}}
         raise AssertionError(call["operation"])
 
     result = build_create_live_execute_once(
@@ -302,15 +331,31 @@ def test_create_live_execute_once_runs_create_http_transport_in_order(tmp_path: 
     assert result["status"] == "create_http_completed"
     assert result["execution_enabled"] is True
     assert result["live_execute_enabled"] is True
-    assert result["external_api_calls"] == 3
-    assert result["transport_call_count"] == 3
-    assert [call["operation"] for call in calls] == ["create_project", "bind_material", "create_unit"]
+    assert result["external_api_calls"] == 4
+    assert result["transport_call_count"] == 4
+    assert [call["operation"] for call in calls] == [
+        "create_project",
+        "bind_material",
+        "lookup_target_material",
+        "create_unit",
+    ]
     assert result["ordered_steps"] == [
         {"operation": "create_project", "planned_count": 1, "status": "completed", "test_transport_call_count": 1},
         {"operation": "bind_material", "planned_count": 1, "status": "completed", "test_transport_call_count": 1},
+        {
+            "operation": "lookup_target_material",
+            "planned_count": 1,
+            "status": "completed",
+            "test_transport_call_count": 1,
+        },
         {"operation": "create_unit", "planned_count": 1, "status": "completed", "test_transport_call_count": 1},
     ]
-    assert [row["provider_id"] for row in result["provider_id_records"]] == ["project-001", "promotion-001"]
+    assert [row["provider_id"] for row in result["provider_id_records"]] == [
+        "project-001",
+        "target-video-001",
+        "target-cover-001",
+        "promotion-001",
+    ]
 
     with sqlite3.connect(db_path) as conn:
         rows = conn.execute(
@@ -323,6 +368,8 @@ def test_create_live_execute_once_runs_create_http_transport_in_order(tmp_path: 
     assert rows == [
         ("project", "target-1-p001", "project-001"),
         ("promotion", "target-1-p001-u01", "promotion-001"),
+        ("target_video", "target_video:target-1:video-1", "target-video-001"),
+        ("target_video_cover", "target_video_cover:target-1:video-1", "target-cover-001"),
     ]
     with sqlite3.connect(db_path) as conn:
         bind_rows = conn.execute(
@@ -360,6 +407,8 @@ def test_create_live_execute_once_skips_existing_project_and_resumes_unit(tmp_pa
             return {"code": 0, "data": {"promotion_id": "promotion-001"}}
         if call["operation"] == "bind_material":
             return {"code": 0, "data": {"task_id": "bind-001"}}
+        if call["operation"] == "lookup_target_material":
+            return {"code": 0, "data": {"target_video_id": "target-video-001", "target_video_cover_id": "target-cover-001"}}
         raise AssertionError(call["operation"])
 
     result = build_create_live_execute_once(
@@ -376,8 +425,8 @@ def test_create_live_execute_once_skips_existing_project_and_resumes_unit(tmp_pa
 
     assert result["ok"] is True
     assert result["status"] == "create_http_completed"
-    assert result["external_api_calls"] == 2
-    assert [call["operation"] for call in calls] == ["bind_material", "create_unit"]
+    assert result["external_api_calls"] == 3
+    assert [call["operation"] for call in calls] == ["bind_material", "lookup_target_material", "create_unit"]
     assert result["idempotency"]["skipped_existing_provider_id_count"] == 1
     assert result["ordered_steps"][0] == {
         "operation": "create_project",
@@ -397,6 +446,8 @@ def test_create_live_execute_once_skips_existing_project_and_resumes_unit(tmp_pa
     assert rows == [
         ("project", "target-1-p001", "project-existing"),
         ("promotion", "target-1-p001-u01", "promotion-001"),
+        ("target_video", "target_video:target-1:video-1", "target-video-001"),
+        ("target_video_cover", "target_video_cover:target-1:video-1", "target-cover-001"),
     ]
 
 
@@ -432,6 +483,8 @@ def test_create_live_execute_once_skips_existing_project_and_unit_then_binds_mat
             raise AssertionError(f"{call['operation']} must not be created again")
         if call["operation"] == "bind_material":
             return {"code": 0, "data": {"task_id": "bind-001"}}
+        if call["operation"] == "lookup_target_material":
+            return {"code": 0, "data": {"target_video_id": "target-video-001", "target_video_cover_id": "target-cover-001"}}
         raise AssertionError(call["operation"])
 
     result = build_create_live_execute_once(
@@ -447,11 +500,12 @@ def test_create_live_execute_once_skips_existing_project_and_unit_then_binds_mat
     )
 
     assert result["ok"] is True
-    assert result["external_api_calls"] == 1
-    assert [call["operation"] for call in calls] == ["bind_material"]
+    assert result["external_api_calls"] == 2
+    assert [call["operation"] for call in calls] == ["bind_material", "lookup_target_material"]
     assert result["idempotency"]["skipped_existing_provider_id_count"] == 2
     assert [step["status"] for step in result["ordered_steps"]] == [
         "skipped_existing_provider_id",
+        "completed",
         "completed",
         "skipped_existing_provider_id",
     ]
@@ -479,6 +533,20 @@ def test_create_live_execute_once_skips_existing_material_bind(tmp_path: Path):
         request_id="req-1",
         advertiser_id="target-1",
         parent_local_key="target-1-p001",
+        source_workflow="create_live_execute_once",
+    )
+    record_create_provider_id(
+        db_path=db_path,
+        entity_type="target_video",
+        local_key="target_video:target-1:video-1",
+        provider_id="target-video-existing",
+        source_workflow="create_live_execute_once",
+    )
+    record_create_provider_id(
+        db_path=db_path,
+        entity_type="target_video_cover",
+        local_key="target_video_cover:target-1:video-1",
+        provider_id="target-cover-existing",
         source_workflow="create_live_execute_once",
     )
     record_create_material_bind_result(
@@ -514,11 +582,12 @@ def test_create_live_execute_once_skips_existing_material_bind(tmp_path: Path):
     assert result["status"] == "create_http_completed"
     assert result["external_api_calls"] == 0
     assert calls == []
-    assert result["idempotency"]["skipped_existing_provider_id_count"] == 2
+    assert result["idempotency"]["skipped_existing_provider_id_count"] == 4
     assert result["idempotency"]["skipped_existing_material_bind_count"] == 1
     assert [step["status"] for step in result["ordered_steps"]] == [
         "skipped_existing_provider_id",
         "skipped_existing_material_bind",
+        "skipped_existing_provider_id",
         "skipped_existing_provider_id",
     ]
 
@@ -576,4 +645,24 @@ def test_create_live_execute_once_fixed_script_keeps_default_runtime_blocked(tmp
     assert output["live_execute_enabled"] is False
     assert output["external_api_calls"] == 0
     assert output["transport_call_count"] == 0
+    assert artifact["actions"] == []
+
+
+def test_create_live_execute_once_fixed_script_reports_missing_artifacts_as_blocked(tmp_path: Path, capsys):
+    runtime_path = _runtime_config(tmp_path)
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_text(json.dumps(_policy(), ensure_ascii=False), encoding="utf-8")
+    module = _load_script("run_create_live_execute_once")
+
+    exit_code = module.run_from_args(["--config", str(runtime_path), "--policy", str(policy_path)])
+
+    output = json.loads(capsys.readouterr().out)
+    artifact = json.loads(Path(output["artifact_path"]).read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert output["workflow"] == "create_live_execute_once"
+    assert output["status"] == "blocked"
+    assert output["execution_enabled"] is False
+    assert output["external_api_calls"] == 0
+    assert output["transport_call_count"] == 0
+    assert "no create_live_execution_pack artifacts found" in output["blocking_reasons"][0]
     assert artifact["actions"] == []

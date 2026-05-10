@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from roibang_v2.config import load_json, load_runtime_config
+from roibang_v2.runs import write_run_artifact
 from roibang_v2.workflows.create_http_transport import build_create_http_transport
 from roibang_v2.workflows.create_live_execute_once import run_create_live_execute_once_request
 
@@ -59,6 +60,54 @@ def _should_construct_transport(*, execution_pack: dict, runtime_execution: bool
     return _execution_pack_ready(execution_pack) and runtime_execution and runtime_external_api
 
 
+def _blocked_missing_artifact(*, runs_dir: Path, message: str) -> dict:
+    payload = {
+        "ok": False,
+        "workflow": "create_live_execute_once",
+        "phase": "phase2_preparation",
+        "execution_enabled": False,
+        "live_execute_enabled": False,
+        "external_api_calls": 0,
+        "status": "blocked",
+        "blocking_reasons": [message],
+        "transport_call_count": 0,
+        "idempotency": {
+            "status": "not_checked",
+            "skipped_existing_provider_id_count": 0,
+            "skipped_provider_id_records": [],
+            "skipped_existing_material_bind_count": 0,
+            "skipped_material_bind_records": [],
+        },
+        "material_bind_records": [],
+        "actions": [],
+    }
+    payload["artifact_path"] = str(write_run_artifact(runs_dir, "create_live_execute_once", payload))
+    return payload
+
+
+def _print_result(result: dict) -> None:
+    print(
+        json.dumps(
+            {
+                "ok": result["ok"],
+                "workflow": result["workflow"],
+                "phase": result["phase"],
+                "execution_enabled": result["execution_enabled"],
+                "live_execute_enabled": result["live_execute_enabled"],
+                "external_api_calls": result["external_api_calls"],
+                "status": result["status"],
+                "blocking_reasons": result["blocking_reasons"],
+                "transport_call_count": result["transport_call_count"],
+                "idempotency": result["idempotency"],
+                "material_bind_records": result["material_bind_records"],
+                "artifact_path": result["artifact_path"],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
 def run_from_args(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run one-shot first live create only after execution pack is ready.")
     parser.add_argument("--config", default="configs/runtime.example.json")
@@ -72,21 +121,28 @@ def run_from_args(argv: list[str] | None = None) -> int:
 
     config = load_runtime_config(args.config)
     policy = load_json(args.policy)
-    execution_pack = _load_artifact(
-        _artifact_path(args.create_live_execution_pack_artifact, config.runs_dir, "create_live_execution_pack")
-    )
-    create_execute = _load_artifact(_artifact_path(args.create_execute_artifact, config.runs_dir, "create_execute"))
-    runbook = _load_artifact(
-        _artifact_path(args.create_first_live_runbook_artifact, config.runs_dir, "create_first_live_runbook")
-    )
-    scaffold = _load_artifact(
-        _artifact_path(
-            args.create_live_payload_adapter_scaffold_artifact,
-            config.runs_dir,
-            "create_live_payload_adapter_scaffold",
+    try:
+        execution_pack = _load_artifact(
+            _artifact_path(args.create_live_execution_pack_artifact, config.runs_dir, "create_live_execution_pack")
         )
-    )
-    approval = _load_artifact(_artifact_path(args.create_live_approval_artifact, config.runs_dir, "create_live_approval"))
+        create_execute = _load_artifact(_artifact_path(args.create_execute_artifact, config.runs_dir, "create_execute"))
+        runbook = _load_artifact(
+            _artifact_path(args.create_first_live_runbook_artifact, config.runs_dir, "create_first_live_runbook")
+        )
+        scaffold = _load_artifact(
+            _artifact_path(
+                args.create_live_payload_adapter_scaffold_artifact,
+                config.runs_dir,
+                "create_live_payload_adapter_scaffold",
+            )
+        )
+        approval = _load_artifact(
+            _artifact_path(args.create_live_approval_artifact, config.runs_dir, "create_live_approval")
+        )
+    except FileNotFoundError as exc:
+        result = _blocked_missing_artifact(runs_dir=config.runs_dir, message=str(exc))
+        _print_result(result)
+        return 0
     transport = None
     if _should_construct_transport(
         execution_pack=execution_pack,
@@ -116,26 +172,7 @@ def run_from_args(argv: list[str] | None = None) -> int:
         db_path=config.database_path,
         transport=transport,
     )
-    print(
-        json.dumps(
-            {
-                "ok": result["ok"],
-                "workflow": result["workflow"],
-                "phase": result["phase"],
-                "execution_enabled": result["execution_enabled"],
-                "live_execute_enabled": result["live_execute_enabled"],
-                "external_api_calls": result["external_api_calls"],
-                "status": result["status"],
-                "blocking_reasons": result["blocking_reasons"],
-                "transport_call_count": result["transport_call_count"],
-                "idempotency": result["idempotency"],
-                "material_bind_records": result["material_bind_records"],
-                "artifact_path": result["artifact_path"],
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-    )
+    _print_result(result)
     return 0
 
 

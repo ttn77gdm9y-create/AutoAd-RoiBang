@@ -204,6 +204,21 @@ def _response_data(response: dict[str, Any]) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
+def _first_response_item(response: dict[str, Any]) -> dict[str, Any]:
+    data = _response_data(response)
+    rows = data.get("list")
+    if isinstance(rows, list):
+        for row in rows:
+            if isinstance(row, dict):
+                return row
+    rows = response.get("list")
+    if isinstance(rows, list):
+        for row in rows:
+            if isinstance(row, dict):
+                return row
+    return {}
+
+
 def _project_id(response: dict[str, Any]) -> str:
     data = _response_data(response)
     return str(data.get("project_id") or response.get("project_id") or "")
@@ -216,15 +231,30 @@ def _promotion_id(response: dict[str, Any]) -> str:
 
 def _target_video_id(response: dict[str, Any]) -> str:
     data = _response_data(response)
-    return str(data.get("target_video_id") or data.get("video_id") or response.get("target_video_id") or response.get("video_id") or "")
+    item = _first_response_item(response)
+    return str(
+        data.get("target_video_id")
+        or data.get("video_id")
+        or item.get("target_video_id")
+        or item.get("video_id")
+        or item.get("id")
+        or response.get("target_video_id")
+        or response.get("video_id")
+        or ""
+    )
 
 
 def _target_video_cover_id(response: dict[str, Any]) -> str:
     data = _response_data(response)
+    item = _first_response_item(response)
     return str(
         data.get("target_video_cover_id")
         or data.get("video_cover_id")
         or data.get("cover_id")
+        or item.get("target_video_cover_id")
+        or item.get("video_cover_id")
+        or item.get("cover_id")
+        or item.get("image_id")
         or response.get("target_video_cover_id")
         or response.get("video_cover_id")
         or response.get("cover_id")
@@ -399,6 +429,40 @@ def _split_existing_material_binds(
     return pending, skipped
 
 
+def _split_existing_target_materials(
+    *,
+    db_path: str | Path,
+    create_execute_artifact: dict[str, Any],
+    drafts: list[dict[str, Any]],
+) -> tuple[list[tuple[int, dict[str, Any]]], list[dict[str, Any]]]:
+    records = _target_material_records(create_execute_artifact)
+    pending: list[tuple[int, dict[str, Any]]] = []
+    skipped: list[dict[str, Any]] = []
+    for index, draft in enumerate(drafts):
+        record_pair = records[index * 2 : index * 2 + 2]
+        existing_rows: list[dict[str, Any]] = []
+        for row in record_pair:
+            entity_type = str(row.get("entity_type") or "")
+            local_key = str(row.get("local_key") or "")
+            provider_id = _existing_provider_id(db_path=db_path, entity_type=entity_type, local_key=local_key)
+            if provider_id:
+                existing_rows.append(
+                    {
+                        "operation": "lookup_target_material",
+                        "index": index,
+                        "entity_type": entity_type,
+                        "local_key": local_key,
+                        "provider_id": provider_id,
+                        "status": "skipped_existing_provider_id",
+                    }
+                )
+        if record_pair and len(existing_rows) == len(record_pair):
+            skipped.extend(existing_rows)
+        else:
+            pending.append((index, draft))
+    return pending, skipped
+
+
 def _record_material_bind(
     *,
     db_path: str | Path,
@@ -458,6 +522,14 @@ def _resumable_create_http_run(
             skipped_material_bind_records.extend(skipped_binds)
             skipped = skipped_binds
             skipped_status = "skipped_existing_material_bind"
+        elif operation == "lookup_target_material":
+            pending, skipped = _split_existing_target_materials(
+                db_path=db_path,
+                create_execute_artifact=create_execute_artifact,
+                drafts=drafts,
+            )
+            skipped_provider_id_records.extend(skipped)
+            skipped_status = "skipped_existing_provider_id"
         else:
             pending, skipped = _split_existing_provider_ids(
                 db_path=db_path,

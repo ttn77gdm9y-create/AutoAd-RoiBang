@@ -9,6 +9,7 @@
       "endpoints": {
         "create_project": "",
         "create_unit": "",
+        "lookup_target_material": "",
         "bind_material": ""
       }
     },

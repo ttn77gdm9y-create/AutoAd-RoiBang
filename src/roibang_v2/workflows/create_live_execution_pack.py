@@ -5,7 +5,7 @@ from typing import Any
 
 from roibang_v2.runs import write_run_artifact
 
-OPERATION_ORDER = ["create_project", "bind_material", "create_unit"]
+OPERATION_ORDER = ["create_project", "bind_material", "lookup_target_material", "create_unit"]
 
 
 def _pack_config(request: dict[str, Any]) -> dict[str, Any]:
@@ -165,6 +165,7 @@ def _scope_matches_payload_counts(scope: dict[str, Any], counts: dict[str, int])
         int(scope.get("project_count") or 0) == int(counts.get("create_project") or 0)
         and int(scope.get("unit_count") or 0) == int(counts.get("create_unit") or 0)
         and int(scope.get("material_count") or 0) >= int(counts.get("bind_material") or 0)
+        and int(counts.get("lookup_target_material") or 0) == int(counts.get("bind_material") or 0)
         and int(scope.get("project_count") or 0) <= int(scope.get("max_project_count") or 0)
         and int(scope.get("unit_count") or 0) <= int(scope.get("max_unit_count") or 0)
         and int(scope.get("material_count") or 0) <= int(scope.get("max_material_count") or 0)

@@ -780,6 +780,7 @@ def test_create_dry_run_outputs_non_executable_project_unit_material_combination
     assert result["payload_schema"]["endpoints"] == {
         "create_project": "",
         "create_unit": "",
+        "lookup_target_material": "",
         "bind_material": "",
     }
     assert result["payload_schema"]["required_fields"]["create_project"] == [
@@ -8094,6 +8095,7 @@ def test_create_execute_is_hard_blocked_in_phase1_even_after_recorded_approval(t
             "endpoints": {
                 "create_project": "",
                 "create_unit": "",
+                "lookup_target_material": "",
                 "bind_material": "",
             },
             "required_fields": {

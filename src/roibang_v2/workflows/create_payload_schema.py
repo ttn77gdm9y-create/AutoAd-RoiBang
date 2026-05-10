@@ -18,6 +18,7 @@ def disabled_create_payload_schema(policy: dict[str, Any] | None = None) -> dict
         "endpoints": {
             "create_project": str(endpoints.get("create_project") or ""),
             "create_unit": str(endpoints.get("create_unit") or ""),
+            "lookup_target_material": str(endpoints.get("lookup_target_material") or ""),
             "bind_material": str(endpoints.get("bind_material") or ""),
         },
         "required_fields": {

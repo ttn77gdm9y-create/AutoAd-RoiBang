@@ -82,10 +82,20 @@ def _execute_artifact() -> dict:
                 "executable": False,
                 "live_api_payload": False,
             },
+            {
+                "operation": "lookup_target_material",
+                "payload": {
+                    "target_advertiser_id": "target-1",
+                    "source_video_id": "video-1",
+                    "material_id": "material-1",
+                },
+                "executable": False,
+                "live_api_payload": False,
+            },
         ],
         "resolved_payload_contract": {
             "status": "passed",
-            "checked_draft_count": 4,
+            "checked_draft_count": 5,
             "unresolved_lookup_count": 0,
             "executable_draft_count": 0,
             "live_payload_count": 0,
@@ -123,6 +133,7 @@ def _scaffold_artifact() -> dict:
             "endpoints": {
                 "create_project": "/open_api/2/project/create/",
                 "create_unit": "/open_api/2/promotion/create/",
+                "lookup_target_material": "/open_api/2/file/video/get/",
                 "bind_material": "/open_api/2/file/material/bind/",
             },
         },
@@ -157,6 +168,7 @@ def _enabled_policy() -> dict:
                 "endpoints": {
                     "create_project": "/open_api/2/project/create/",
                     "create_unit": "/open_api/2/promotion/create/",
+                    "lookup_target_material": "/open_api/2/file/video/get/",
                     "bind_material": "/open_api/2/file/material/bind/",
                 },
             },
@@ -198,7 +210,8 @@ def test_create_live_execution_pack_blocks_when_live_enablement_is_missing():
         "create_project": 1,
         "create_unit": 2,
         "bind_material": 1,
-        "total": 4,
+        "lookup_target_material": 1,
+        "total": 5,
     }
     assert result["execution_pack"]["approve_contract"] == {
         "approve_is_record_only": True,
@@ -227,7 +240,12 @@ def test_create_live_execution_pack_marks_ready_only_when_all_live_gates_are_exp
     assert result["final_preflight"]["ready_for_live_execute"] is True
     assert result["final_preflight"]["blocking_reasons"] == []
     assert result["execution_pack"]["scope"] == _runbook_artifact()["scope"]
-    assert result["execution_pack"]["ordered_operations"] == ["create_project", "bind_material", "create_unit"]
+    assert result["execution_pack"]["ordered_operations"] == [
+        "create_project",
+        "bind_material",
+        "lookup_target_material",
+        "create_unit",
+    ]
     assert result["execution_pack"]["payloads_by_operation"]["bind_material"][0]["payload"] == {
         "source_advertiser_id": "source-1",
         "target_advertiser_ids": ["target-1"],
@@ -289,4 +307,4 @@ def test_create_live_execution_pack_fixed_script_uses_latest_artifacts(tmp_path:
     assert output["execution_enabled"] is False
     assert output["external_api_calls"] == 0
     assert output["final_preflight"]["ready_for_live_enablement"] is True
-    assert artifact["execution_pack"]["payload_counts"]["total"] == 4
+    assert artifact["execution_pack"]["payload_counts"]["total"] == 5

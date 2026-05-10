@@ -238,6 +238,47 @@ configs/provider-evidence/oceanengine.create.phase2-review.example.json
 
 - 如果还有 `<lookup:...>` 占位符，`next_focus=provider_id_ledger`。
 - 如果占位符已解析，`next_focus=manual_payload_review`。
+
+## 真实执行包与目标素材回查
+
+`create_live_execution_pack` 是“真实执行包”生成器。它不调用平台接口，只把已经通过前置检查的草稿整理成固定执行顺序。
+
+当前真实创建顺序已经固定为：
+
+```text
+create_project -> bind_material -> lookup_target_material -> create_unit
+```
+
+中文含义：
+
+- `create_project`：创建项目。
+- `bind_material`：素材推送，从源素材账户推送到目标投放账户。
+- `lookup_target_material`：目标账户素材回查，素材推送后在目标账户查询可用于单元创建的视频 ID 和封面 ID。
+- `create_unit`：创建单元。
+
+`lookup_target_material` 当前对应平台接口：
+
+```text
+/open_api/2/file/video/get/
+```
+
+HTTP transport（HTTP 请求发送模块）现在会把它作为 GET 请求发送。GET 的意思是“读取查询请求”，参数放在 URL 查询串里，不放在 POST 请求体里。
+
+回查请求会从本地草稿转换成平台查询参数：
+
+- `target_advertiser_id` -> `advertiser_id`：目标账户 ID。
+- `material_id` -> `filtering.material_ids`：优先用本地追溯素材 ID 查。
+- `source_video_id` -> `filtering.video_ids`：没有 `material_id` 时用源视频 ID 查。
+- `page` / `page_size`：分页参数，默认 1 页、10 条。
+
+真实执行器会从回查响应里提取：
+
+- `target_video_id`：目标账户视频 ID。
+- `target_video_cover_id`：目标账户视频封面 ID。
+
+如果回查结果拿不到目标账户视频或封面 ID，流程应停在单元创建之前。这里不继续猜字段，因为单元创建必须使用目标账户自己的素材 ID。
+
+固定脚本 `scripts/run_create_live_execute_once.py` 也已经调整：如果找不到上游 `create_live_execution_pack` 产物，会输出 blocked JSON（阻断状态 JSON），而不是直接抛 traceback（程序异常堆栈）。这能让后续自动化任务稳定复盘失败原因。
 - 两种情况都继续保持 `create_execute` 硬阻断，不执行真实创建。
 
 这一步把 `dry-run -> approve -> execute -> final_report` 串成了一个完整的本地复核边界包。后续如果要推进真实创建开发，必须另起明确批准阶段，不能从这些复核字段直接推导出可执行权限。
