@@ -407,6 +407,77 @@ def test_create_live_execute_once_direct_mode_runs_fixed_sequence_with_transport
     ]
 
 
+def test_create_live_execute_once_direct_mode_allows_chain_resolvable_lookups(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+    create_execute = json.loads(json.dumps(_execute_artifact(), ensure_ascii=False))
+    create_execute["resolved_payload_contract"]["unresolved_lookup_count"] = 3
+    calls: list[dict] = []
+
+    def fake_transport(call: dict) -> dict:
+        calls.append(call)
+        if call["operation"] == "create_project":
+            return {"code": 0, "data": {"project_id": "project-001"}}
+        if call["operation"] == "bind_material":
+            return {"code": 0, "data": {"task_id": "bind-001"}}
+        if call["operation"] == "lookup_target_material":
+            return {"code": 0, "data": {"target_video_id": "target-video-001", "target_video_cover_id": "target-cover-001"}}
+        if call["operation"] == "create_unit":
+            return {"code": 0, "data": {"promotion_id": "promotion-001"}}
+        raise AssertionError(call["operation"])
+
+    result = run_create_live_execute_once_request(
+        {
+            "create_live_execute_once": {
+                "create_execute_artifact": create_execute,
+                "create_live_payload_adapter_scaffold_artifact": _scaffold_artifact(),
+                "policy": _policy(),
+                "runtime": {"execution_enabled": True, "external_api_enabled": True},
+            }
+        },
+        runs_dir=tmp_path / "runs",
+        db_path=db_path,
+        transport=fake_transport,
+    )
+
+    assert result["ok"] is True
+    assert result["status"] == "create_http_completed"
+    assert [call["operation"] for call in calls] == [
+        "create_project",
+        "bind_material",
+        "lookup_target_material",
+        "create_unit",
+    ]
+
+
+def test_create_live_execute_once_direct_mode_blocks_unproducible_lookup(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+    create_execute = json.loads(json.dumps(_execute_artifact(), ensure_ascii=False))
+    create_execute["resolved_provider_payload_drafts"][0]["payload"]["name"] = "<lookup:not-produced>"
+
+    result = run_create_live_execute_once_request(
+        {
+            "create_live_execute_once": {
+                "create_execute_artifact": create_execute,
+                "create_live_payload_adapter_scaffold_artifact": _scaffold_artifact(),
+                "policy": _policy(),
+                "runtime": {"execution_enabled": True, "external_api_enabled": True},
+            }
+        },
+        runs_dir=tmp_path / "runs",
+        db_path=db_path,
+        transport=lambda _call: {"code": 0},
+    )
+
+    assert result["ok"] is False
+    assert result["external_api_calls"] == 0
+    assert (
+        "create_execute payloads contain lookup placeholders that cannot be produced by this fixed chain"
+        in result["blocking_reasons"]
+    )
+
+
 def test_create_live_execute_once_runs_create_http_transport_in_order(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     bootstrap_database(db_path)

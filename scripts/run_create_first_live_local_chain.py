@@ -115,6 +115,7 @@ def _print_result(result: dict) -> None:
                 "summary": result["summary"],
                 "scope_guard": result["scope_guard"],
                 "chain_steps": result["chain_steps"],
+                "artifacts": result["artifacts"],
                 "approved_for_execute": result["approved_for_execute"],
                 "human_next_steps": result["human_next_steps"],
                 "artifact_path": result["artifact_path"],

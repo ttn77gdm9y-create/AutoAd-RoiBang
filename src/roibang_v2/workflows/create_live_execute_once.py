@@ -142,13 +142,56 @@ def _create_execute_payload_safety(create_execute: dict[str, Any]) -> dict[str, 
     )
     contract = create_execute.get("resolved_payload_contract")
     unresolved_lookup_count = int(contract.get("unresolved_lookup_count") or 0) if isinstance(contract, dict) else 0
+    chain_lookup = _chain_lookup_contract(create_execute)
     return {
         "payloads_non_executable": executable_count == 0,
         "live_payload_count_zero": live_payload_count == 0,
-        "no_unresolved_lookup_placeholders": unresolved_lookup_count == 0,
+        "lookup_placeholders_chain_resolvable": bool(chain_lookup["ok"]),
         "executable_count": executable_count,
         "live_payload_count": live_payload_count,
         "unresolved_lookup_count": unresolved_lookup_count,
+        "unresolvable_lookup_placeholders": chain_lookup["unresolvable_lookup_placeholders"],
+    }
+
+
+def _lookup_key(value: Any) -> str:
+    text = str(value) if isinstance(value, str) else ""
+    if text.startswith("<lookup:") and text.endswith(">"):
+        return text[len("<lookup:") : -1]
+    return ""
+
+
+def _lookup_keys(value: Any) -> list[str]:
+    key = _lookup_key(value)
+    if key:
+        return [key]
+    if isinstance(value, dict):
+        return [row for item in value.values() for row in _lookup_keys(item)]
+    if isinstance(value, list):
+        return [row for item in value for row in _lookup_keys(item)]
+    return []
+
+
+def _chain_lookup_contract(create_execute: dict[str, Any]) -> dict[str, Any]:
+    requirements = _provider_id_requirements(create_execute)
+    allowed_create_unit_keys = {
+        str(row.get("local_key") or "")
+        for row in [
+            *_rows(requirements.get("produced_by_create_project")),
+            *_rows(requirements.get("required_before_create_unit")),
+        ]
+    }
+    unresolvable: list[dict[str, str]] = []
+    for draft in _provider_payload_drafts(create_execute):
+        operation = str(draft.get("operation") or "")
+        payload = draft.get("payload") if isinstance(draft.get("payload"), dict) else {}
+        for key in _lookup_keys(payload):
+            if operation == "create_unit" and key in allowed_create_unit_keys:
+                continue
+            unresolvable.append({"operation": operation, "local_key": key})
+    return {
+        "ok": not unresolvable,
+        "unresolvable_lookup_placeholders": unresolvable,
     }
 
 
@@ -820,8 +863,8 @@ def _direct_blocking_reasons(
         reasons.append("create_execute payload drafts must not be executable")
     if not bool(payload_safety["live_payload_count_zero"]):
         reasons.append("create_execute payload drafts must not contain live payload flags")
-    if not bool(payload_safety["no_unresolved_lookup_placeholders"]):
-        reasons.append("create_execute payloads still contain unresolved lookup placeholders")
+    if not bool(payload_safety["lookup_placeholders_chain_resolvable"]):
+        reasons.append("create_execute payloads contain lookup placeholders that cannot be produced by this fixed chain")
     return reasons
 
 

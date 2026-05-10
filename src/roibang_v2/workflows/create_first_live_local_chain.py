@@ -5,6 +5,9 @@ from pathlib import Path
 from typing import Any
 
 from roibang_v2.runs import write_run_artifact
+from roibang_v2.config import load_json
+from roibang_v2.workflows.create_approval import run_create_approval_request
+from roibang_v2.workflows.create_execute import run_create_execute_request
 from roibang_v2.workflows.create_phase2_yzt_dry_chain import run_create_phase2_yzt_dry_chain_request
 from roibang_v2.workflows.create_phase2_yzt_preparation_check import build_create_phase2_yzt_preparation_check
 
@@ -130,7 +133,7 @@ def _human_next_steps(*, ok: bool, preparation: dict[str, Any], dry_chain: dict[
     if ok:
         return [
             "人工复核首单本地链路产物里的账户、项目名、预算、单元和素材。",
-            "复核通过后再生成 approve 批准记录；approve 仍不是执行开关。",
+            "复核 create_execute 产物路径；真实执行只把这个产物交给 run_create_live_execute_once.py。",
         ]
     rows: list[str] = []
     rows.extend(str(item) for item in preparation.get("violations") or [])
@@ -155,6 +158,8 @@ def build_create_first_live_local_chain(
         preview_config_path=preview_config_path,
     )
     dry_chain: dict[str, Any] = {}
+    approval: dict[str, Any] = {}
+    execute: dict[str, Any] = {}
     if bool(preparation.get("ok")):
         dry_chain = run_create_phase2_yzt_dry_chain_request(
             {
@@ -166,21 +171,51 @@ def build_create_first_live_local_chain(
             db_path=db_path,
             runs_dir=runs_dir,
         )
+    if bool(dry_chain.get("ok")) and str(dry_chain.get("artifacts", {}).get("dry_run") or "").strip():
+        dry_run_path = str(dry_chain["artifacts"]["dry_run"])
+        approval = run_create_approval_request(
+            {
+                "create_approval": {
+                    "create_dry_run_artifact": load_json(dry_run_path),
+                    "create_dry_run_artifact_path": dry_run_path,
+                    "policy": _policy_section(policy, "create_approval"),
+                }
+            },
+            runs_dir=runs_dir,
+        )
+    if bool(approval.get("ok")):
+        execute = run_create_execute_request(
+            {
+                "create_execute": {
+                    "create_approval_artifact": approval,
+                    "create_approval_artifact_path": str(approval.get("artifact_path") or ""),
+                    "policy": _policy_section(policy, "create_execute"),
+                }
+            },
+            runs_dir=runs_dir,
+            db_path=db_path,
+        )
     scope_guard = _scope_guard(dry_chain=dry_chain, policy=policy)
-    ok = bool(preparation.get("ok")) and bool(dry_chain.get("ok")) and bool(scope_guard.get("ok"))
+    ok = (
+        bool(preparation.get("ok"))
+        and bool(dry_chain.get("ok"))
+        and bool(approval.get("ok"))
+        and bool(execute.get("ok"))
+        and bool(scope_guard.get("ok"))
+    )
     payload = {
         "ok": ok,
         "workflow": "create_first_live_local_chain",
         "phase": "phase2_preparation",
         "execution_enabled": False,
         "external_api_calls": 0,
-        "status": "ready_for_approval_chain" if ok else "blocked",
+        "status": "ready_for_execute_script" if ok else "blocked",
         "summary": {
             "selected_account_count": len(_accounts(first_live_preview_config)),
             "project_count": int(scope_guard.get("project_count") or 0),
             "unit_count": int(scope_guard.get("unit_count") or 0),
             "material_count": int(scope_guard.get("material_count") or 0),
-            "ready_for_approval_chain": ok,
+            "ready_for_approval_chain": bool(approval.get("ok")),
             "ready_for_live_execute": False,
         },
         "first_live_scope": {
@@ -193,9 +228,14 @@ def build_create_first_live_local_chain(
         "chain_steps": [
             _step("preparation_check", preparation),
             _step("dry_chain", dry_chain) if dry_chain else {"step": "dry_chain", "workflow": "", "ok": False, "status": "not_run"},
+            _step("create_approval", approval) if approval else {"step": "create_approval", "workflow": "", "ok": False, "status": "not_run"},
+            _step("create_execute", execute) if execute else {"step": "create_execute", "workflow": "", "ok": False, "status": "not_run"},
         ],
         "artifacts": {
             "dry_chain": str(dry_chain.get("artifact_path") or ""),
+            "dry_run": str(dry_chain.get("artifacts", {}).get("dry_run") or "") if dry_chain else "",
+            "create_approval": str(approval.get("artifact_path") or ""),
+            "create_execute": str(execute.get("artifact_path") or ""),
         },
         "preparation_check": preparation,
         "dry_chain": dry_chain,

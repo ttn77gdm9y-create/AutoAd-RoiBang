@@ -3345,7 +3345,7 @@ def test_create_first_live_local_chain_derives_single_scope_without_execute(tmp_
     assert result["phase"] == "phase2_preparation"
     assert result["execution_enabled"] is False
     assert result["external_api_calls"] == 0
-    assert result["status"] == "ready_for_approval_chain"
+    assert result["status"] == "ready_for_execute_script"
     assert result["summary"] == {
         "selected_account_count": 1,
         "project_count": 1,
@@ -3354,6 +3354,7 @@ def test_create_first_live_local_chain_derives_single_scope_without_execute(tmp_
         "ready_for_approval_chain": True,
         "ready_for_live_execute": False,
     }
+    assert result["artifacts"]["create_execute"]
     assert result["scope_guard"] == {
         "ok": True,
         "project_count": 1,
@@ -3375,6 +3376,8 @@ def test_create_first_live_local_chain_derives_single_scope_without_execute(tmp_
             "status": "passed",
         },
         {"step": "dry_chain", "workflow": "create_phase2_yzt_dry_chain", "ok": True, "status": "simulated"},
+        {"step": "create_approval", "workflow": "create_approval", "ok": True, "status": "recorded"},
+        {"step": "create_execute", "workflow": "create_execute", "ok": True, "status": "blocked"},
     ]
     assert result["approved_for_execute"] is False
     assert result["actions"] == []
@@ -3473,11 +3476,13 @@ def test_create_first_live_local_chain_cli_uses_manual_config_without_execute(tm
     artifact = json.loads(Path(output["artifact_path"]).read_text(encoding="utf-8"))
     assert exit_code == 0
     assert output["workflow"] == "create_first_live_local_chain"
-    assert output["status"] == "ready_for_approval_chain"
+    assert output["status"] == "ready_for_execute_script"
     assert output["summary"]["project_count"] == 1
     assert output["summary"]["unit_count"] == 2
     assert output["execution_enabled"] is False
     assert output["external_api_calls"] == 0
+    assert output["artifacts"]["create_execute"]
+    assert Path(output["artifacts"]["create_execute"]).exists()
     assert artifact["approved_for_execute"] is False
     assert artifact["actions"] == []
 

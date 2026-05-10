@@ -50,10 +50,15 @@ request -> strategy -> preflight -> dry-run -> approve -> execute
 真实执行时仍只走一个固定入口：
 
 ```bash
+PYTHONPATH=src python3 scripts/run_create_first_live_local_chain.py \
+  --config configs/runtime.example.json \
+  --preview-config configs/create/yzt-wx-mini-game.preview.local.json \
+  --policy policies/strategy.example.json
+
 PYTHONPATH=src python3 scripts/run_create_live_execute_once.py \
   --config configs/runtime.create-live.local.json \
   --policy policies/create-live-execute.local.json \
-  --create-execute-artifact data/runs/create_execute/<artifact>.json
+  --create-execute-artifact <上一步输出的 artifacts.create_execute>
 ```
 
 这里的 `approval_id` 只是 HTTP transport（HTTP 请求发送层）的本地审计留痕字段，不要求走 `create_live_execution_pack` 或 `create_first_live_prepare_pack`。真正的业务参数仍必须来自本地 JSON 配置、policy 策略文件和 SQLite 台账。
