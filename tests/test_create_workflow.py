@@ -2297,6 +2297,39 @@ def test_create_provider_evidence_review_cli_uses_policy_config(tmp_path: Path, 
     assert output["provider_field_gap_resolution_summary"]["gap_count"] == 0
     assert output["project_type_local_usage_summary"]["ready_to_mark_local_only"] is True
     assert output["field_gap_convergence_summary"]["remaining_provider_field_gap_count"] == 0
+    assert output["manual_review_workbench_summary"] == {
+        "workbench_version": "phase2.manual_review_workbench.v1",
+        "candidate_field_count": 6,
+        "local_only_confirmation_count": 6,
+        "evidence_review_count": 16,
+        "ready_to_edit_json": True,
+        "execution_enabled": False,
+        "external_api_calls": 0,
+    }
+    assert output["manual_review_next_items"] == {
+        "candidate_fields": [
+            {
+                "operation": "create_project",
+                "internal_field": "field_defaults.landing_type",
+                "provider_field": "landing_type",
+                "edit_file": "configs/provider-field-maps/oceanengine.create.phase2-prep.example.json",
+            }
+        ],
+        "local_only_confirmations": [
+            {
+                "operation": "create_project",
+                "internal_field": "project_type",
+                "edit_file": "configs/provider-field-maps/oceanengine.create.phase2-prep.example.json",
+            }
+        ],
+        "evidence_reviews": [
+            {
+                "evidence_ref": "oceanengine_openapi_project_create_request",
+                "operation": "create_project",
+                "edit_file": "configs/provider-evidence/oceanengine.create.phase2-review.example.json",
+            }
+        ],
+    }
     assert artifact["evidence_worksheet"]["summary"]["requires_evidence_review_count"] == 16
     assert artifact["provider_field_gap_report"]["summary"]["operation_counts"] == {}
     assert artifact["provider_field_gap_resolution_plan"]["summary"]["manual_review_required"] is False

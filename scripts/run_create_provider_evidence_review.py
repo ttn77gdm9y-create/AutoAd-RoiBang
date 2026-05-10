@@ -10,6 +10,46 @@ from roibang_v2.workflows.create_provider_evidence_review import (
 )
 
 
+def _next_items(workbench: dict) -> dict:
+    candidate_fields = workbench.get("candidate_fields") if isinstance(workbench.get("candidate_fields"), list) else []
+    local_only = (
+        workbench.get("local_only_confirmations")
+        if isinstance(workbench.get("local_only_confirmations"), list)
+        else []
+    )
+    evidence_reviews = workbench.get("evidence_reviews") if isinstance(workbench.get("evidence_reviews"), list) else []
+    return {
+        "candidate_fields": [
+            {
+                "operation": str(item.get("operation") or ""),
+                "internal_field": str(item.get("internal_field") or ""),
+                "provider_field": str(item.get("provider_field") or ""),
+                "edit_file": str(item.get("edit_file") or ""),
+            }
+            for item in candidate_fields[:1]
+            if isinstance(item, dict)
+        ],
+        "local_only_confirmations": [
+            {
+                "operation": str(item.get("operation") or ""),
+                "internal_field": str(item.get("internal_field") or ""),
+                "edit_file": str(item.get("edit_file") or ""),
+            }
+            for item in local_only[:1]
+            if isinstance(item, dict)
+        ],
+        "evidence_reviews": [
+            {
+                "evidence_ref": str(item.get("evidence_ref") or ""),
+                "operation": str(item.get("operation") or ""),
+                "edit_file": str(item.get("edit_file") or ""),
+            }
+            for item in evidence_reviews[:1]
+            if isinstance(item, dict)
+        ],
+    }
+
+
 def run_from_args(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run Phase 2 provider evidence review.")
     parser.add_argument("--config", default="configs/runtime.example.json")
@@ -27,6 +67,7 @@ def run_from_args(argv: list[str] | None = None) -> int:
         {"create_provider_evidence_review": {"policy": policy}},
         runs_dir=config.runs_dir,
     )
+    workbench = result["manual_review_workbench"]
     print(
         json.dumps(
             {
@@ -43,6 +84,8 @@ def run_from_args(argv: list[str] | None = None) -> int:
                 "provider_field_gap_resolution_summary": result["provider_field_gap_resolution_plan"]["summary"],
                 "project_type_local_usage_summary": result["project_type_local_usage_review"]["summary"],
                 "field_gap_convergence_summary": result["field_gap_convergence_plan"]["summary"],
+                "manual_review_workbench_summary": workbench["summary"],
+                "manual_review_next_items": _next_items(workbench),
                 "artifact_path": result["artifact_path"],
             },
             ensure_ascii=False,
