@@ -179,6 +179,10 @@ def _fields(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
+def _is_resolved_status(status: str) -> bool:
+    return status in {"verified", "local_only_confirmed"}
+
+
 def _unresolved_items(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for section in sections:
@@ -186,7 +190,7 @@ def _unresolved_items(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for field in section.get("fields") if isinstance(section.get("fields"), list) else []:
             if not isinstance(field, dict):
                 continue
-            if str(field.get("evidence_status") or "") == "verified":
+            if _is_resolved_status(str(field.get("evidence_status") or "")):
                 continue
             rows.append(
                 {
@@ -224,7 +228,9 @@ def _summary(
         "catalog_evidence_count": len(evidence_by_ref),
         "reviewed_evidence_count": sum(1 for item in evidence_by_ref.values() if bool(item.get("reviewed", False))),
         "ready_field_count": sum(1 for field in fields if str(field.get("evidence_status") or "") == "verified"),
-        "unresolved_field_count": sum(1 for field in fields if str(field.get("evidence_status") or "") != "verified"),
+        "unresolved_field_count": sum(
+            1 for field in fields if not _is_resolved_status(str(field.get("evidence_status") or ""))
+        ),
         "evidence_status_counts": dict(sorted(status_counts.items())),
         "ready_for_live_payload_development": False,
         "ready_for_live_execute": False,
@@ -355,7 +361,7 @@ def _evidence_worksheet(sections: list[dict[str, Any]]) -> dict[str, Any]:
         "requires_provider_field_count": sum(
             1 for row in rows if str(row.get("evidence_status") or "") == "needs_provider_field"
         ),
-        "ready_row_count": sum(1 for row in rows if str(row.get("evidence_status") or "") == "verified"),
+        "ready_row_count": sum(1 for row in rows if _is_resolved_status(str(row.get("evidence_status") or ""))),
     }
     return {
         "summary": summary,

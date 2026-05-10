@@ -1981,6 +1981,44 @@ def test_create_provider_evidence_review_rejects_missing_catalog(tmp_path: Path)
     assert result["actions"] == []
 
 
+def test_create_provider_evidence_review_accepts_explicit_local_only_confirmation(tmp_path: Path):
+    field_map = json.loads(
+        Path("configs/provider-field-maps/oceanengine.create.phase2-prep.example.json").read_text(encoding="utf-8")
+    )
+    for rows in field_map["operations"].values():
+        for entry in rows:
+            if entry.get("mapping_kind") == "local_lookup_key":
+                entry["local_only_confirmed"] = True
+                entry["local_only_confirmation_note"] = "unit test confirms the field is used only for local lookup"
+    field_map_path = tmp_path / "field-map.json"
+    field_map_path.write_text(json.dumps(field_map, ensure_ascii=False), encoding="utf-8")
+
+    result = build_create_provider_evidence_review(
+        policy={
+            "provider_field_map_path": str(field_map_path),
+            "provider_evidence_catalog_path": "configs/provider-evidence/oceanengine.create.phase2-review.example.json",
+        }
+    )
+
+    assert result["summary"]["evidence_status_counts"] == {
+        "local_only_confirmed": 4,
+        "needs_evidence_review": 10,
+        "needs_provider_field": 4,
+    }
+    assert result["summary"]["unresolved_field_count"] == 14
+    assert result["evidence_worksheet"]["summary"]["requires_local_confirmation_count"] == 0
+    confirmed_rows = [
+        row
+        for row in result["evidence_worksheet"]["rows"]
+        if row["evidence_status"] == "local_only_confirmed"
+    ]
+    assert len(confirmed_rows) == 4
+    assert all(row["fill_required"] == [] for row in confirmed_rows)
+    assert result["execution_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert result["actions"] == []
+
+
 def test_run_create_provider_evidence_review_request_writes_artifact(tmp_path: Path):
     result = run_create_provider_evidence_review_request(
         {

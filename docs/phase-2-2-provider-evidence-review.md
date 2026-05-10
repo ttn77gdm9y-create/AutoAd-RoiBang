@@ -53,6 +53,7 @@ Common status meanings:
 - `needs_evidence_ref`: 缺证据引用.
 - `needs_evidence_review`: 有证据引用, 但还没有人工复核.
 - `local_only_needs_confirmation`: 本地字段需要确认不会进入平台请求体.
+- `local_only_confirmed`: 本地字段已确认不进入平台请求体.
 - `verified`: 字段映射和证据都已确认.
 
 ## Safety Contract
@@ -108,6 +109,9 @@ Important fields:
 - `fill_required`: 需要补的内容, such as `source_url` or reviewer metadata.
 - `do_not_change`: 禁止改动的安全字段, such as `execution_enabled`.
 - `ready_row_count`: 已就绪字段行数.
+- `local_only_confirmed`: 本地字段确认开关. Only set it to `true` after
+  manually confirming the field is used only for lookup, idempotency, or
+  lineage and must not be sent to the provider payload.
 
 The worksheet is not an approval artifact and cannot enable live execution.
 
