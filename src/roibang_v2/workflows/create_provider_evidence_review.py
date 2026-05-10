@@ -523,6 +523,68 @@ def _provider_field_gap_resolution_plan(gap_report: dict[str, Any]) -> dict[str,
     }
 
 
+def _project_type_local_usage_review() -> dict[str, Any]:
+    local_usage_evidence = [
+        {
+            "usage_kind": "template_selector",
+            "source": "create_phase2_yzt_create_preview._project_type",
+            "meaning": "从项目模板名称推导本地 project_type，用于区分 WX_PAY 和 WX_PAY_7R。",
+        },
+        {
+            "usage_kind": "request_validation",
+            "source": "create_request._validate_request",
+            "meaning": "作为创建请求的必填输入，用来固定本地策略入口。",
+        },
+        {
+            "usage_kind": "project_naming",
+            "source": "create_strategy_plan._project_name_entry",
+            "meaning": "作为项目命名模板变量参与生成 project_name。",
+        },
+        {
+            "usage_kind": "batch_code_source",
+            "source": "create_strategy_plan._batch_code_source",
+            "meaning": "作为批次码来源字段，帮助同一批创建保持幂等和可追踪。",
+        },
+        {
+            "usage_kind": "project_naming_prep",
+            "source": "create_phase2_project_naming_prep._sample_names",
+            "meaning": "在项目命名预检查里作为模板变量生成样例名称。",
+        },
+        {
+            "usage_kind": "dry_run_traceability",
+            "source": "create_strategy_plan._build_projects",
+            "meaning": "随 dry-run 计划保留，用于本地复盘项目来自哪个模板类型。",
+        },
+    ]
+    blocking_items = [
+        {
+            "source": "create_payload_schema.disabled_create_payload_schema.required_fields.create_project",
+            "reason": "禁用版 schema 仍把 project_type 列在 create_project required_fields 中。",
+        },
+        {
+            "source": "create_dry_run._task_payload_drafts.create_project.payload",
+            "reason": "dry-run 草稿仍把 project_type 放在 disabled_schema_only payload 中。",
+        },
+    ]
+    return {
+        "summary": {
+            "review_version": "phase2.project_type_local_usage_review.v1",
+            "internal_field": "project_type",
+            "local_usage_evidence_count": len(local_usage_evidence),
+            "blocking_item_count": len(blocking_items),
+            "manual_confirmation_required": True,
+            "ready_to_mark_local_only": False,
+        },
+        "local_usage_evidence": local_usage_evidence,
+        "blocking_items": blocking_items,
+        "operator_decision": {
+            "recommended_next_action": "先处理 blocking_items，再决定是否人工确认 local_only。",
+            "do_not_auto_confirm": True,
+            "do_not_open_create_execute": True,
+        },
+    }
+
+
 def build_create_provider_evidence_review(*, policy: dict[str, Any]) -> dict[str, Any]:
     field_map = load_provider_field_map(policy)
     field_contract = provider_field_map_contract(field_map, policy)
@@ -557,6 +619,7 @@ def build_create_provider_evidence_review(*, policy: dict[str, Any]) -> dict[str
         "evidence_worksheet": _evidence_worksheet(sections),
         "provider_field_gap_report": gap_report,
         "provider_field_gap_resolution_plan": _provider_field_gap_resolution_plan(gap_report),
+        "project_type_local_usage_review": _project_type_local_usage_review(),
         "operator_guide": _operator_guide(status=status),
         "violations": violations,
         "actions": [],

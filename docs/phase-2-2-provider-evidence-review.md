@@ -50,6 +50,7 @@ create_provider_evidence_review
 - `evidence_worksheet`：证据填写清单，每个字段一行。
 - `provider_field_gap_report`：缺平台字段报告，只列出 `provider_field` 为空的字段。
 - `provider_field_gap_resolution_plan`：缺平台字段处理计划，只说明每个缺口该如何人工复核。
+- `project_type_local_usage_review`：`project_type` 本地用途复核清单。
 
 ## 状态解释
 
@@ -143,6 +144,26 @@ configs/provider-evidence/oceanengine.create.phase2-review.example.json
 - `confirm_local_template_selector_or_split_to_provider_fields`：确认 `project_type` 是不是只用于本地模板选择、项目命名和策略分支；如果不是本地字段，就必须拆成明确平台字段。
 - `split_field_defaults_into_explicit_provider_fields`：把 `field_defaults` 拆成明确平台字段，不能把默认字段集合整包塞进平台请求体。
 - `confirm_material_identifier_or_local_provenance`：确认 `source_video_id` 是平台素材绑定字段，还是只用于本地素材来源追溯。
+
+## project_type 本地用途复核
+
+`project_type_local_usage_review` 会把 `project_type` 的本地用途列出来，帮助判断它未来能不能改成 `local_only`。
+
+当前能看到的本地用途包括：
+
+- 模板选择：从模板名推导 `WX_PAY` 或 `WX_PAY_7R`。
+- 请求校验：作为创建请求的必填输入。
+- 项目命名：作为项目名模板变量。
+- 批次码来源：参与批次码生成，保持批次可追踪。
+- 命名预检查：用于生成样例项目名。
+- dry-run 追踪：保留在本地计划里方便复盘。
+
+但当前还不能直接把 `project_type` 标记为 `local_only`，因为仍有两个阻塞点：
+
+- 禁用版 payload schema 仍把它列在 `create_project.required_fields`。
+- dry-run 草稿仍把它放在 `disabled_schema_only` 请求体里。
+
+所以这个清单只说明“很像本地字段”，不做自动确认。要等这两个阻塞点处理完，再由人工确认。
 
 ## 下一步人工复核
 
