@@ -575,6 +575,96 @@
       "delivery": {"channel": "none"}
     },
     {
+      "id": "roibang-create-mock-execute",
+      "name": "RoiBang-v2 创建本地模拟执行",
+      "category": "create_mock_execute",
+      "enabled": false,
+      "schedule": {"type": "cron", "expr": "2 11 * * *", "tz": "Asia/Shanghai"},
+      "script": {
+        "path": "scripts/run_create_mock_execute.py",
+        "mode": "foreground",
+        "args": ["--config", "configs/runtime.example.json", "--policy", "policies/strategy.example.json"]
+      },
+      "policy": {"config": "configs/runtime.example.json", "policy": "policies/strategy.example.json"},
+      "result_contract": {"workflow": "create_mock_execute", "artifact_dir": "data/runs/create_mock_execute", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "mock_execution_mode", "summary", "ordered_steps", "provider_id_records", "final_create_execute", "live_api_calls", "violations", "actions"], "must_equal": {"phase": "phase2_preparation", "execution_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
+      "delivery": {"channel": "none"}
+    },
+    {
+      "id": "roibang-create-first-live-runbook",
+      "name": "RoiBang-v2 首单真实执行 Runbook",
+      "category": "create_first_live_runbook",
+      "enabled": false,
+      "schedule": {"type": "cron", "expr": "4 11 * * *", "tz": "Asia/Shanghai"},
+      "script": {
+        "path": "scripts/run_create_first_live_runbook.py",
+        "mode": "foreground",
+        "args": ["--config", "configs/runtime.example.json", "--policy", "policies/strategy.example.json"]
+      },
+      "policy": {"config": "configs/runtime.example.json", "policy": "policies/strategy.example.json"},
+      "result_contract": {"workflow": "create_first_live_runbook", "artifact_dir": "data/runs/create_first_live_runbook", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "live_execute_enabled", "scope", "approval_requirements", "runbook_steps", "rollback_policy", "source_workflows", "violations", "actions"], "must_equal": {"phase": "phase2_preparation", "execution_enabled": false, "external_api_calls": 0, "live_execute_enabled": false}, "must_be_empty": ["actions"]},
+      "delivery": {"channel": "none"}
+    },
+    {
+      "id": "roibang-create-live-execute-runner",
+      "name": "RoiBang-v2 创建真实执行 Runner 复核",
+      "category": "create_live_execute_runner",
+      "enabled": false,
+      "schedule": {"type": "cron", "expr": "6 11 * * *", "tz": "Asia/Shanghai"},
+      "script": {
+        "path": "scripts/run_create_live_execute_runner.py",
+        "mode": "foreground",
+        "args": ["--config", "configs/runtime.example.json", "--policy", "policies/strategy.example.json"]
+      },
+      "policy": {"config": "configs/runtime.example.json", "policy": "policies/strategy.example.json"},
+      "result_contract": {"workflow": "create_live_execute_runner", "artifact_dir": "data/runs/create_live_execute_runner", "must_include": ["ok", "workflow", "phase", "execution_enabled", "live_execute_enabled", "external_api_calls", "status", "runner_gate", "approve_contract", "failure_policy", "blocking_reasons", "ordered_steps", "provider_id_records", "test_transport_call_count", "live_api_calls", "failure", "actions"], "must_equal": {"phase": "phase2_preparation", "execution_enabled": false, "live_execute_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
+      "delivery": {"channel": "none"}
+    },
+    {
+      "id": "roibang-create-live-execution-pack",
+      "name": "RoiBang-v2 首单真实执行包",
+      "category": "create_live_execution_pack",
+      "enabled": false,
+      "schedule": {"type": "cron", "expr": "8 11 * * *", "tz": "Asia/Shanghai"},
+      "script": {
+        "path": "scripts/run_create_live_execution_pack.py",
+        "mode": "foreground",
+        "args": ["--config", "configs/runtime.example.json", "--policy", "policies/strategy.example.json"]
+      },
+      "policy": {"config": "configs/runtime.example.json", "policy": "policies/strategy.example.json"},
+      "result_contract": {"workflow": "create_live_execution_pack", "artifact_dir": "data/runs/create_live_execution_pack", "must_include": ["ok", "workflow", "phase", "execution_enabled", "live_execute_enabled", "external_api_calls", "status", "final_preflight", "execution_pack", "actions"], "must_equal": {"phase": "phase2_preparation", "execution_enabled": false, "live_execute_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
+      "delivery": {"channel": "none"}
+    },
+    {
+      "id": "roibang-create-first-live-prepare-pack",
+      "name": "RoiBang-v2 首单交接包",
+      "category": "create_first_live_prepare_pack",
+      "enabled": false,
+      "schedule": {"type": "cron", "expr": "10 11 * * *", "tz": "Asia/Shanghai"},
+      "script": {
+        "path": "scripts/run_create_first_live_prepare_pack.py",
+        "mode": "foreground",
+        "args": ["--config", "configs/runtime.example.json"]
+      },
+      "policy": {"config": "configs/runtime.example.json"},
+      "result_contract": {"workflow": "create_first_live_prepare_pack", "artifact_dir": "data/runs/create_first_live_prepare_pack", "must_include": ["ok", "workflow", "phase", "execution_enabled", "live_execute_enabled", "external_api_calls", "status", "readiness", "payload_review", "required_enablement", "human_review_checklist", "fixed_scripts", "blocking_reasons", "actions"], "must_equal": {"phase": "phase2_preparation", "execution_enabled": false, "live_execute_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
+      "delivery": {"channel": "none"}
+    },
+    {
+      "id": "roibang-create-live-execute-once",
+      "name": "RoiBang-v2 首单一次性真实执行入口",
+      "category": "create_live_execute_once",
+      "enabled": false,
+      "schedule": {"type": "cron", "expr": "12 11 * * *", "tz": "Asia/Shanghai"},
+      "script": {
+        "path": "scripts/run_create_live_execute_once.py",
+        "mode": "foreground",
+        "args": ["--config", "configs/runtime.example.json", "--policy", "policies/strategy.example.json"]
+      },
+      "policy": {"config": "configs/runtime.example.json", "policy": "policies/strategy.example.json"},
+      "result_contract": {"workflow": "create_live_execute_once", "artifact_dir": "data/runs/create_live_execute_once", "must_include": ["ok", "workflow", "phase", "execution_enabled", "live_execute_enabled", "external_api_calls", "status", "blocking_reasons", "transport_call_count", "idempotency", "material_bind_records", "actions"], "must_equal": {"phase": "phase2_preparation", "execution_enabled": false, "live_execute_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
+      "delivery": {"channel": "none"}
+    },
+    {
       "id": "roibang-create-adapter-review-pack",
       "name": "RoiBang-v2 创建适配器审阅包",
       "category": "create_adapter_review_pack",

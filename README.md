@@ -25,9 +25,21 @@ request -> strategy -> preflight -> dry-run -> approve -> execute
 - `approve`：批准记录，目前仍不是允许真实执行。
 - `execute`：执行阶段，目前必须硬阻断。
 
-`approve` 产物会输出 `payload_review` 人工复核视图。这个视图按 `create_project`、`create_unit`、`bind_material` 三类操作展示 payload 草稿，并汇总 payload 数量、是否仍为 `executable=false`、`live_payload_count` 是否为 0、是否还有 candidate 草稿、是否还有 `<lookup:...>` 占位符，以及 `create_execute` 是否仍需硬阻断。`payload_review` 只方便人工复核，不会打开真实执行。
+`approve` 产物会输出 `payload_review` 人工复核视图。这个视图按 `create_project`、`bind_material`、`lookup_target_material`、`create_unit` 四类操作展示 payload 草稿：先创建项目，再把源素材账户素材推送到目标投放账户，再回查目标账户素材 ID 和封面 ID，最后用目标账户素材创建单元。它会汇总 payload 数量、是否仍为 `executable=false`、`live_payload_count` 是否为 0、是否还有 candidate 草稿、是否还有 `<lookup:...>` 占位符，以及 `create_execute` 是否仍需硬阻断。`payload_review` 只方便人工复核，不会打开真实执行。
 
-`execute` 产物会输出 `execute_review_pack` 和 `chain_boundary_contract`。`execute_review_pack` 按同样三类操作展示已尝试解析本地 ID 台账后的 resolved payload 草稿；`chain_boundary_contract` 汇总 approve 是否仍是 record-only（只记录批准）、execute 是否 hard-block、是否没有 live payload、是否没有可执行 payload、是否 `external_api_calls=0`。这些字段用于最终人工复核，不是执行开关。
+`execute` 产物会输出 `execute_review_pack` 和 `chain_boundary_contract`。`execute_review_pack` 按同样四类操作展示已尝试解析本地 ID 台账后的 resolved payload 草稿；`chain_boundary_contract` 汇总 approve 是否仍是 record-only（只记录批准）、execute 是否 hard-block、是否没有 live payload、是否没有可执行 payload、是否 `external_api_calls=0`。这些字段用于最终人工复核，不是执行开关。
+
+真实创建路径按三件事收敛：
+
+```text
+配置 -> 预演 -> 执行脚本
+```
+
+- `配置`：本地私有 JSON 配置和 policy 策略文件，账户、素材、项目数、单元数都从这里来。
+- `预演`：固定脚本生成本地预演产物，检查四步顺序、账户、素材、预算和本地台账。
+- `执行脚本`：`scripts/run_create_live_execute_once.py` 可直接读取 `create_execute` 产物和本地 policy/runtime 配置，按 `create_project -> bind_material -> lookup_target_material -> create_unit` 固定顺序执行。AI 不临场选择或改参数。
+
+`create_live_execution_pack`、`create_first_live_prepare_pack` 这类产物只作为辅助复核包，不是主执行路径的必需步骤。真实执行以固定脚本、JSON 配置和 SQLite 台账为准。
 
 ## 核心原则
 

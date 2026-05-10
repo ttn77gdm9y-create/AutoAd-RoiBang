@@ -95,9 +95,15 @@ def _execution_pack_artifact(*, ready_for_live_enablement: bool = True) -> dict:
                 "create_project": 1,
                 "create_unit": 2,
                 "bind_material": 1,
-                "total": 4,
+                "lookup_target_material": 1,
+                "total": 5,
             },
-            "ordered_operations": ["create_project", "create_unit", "bind_material"],
+            "ordered_operations": [
+                "create_project",
+                "bind_material",
+                "lookup_target_material",
+                "create_unit",
+            ],
             "transport": {
                 "mode": "create_http",
                 "create_http_transport_allowed": False,
@@ -129,13 +135,22 @@ def test_first_live_prepare_pack_marks_local_ready_without_opening_execution():
         "create_project": 1,
         "create_unit": 2,
         "bind_material": 1,
-        "total": 4,
+        "lookup_target_material": 1,
+        "total": 5,
     }
+    assert result["payload_review"]["ordered_operations"] == [
+        "create_project",
+        "bind_material",
+        "lookup_target_material",
+        "create_unit",
+    ]
     assert result["required_enablement"]["runtime"] == {
         "execution_enabled": True,
         "external_api_enabled": True,
     }
     assert result["fixed_scripts"]["execute_once"] == "scripts/run_create_live_execute_once.py"
+    assert "approval_request_template" not in result
+    assert "approval_file_contract" not in result
     assert result["actions"] == []
 
 
@@ -189,4 +204,6 @@ def test_first_live_prepare_pack_fixed_script_uses_latest_execution_pack(tmp_pat
     assert output["status"] == "ready_for_human_live_enablement"
     assert output["execution_enabled"] is False
     assert output["external_api_calls"] == 0
-    assert artifact["payload_review"]["payload_counts"]["total"] == 4
+    assert artifact["payload_review"]["payload_counts"]["lookup_target_material"] == 1
+    assert artifact["payload_review"]["payload_counts"]["total"] == 5
+    assert "approval_request_template" not in artifact

@@ -297,6 +297,84 @@ def test_create_live_execute_once_requires_transport_after_pack_is_ready(tmp_pat
     assert "create_http transport is not constructed" in result["blocking_reasons"]
 
 
+def test_create_live_execute_once_direct_mode_blocks_without_runtime_or_pack(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+
+    result = run_create_live_execute_once_request(
+        {
+            "create_live_execute_once": {
+                "create_execute_artifact": _execute_artifact(),
+                "create_live_payload_adapter_scaffold_artifact": _scaffold_artifact(),
+                "policy": _policy(),
+                "runtime": {"execution_enabled": False, "external_api_enabled": False},
+            }
+        },
+        runs_dir=tmp_path / "runs",
+        db_path=db_path,
+    )
+
+    assert result["ok"] is False
+    assert result["workflow"] == "create_live_execute_once"
+    assert result["status"] == "blocked"
+    assert result["reason"] == "direct_execute_not_ready"
+    assert result["source_execution_pack_status"] == "not_required_direct_create_execute"
+    assert result["execution_enabled"] is False
+    assert result["live_execute_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert result["transport_call_count"] == 0
+    assert "runtime.execution_enabled is false" in result["blocking_reasons"]
+    assert "runtime.external_api_enabled is false" in result["blocking_reasons"]
+    assert result["actions"] == []
+
+
+def test_create_live_execute_once_direct_mode_runs_fixed_sequence_with_transport(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+    calls: list[dict] = []
+
+    def fake_transport(call: dict) -> dict:
+        calls.append(call)
+        if call["operation"] == "create_project":
+            return {"code": 0, "data": {"project_id": "project-001"}}
+        if call["operation"] == "bind_material":
+            return {"code": 0, "data": {"task_id": "bind-001"}}
+        if call["operation"] == "lookup_target_material":
+            return {"code": 0, "data": {"target_video_id": "target-video-001", "target_video_cover_id": "target-cover-001"}}
+        if call["operation"] == "create_unit":
+            assert call["payload"]["project_id"] == "project-001"
+            assert call["payload"]["promotion_materials"]["video_material_list"][0]["video_id"] == "target-video-001"
+            return {"code": 0, "data": {"promotion_id": "promotion-001"}}
+        raise AssertionError(call["operation"])
+
+    result = run_create_live_execute_once_request(
+        {
+            "create_live_execute_once": {
+                "create_execute_artifact": _execute_artifact(),
+                "create_live_payload_adapter_scaffold_artifact": _scaffold_artifact(),
+                "policy": _policy(),
+                "runtime": {"execution_enabled": True, "external_api_enabled": True},
+            }
+        },
+        runs_dir=tmp_path / "runs",
+        db_path=db_path,
+        transport=fake_transport,
+    )
+
+    assert result["ok"] is True
+    assert result["status"] == "create_http_completed"
+    assert result["source_execution_pack_status"] == "not_required_direct_create_execute"
+    assert result["execution_enabled"] is True
+    assert result["live_execute_enabled"] is True
+    assert result["external_api_calls"] == 4
+    assert [call["operation"] for call in calls] == [
+        "create_project",
+        "bind_material",
+        "lookup_target_material",
+        "create_unit",
+    ]
+
+
 def test_create_live_execute_once_runs_create_http_transport_in_order(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     bootstrap_database(db_path)
@@ -622,11 +700,8 @@ def test_create_live_execute_once_fixed_script_keeps_default_runtime_blocked(tmp
     policy_path.write_text(json.dumps(_policy(), ensure_ascii=False), encoding="utf-8")
     runs_dir = tmp_path / "runs"
     artifacts = {
-        "create_live_execution_pack": _execution_pack_artifact(ready=False),
         "create_execute": _execute_artifact(),
-        "create_first_live_runbook": _runbook_artifact(),
         "create_live_payload_adapter_scaffold": _scaffold_artifact(),
-        "create_live_approval": _approval_artifact(),
     }
     for workflow, artifact in artifacts.items():
         path = runs_dir / workflow / "20260510T000000Z.json"
@@ -645,6 +720,7 @@ def test_create_live_execute_once_fixed_script_keeps_default_runtime_blocked(tmp
     assert output["live_execute_enabled"] is False
     assert output["external_api_calls"] == 0
     assert output["transport_call_count"] == 0
+    assert output["source_execution_pack_status"] == "not_required_direct_create_execute"
     assert artifact["actions"] == []
 
 
@@ -664,5 +740,5 @@ def test_create_live_execute_once_fixed_script_reports_missing_artifacts_as_bloc
     assert output["execution_enabled"] is False
     assert output["external_api_calls"] == 0
     assert output["transport_call_count"] == 0
-    assert "no create_live_execution_pack artifacts found" in output["blocking_reasons"][0]
+    assert "no create_execute artifacts found" in output["blocking_reasons"][0]
     assert artifact["actions"] == []

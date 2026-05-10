@@ -256,6 +256,7 @@ def test_create_live_execution_pack_marks_ready_only_when_all_live_gates_are_exp
         "create_http_transport_allowed": True,
         "external_api_calls_in_pack": 0,
     }
+    assert "source_artifact_digests" not in result["execution_pack"]
 
 
 def test_run_create_live_execution_pack_request_writes_artifact(tmp_path: Path):

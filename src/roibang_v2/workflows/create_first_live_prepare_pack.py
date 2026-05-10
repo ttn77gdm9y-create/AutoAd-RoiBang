@@ -28,6 +28,7 @@ def _payload_counts(execution_pack: dict[str, Any]) -> dict[str, int]:
         "create_project": int(data.get("create_project") or 0),
         "create_unit": int(data.get("create_unit") or 0),
         "bind_material": int(data.get("bind_material") or 0),
+        "lookup_target_material": int(data.get("lookup_target_material") or 0),
         "total": int(data.get("total") or 0),
     }
 
