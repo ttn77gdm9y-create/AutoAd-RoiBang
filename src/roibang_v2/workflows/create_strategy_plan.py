@@ -323,9 +323,11 @@ def _build_projects(
             global_project_index += 1
             project_key = f"{advertiser_id}-p{account_project_index:03d}"
             name_entry = _project_name_entry(request, policy, advertiser_id=advertiser_id, index=global_project_index)
+            project_name = name_entry["project_name"]
             units: list[dict[str, Any]] = []
             for unit_index in range(1, units_per_project + 1):
                 unit_key = f"{project_key}-u{unit_index:02d}"
+                promotion_name = f"{project_name}_U{unit_index:02d}"
                 materials: list[dict[str, Any]] = []
                 for _ in range(materials_per_unit):
                     row = _next_candidate(
@@ -345,6 +347,7 @@ def _build_projects(
                     {
                         "unit_key": unit_key,
                         "unit_index": unit_index,
+                        "promotion_name": promotion_name,
                         "materials": materials,
                     }
                 )
@@ -353,7 +356,7 @@ def _build_projects(
                     "project_key": project_key,
                     "advertiser_id": advertiser_id,
                     "project_index": global_project_index,
-                    "project_name": name_entry["project_name"],
+                    "project_name": project_name,
                     "naming": name_entry["naming"],
                     "project_type": str(request.get("project_type") or ""),
                     "daily_budget": float(account.get("daily_budget") or 0),

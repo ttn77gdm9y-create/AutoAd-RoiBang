@@ -64,9 +64,25 @@
         "source": "internal_phase1_schema"
       },
       {
+        "internal_field": "project_id",
+        "provider_field": "",
+        "purpose": "provider project id lookup placeholder",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
         "internal_field": "unit_key",
         "provider_field": "",
         "purpose": "local planned unit key",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
+        "internal_field": "promotion_name",
+        "provider_field": "",
+        "purpose": "planned provider-facing unit name",
         "verified": false,
         "required": true,
         "source": "internal_phase1_schema"
@@ -98,6 +114,14 @@
         "source": "internal_phase1_schema"
       },
       {
+        "internal_field": "project_id",
+        "provider_field": "",
+        "purpose": "provider project id lookup placeholder",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
         "internal_field": "unit_key",
         "provider_field": "",
         "purpose": "local planned unit key",
@@ -106,9 +130,25 @@
         "source": "internal_phase1_schema"
       },
       {
+        "internal_field": "promotion_id",
+        "provider_field": "",
+        "purpose": "provider promotion id lookup placeholder",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
         "internal_field": "material_id",
         "provider_field": "",
         "purpose": "source material identity",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
+        "internal_field": "source_video_id",
+        "provider_field": "",
+        "purpose": "source video identity",
         "verified": false,
         "required": true,
         "source": "internal_phase1_schema"

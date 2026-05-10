@@ -31,14 +31,19 @@ def disabled_create_payload_schema(policy: dict[str, Any] | None = None) -> dict
             "create_unit": [
                 "advertiser_id",
                 "project_key",
+                "project_id",
                 "unit_key",
+                "promotion_name",
                 "field_defaults",
             ],
             "bind_material": [
                 "advertiser_id",
                 "project_key",
+                "project_id",
                 "unit_key",
+                "promotion_id",
                 "material_id",
+                "source_video_id",
             ],
         },
         "field_sources": {

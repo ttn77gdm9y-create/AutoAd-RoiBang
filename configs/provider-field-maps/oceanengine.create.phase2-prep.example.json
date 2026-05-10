@@ -91,11 +91,26 @@
       },
       {
         "internal_field": "project_key",
+        "provider_field": "",
+        "provider_object": "promotion_create_request",
+        "mapping_kind": "local_lookup_key",
+        "value_source": "create_strategy_plan.strategy.projects[].project_key",
+        "purpose": "local planned project key",
+        "verified": false,
+        "required": true,
+        "source": "phase2_preparation",
+        "evidence_refs": [],
+        "open_questions": [
+          "Confirm project_key remains local-only and never goes into provider payloads."
+        ]
+      },
+      {
+        "internal_field": "project_id",
         "provider_field": "project_id",
         "provider_object": "promotion_create_request",
         "mapping_kind": "created_id_lookup",
-        "value_source": "create_strategy_plan.strategy.projects[].project_key",
-        "purpose": "local planned project key",
+        "value_source": "create_dry_run.candidate_tasks[].units[].project_id",
+        "purpose": "provider project id lookup placeholder",
         "verified": false,
         "required": true,
         "source": "phase2_preparation",
@@ -106,11 +121,26 @@
       },
       {
         "internal_field": "unit_key",
+        "provider_field": "",
+        "provider_object": "promotion_create_request",
+        "mapping_kind": "local_lookup_key",
+        "value_source": "create_strategy_plan.strategy.projects[].units[].unit_key",
+        "purpose": "local planned unit key",
+        "verified": false,
+        "required": true,
+        "source": "phase2_preparation",
+        "evidence_refs": [],
+        "open_questions": [
+          "Confirm unit_key remains local-only and is used only for idempotency and promotion_id lookup."
+        ]
+      },
+      {
+        "internal_field": "promotion_name",
         "provider_field": "name",
         "provider_object": "promotion_create_request",
         "mapping_kind": "direct",
-        "value_source": "create_strategy_plan.strategy.projects[].units[].unit_key",
-        "purpose": "local planned unit key used as unit name candidate",
+        "value_source": "create_strategy_plan.strategy.projects[].units[].promotion_name",
+        "purpose": "planned provider-facing unit name",
         "verified": false,
         "required": true,
         "source": "phase2_preparation",
@@ -149,11 +179,26 @@
       },
       {
         "internal_field": "project_key",
+        "provider_field": "",
+        "provider_object": "material_bind_request",
+        "mapping_kind": "local_lookup_key",
+        "value_source": "create_strategy_plan.strategy.projects[].project_key",
+        "purpose": "local planned project key",
+        "verified": false,
+        "required": true,
+        "source": "phase2_preparation",
+        "evidence_refs": [],
+        "open_questions": [
+          "Confirm project_key remains local-only and never goes into material binding provider payloads."
+        ]
+      },
+      {
+        "internal_field": "project_id",
         "provider_field": "project_id",
         "provider_object": "material_bind_request",
         "mapping_kind": "created_id_lookup",
-        "value_source": "create_strategy_plan.strategy.projects[].project_key",
-        "purpose": "local planned project key",
+        "value_source": "create_dry_run.candidate_tasks[].units[].materials[].project_id",
+        "purpose": "provider project id lookup placeholder",
         "verified": false,
         "required": true,
         "source": "phase2_preparation",
@@ -164,11 +209,26 @@
       },
       {
         "internal_field": "unit_key",
+        "provider_field": "",
+        "provider_object": "material_bind_request",
+        "mapping_kind": "local_lookup_key",
+        "value_source": "create_strategy_plan.strategy.projects[].units[].unit_key",
+        "purpose": "local planned unit key",
+        "verified": false,
+        "required": true,
+        "source": "phase2_preparation",
+        "evidence_refs": [],
+        "open_questions": [
+          "Confirm unit_key remains local-only and never goes into material binding provider payloads."
+        ]
+      },
+      {
+        "internal_field": "promotion_id",
         "provider_field": "promotion_id",
         "provider_object": "material_bind_request",
         "mapping_kind": "created_id_lookup",
-        "value_source": "create_strategy_plan.strategy.projects[].units[].unit_key",
-        "purpose": "local planned unit key",
+        "value_source": "create_dry_run.candidate_tasks[].units[].materials[].promotion_id",
+        "purpose": "provider promotion id lookup placeholder",
         "verified": false,
         "required": true,
         "source": "phase2_preparation",
@@ -190,6 +250,21 @@
         "evidence_refs": ["oceanengine_openapi_material_binding_request"],
         "open_questions": [
           "Confirm whether provider expects material_id, video_material_id, or a nested material list for this operation."
+        ]
+      },
+      {
+        "internal_field": "source_video_id",
+        "provider_field": "",
+        "provider_object": "material_bind_request",
+        "mapping_kind": "",
+        "value_source": "create_strategy_plan.strategy.projects[].units[].materials[].source_video_id",
+        "purpose": "source video identity",
+        "verified": false,
+        "required": true,
+        "source": "phase2_preparation",
+        "evidence_refs": [],
+        "open_questions": [
+          "Confirm whether source_video_id is needed directly or only as local material provenance."
         ]
       }
     ]

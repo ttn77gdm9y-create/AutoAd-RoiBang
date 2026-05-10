@@ -81,6 +81,10 @@ def _with_idempotency(plan: dict[str, Any], project: dict[str, Any]) -> dict[str
         if not isinstance(unit, dict):
             continue
         unit_fields = {**plan_fields, "unit_key": str(unit.get("unit_key") or "")}
+        project_key = str(project.get("project_key") or "")
+        unit_key = str(unit.get("unit_key") or "")
+        project_id_placeholder = f"<lookup:{project_key}>"
+        promotion_id_placeholder = f"<lookup:{unit_key}>"
         materials: list[dict[str, Any]] = []
         for material in unit.get("materials") if isinstance(unit.get("materials"), list) else []:
             if not isinstance(material, dict):
@@ -89,12 +93,16 @@ def _with_idempotency(plan: dict[str, Any], project: dict[str, Any]) -> dict[str
             materials.append(
                 {
                     **material,
+                    "project_id": project_id_placeholder,
+                    "promotion_id": promotion_id_placeholder,
                     "idempotency_key": _idempotency_key("bind_material", material_fields),
                 }
             )
         units.append(
             {
                 **unit,
+                "project_id": project_id_placeholder,
+                "promotion_id": promotion_id_placeholder,
                 "materials": materials,
                 "idempotency_key": _idempotency_key("create_unit", unit_fields),
             }
@@ -156,7 +164,9 @@ def _task_payload_drafts(project: dict[str, Any], *, payload_schema: dict[str, A
                 "payload": {
                     "advertiser_id": str(project.get("advertiser_id") or ""),
                     "project_key": str(project.get("project_key") or ""),
+                    "project_id": str(unit.get("project_id") or ""),
                     "unit_key": str(unit.get("unit_key") or ""),
+                    "promotion_name": str(unit.get("promotion_name") or ""),
                     "field_defaults": project.get("field_defaults") if isinstance(project.get("field_defaults"), dict) else {},
                 },
             }
@@ -174,8 +184,11 @@ def _task_payload_drafts(project: dict[str, Any], *, payload_schema: dict[str, A
                     "payload": {
                         "advertiser_id": str(project.get("advertiser_id") or ""),
                         "project_key": str(project.get("project_key") or ""),
+                        "project_id": str(material.get("project_id") or ""),
                         "unit_key": str(unit.get("unit_key") or ""),
+                        "promotion_id": str(material.get("promotion_id") or ""),
                         "material_id": str(material.get("material_id") or ""),
+                        "source_video_id": str(material.get("source_video_id") or ""),
                     },
                 }
             )
@@ -458,8 +471,8 @@ def build_create_dry_run(
     plan_ref = create_ref(workflow="create_strategy_plan", artifact=create_strategy_plan_artifact)
     preflight_ref = create_ref(workflow="create_preflight", artifact=create_preflight_artifact)
     payload_schema = disabled_create_payload_schema(policy)
-    payload_contract = validate_create_payload_contract(projects=projects, payload_schema=payload_schema)
     candidate_tasks = [_project_task(plan, project, payload_schema) for project in projects]
+    payload_contract = validate_create_payload_contract(projects=candidate_tasks, payload_schema=payload_schema)
     redacted_payload_drafts = _top_level_redacted_payload_drafts(candidate_tasks)
     payload_draft_contract = _payload_draft_contract(candidate_tasks, redacted_payload_drafts)
     provider_adapter = disabled_provider_adapter(policy)

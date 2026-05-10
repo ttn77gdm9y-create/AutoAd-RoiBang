@@ -763,14 +763,19 @@ def test_create_dry_run_outputs_non_executable_project_unit_material_combination
     assert result["payload_schema"]["required_fields"]["create_unit"] == [
         "advertiser_id",
         "project_key",
+        "project_id",
         "unit_key",
+        "promotion_name",
         "field_defaults",
     ]
     assert result["payload_schema"]["required_fields"]["bind_material"] == [
         "advertiser_id",
         "project_key",
+        "project_id",
         "unit_key",
+        "promotion_id",
         "material_id",
+        "source_video_id",
     ]
     assert result["payload_contract"] == {
         "status": "passed",
@@ -823,9 +828,9 @@ def test_create_dry_run_outputs_non_executable_project_unit_material_combination
         "source": "internal_phase1_schema",
     }
     assert result["provider_field_map"]["operations"]["bind_material"][-1] == {
-        "internal_field": "material_id",
+        "internal_field": "source_video_id",
         "provider_field": "",
-        "purpose": "source material identity",
+        "purpose": "source video identity",
         "verified": False,
         "required": True,
         "source": "internal_phase1_schema",
@@ -835,10 +840,10 @@ def test_create_dry_run_outputs_non_executable_project_unit_material_combination
         "provider": "oceanengine",
         "mapping_verified": False,
         "operation_count": 3,
-        "field_count": 13,
+        "field_count": 18,
         "verified_field_count": 0,
-        "unverified_field_count": 13,
-        "missing_provider_field_count": 13,
+        "unverified_field_count": 18,
+        "missing_provider_field_count": 18,
         "missing_required_field_count": 0,
         "missing_required_fields": [],
         "duplicate_internal_field_count": 0,
@@ -952,16 +957,32 @@ def test_create_dry_run_can_load_provider_field_map_from_json_config(tmp_path: P
                         },
                         {
                             "internal_field": "project_key",
-                            "provider_field": "project_id",
+                            "provider_field": "local_project_key",
                             "purpose": "local planned project key",
                             "verified": True,
                             "required": True,
                             "source": "unit_test",
                         },
                         {
+                            "internal_field": "project_id",
+                            "provider_field": "project_id",
+                            "purpose": "provider project id lookup placeholder",
+                            "verified": True,
+                            "required": True,
+                            "source": "unit_test",
+                        },
+                        {
                             "internal_field": "unit_key",
-                            "provider_field": "promotion_name",
+                            "provider_field": "local_unit_key",
                             "purpose": "local planned unit key",
+                            "verified": True,
+                            "required": True,
+                            "source": "unit_test",
+                        },
+                        {
+                            "internal_field": "promotion_name",
+                            "provider_field": "promotion_name",
+                            "purpose": "planned provider-facing unit name",
                             "verified": True,
                             "required": True,
                             "source": "unit_test",
@@ -986,16 +1007,32 @@ def test_create_dry_run_can_load_provider_field_map_from_json_config(tmp_path: P
                         },
                         {
                             "internal_field": "project_key",
-                            "provider_field": "project_id",
+                            "provider_field": "local_project_key",
                             "purpose": "local planned project key",
                             "verified": True,
                             "required": True,
                             "source": "unit_test",
                         },
                         {
+                            "internal_field": "project_id",
+                            "provider_field": "project_id",
+                            "purpose": "provider project id lookup placeholder",
+                            "verified": True,
+                            "required": True,
+                            "source": "unit_test",
+                        },
+                        {
                             "internal_field": "unit_key",
-                            "provider_field": "promotion_id",
+                            "provider_field": "local_unit_key",
                             "purpose": "local planned unit key",
+                            "verified": True,
+                            "required": True,
+                            "source": "unit_test",
+                        },
+                        {
+                            "internal_field": "promotion_id",
+                            "provider_field": "promotion_id",
+                            "purpose": "provider promotion id lookup placeholder",
                             "verified": True,
                             "required": True,
                             "source": "unit_test",
@@ -1004,6 +1041,14 @@ def test_create_dry_run_can_load_provider_field_map_from_json_config(tmp_path: P
                             "internal_field": "material_id",
                             "provider_field": "material_id",
                             "purpose": "source material identity",
+                            "verified": True,
+                            "required": True,
+                            "source": "unit_test",
+                        },
+                        {
+                            "internal_field": "source_video_id",
+                            "provider_field": "source_video_id",
+                            "purpose": "source video identity",
                             "verified": True,
                             "required": True,
                             "source": "unit_test",
@@ -1035,8 +1080,8 @@ def test_create_dry_run_can_load_provider_field_map_from_json_config(tmp_path: P
         "provider": "oceanengine",
         "mapping_verified": True,
         "operation_count": 3,
-        "field_count": 13,
-        "verified_field_count": 13,
+        "field_count": 18,
+        "verified_field_count": 18,
         "unverified_field_count": 0,
         "missing_provider_field_count": 0,
         "missing_required_field_count": 0,
@@ -1077,14 +1122,48 @@ def test_create_dry_run_can_load_provider_field_map_from_json_config(tmp_path: P
     assert "daily_budget" not in result["provider_payload_drafts"][0]["payload"]
     unit_draft = next(draft for draft in result["provider_payload_drafts"] if draft["operation"] == "create_unit")
     assert unit_draft["field_mapping_applied"] is True
-    assert unit_draft["payload"]["project_id"] == "target-1-p001"
-    assert unit_draft["payload"]["promotion_name"] == "target-1-p001-u01"
+    assert unit_draft["payload"]["local_project_key"] == "target-1-p001"
+    assert unit_draft["payload"]["project_id"] == "<lookup:target-1-p001>"
+    assert unit_draft["payload"]["local_unit_key"] == "target-1-p001-u01"
+    assert unit_draft["payload"]["promotion_name"] == "0508_郭靖_勇者突进_微小每付7R通投_B80C4C430_01_U01"
     assert "unit_key" not in unit_draft["payload"]
     material_draft = next(draft for draft in result["provider_payload_drafts"] if draft["operation"] == "bind_material")
     assert material_draft["field_mapping_applied"] is True
-    assert material_draft["payload"]["promotion_id"] == "target-1-p001-u01"
+    assert material_draft["payload"]["local_project_key"] == "target-1-p001"
+    assert material_draft["payload"]["project_id"] == "<lookup:target-1-p001>"
+    assert material_draft["payload"]["local_unit_key"] == "target-1-p001-u01"
+    assert material_draft["payload"]["promotion_id"] == "<lookup:target-1-p001-u01>"
     assert material_draft["payload"]["material_id"] == "m-high"
+    assert material_draft["payload"]["source_video_id"] == "source-video-1"
     assert "unit_key" not in material_draft["payload"]
+    assert result["actions"] == []
+
+
+def test_create_dry_run_generates_promotion_name_and_lookup_placeholders(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    plan = build_create_strategy_plan(request=_create_request()["create_request"], db_path=db_path, policy={})
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+
+    result = build_create_dry_run(create_strategy_plan_artifact=plan, create_preflight_artifact=preflight, policy={})
+
+    task = result["candidate_tasks"][0]
+    first_unit = task["units"][0]
+    assert first_unit["unit_key"] == "target-1-p001-u01"
+    assert first_unit["promotion_name"] == "0508_郭靖_勇者突进_微小每付7R通投_B80C4C430_01_U01"
+
+    unit_draft = next(draft for draft in task["redacted_payload_drafts"] if draft["operation"] == "create_unit")
+    assert unit_draft["payload"]["unit_key"] == "target-1-p001-u01"
+    assert unit_draft["payload"]["promotion_name"] == "0508_郭靖_勇者突进_微小每付7R通投_B80C4C430_01_U01"
+    assert unit_draft["payload"]["project_id"] == "<lookup:target-1-p001>"
+
+    material_draft = next(draft for draft in task["redacted_payload_drafts"] if draft["operation"] == "bind_material")
+    assert material_draft["payload"]["project_id"] == "<lookup:target-1-p001>"
+    assert material_draft["payload"]["promotion_id"] == "<lookup:target-1-p001-u01>"
+    assert material_draft["payload"]["source_video_id"] == "source-video-1"
+    assert result["payload_contract"]["status"] == "passed"
+    assert result["execution_enabled"] is False
+    assert result["external_api_calls"] == 0
     assert result["actions"] == []
 
 
@@ -1205,9 +1284,9 @@ def test_create_provider_field_map_check_reports_unverified_example_config():
         "provider": "oceanengine",
         "field_map_path": "configs/provider-field-maps/oceanengine.create.phase1.example.json",
         "operation_count": 3,
-        "field_count": 13,
+        "field_count": 18,
         "verified_field_count": 0,
-        "missing_provider_field_count": 13,
+        "missing_provider_field_count": 18,
         "missing_required_field_count": 0,
         "duplicate_internal_field_count": 0,
         "duplicate_provider_field_count": 0,
@@ -1510,7 +1589,7 @@ def test_run_create_provider_field_map_check_request_writes_artifact(tmp_path: P
 
     assert Path(result["artifact_path"]).exists()
     assert result["workflow"] == "create_provider_field_map_check"
-    assert result["summary"]["field_count"] == 13
+    assert result["summary"]["field_count"] == 18
 
 
 def test_create_provider_field_map_check_cli_uses_policy_config(tmp_path: Path, capsys):
@@ -1554,16 +1633,16 @@ def test_create_field_mapping_review_pack_lists_fields_without_requiring_user_in
         "field_mapping_version": "phase1.oceanengine.create_payload.draft.v1",
         "field_map_path": "configs/provider-field-maps/oceanengine.create.phase1.example.json",
         "operation_count": 3,
-        "field_count": 13,
-        "needs_provider_field_count": 13,
-        "needs_verification_count": 13,
+        "field_count": 18,
+        "needs_provider_field_count": 18,
+        "needs_verification_count": 18,
         "ready_for_live_execute": False,
     }
     assert result["review_contract"] == {
         "status": "needs_review",
-        "field_count": 13,
-        "needs_provider_field_count": 13,
-        "needs_verification_count": 13,
+        "field_count": 18,
+        "needs_provider_field_count": 18,
+        "needs_verification_count": 18,
         "verified_field_count": 0,
         "missing_required_field_count": 0,
         "duplicate_internal_field_count": 0,
@@ -1602,7 +1681,7 @@ def test_run_create_field_mapping_review_pack_request_writes_artifact(tmp_path: 
 
     artifact = json.loads(Path(result["artifact_path"]).read_text(encoding="utf-8"))
     assert result["workflow"] == "create_field_mapping_review_pack"
-    assert result["summary"]["field_count"] == 13
+    assert result["summary"]["field_count"] == 18
     assert artifact["workflow"] == "create_field_mapping_review_pack"
     assert artifact["actions"] == []
 
@@ -1655,11 +1734,11 @@ def test_create_phase2_provider_mapping_prep_builds_review_matrix_without_execut
         "field_mapping_version": "phase2.oceanengine.create_payload.prep.v1",
         "field_map_path": "configs/provider-field-maps/oceanengine.create.phase2-prep.example.json",
         "operation_count": 3,
-        "field_count": 13,
+        "field_count": 18,
         "candidate_provider_field_count": 10,
         "verified_field_count": 0,
-        "unresolved_field_count": 13,
-        "open_question_count": 7,
+        "unresolved_field_count": 18,
+        "open_question_count": 12,
         "ready_for_live_payload_development": False,
         "ready_for_live_execute": False,
     }
@@ -1726,7 +1805,7 @@ def test_run_create_phase2_provider_mapping_prep_request_writes_artifact(tmp_pat
 
     artifact = json.loads(Path(result["artifact_path"]).read_text(encoding="utf-8"))
     assert result["workflow"] == "create_phase2_provider_mapping_prep"
-    assert result["summary"]["field_count"] == 13
+    assert result["summary"]["field_count"] == 18
     assert artifact["phase"] == "phase2_preparation"
     assert artifact["execution_enabled"] is False
     assert artifact["external_api_calls"] == 0
@@ -4247,7 +4326,7 @@ def test_create_phase2_preparation_summary_combines_review_gaps_without_execute(
         "phase": "phase2_preparation",
         "execution_enabled": False,
         "external_api_calls": 0,
-        "summary": {"unresolved_field_count": 13, "open_question_count": 7},
+        "summary": {"unresolved_field_count": 18, "open_question_count": 12},
         "unresolved_mappings": [{"operation": "create_project", "internal_field": "field_defaults"}],
         "violations": [],
         "actions": [],
@@ -4477,14 +4556,14 @@ def test_create_readiness_matrix_summarizes_blocking_review_gates():
         "workflow": "create_provider_field_map_check",
         "ok": True,
         "status": "unverified",
-        "summary": {"field_count": 13, "missing_provider_field_count": 13},
+        "summary": {"field_count": 18, "missing_provider_field_count": 18},
         "provider_readiness_contract": {"ready_for_live_execute": False},
     }
     field_mapping_review_pack = {
         "workflow": "create_field_mapping_review_pack",
         "ok": True,
         "status": "needs_review",
-        "summary": {"field_count": 13, "needs_provider_field_count": 13},
+        "summary": {"field_count": 18, "needs_provider_field_count": 18},
     }
     template_slot_review_pack = {
         "workflow": "create_template_slot_review_pack",
@@ -6555,14 +6634,19 @@ def test_create_execute_is_hard_blocked_in_phase1_even_after_recorded_approval(t
                 "create_unit": [
                     "advertiser_id",
                     "project_key",
+                    "project_id",
                     "unit_key",
+                    "promotion_name",
                     "field_defaults",
                 ],
                 "bind_material": [
                     "advertiser_id",
                     "project_key",
+                    "project_id",
                     "unit_key",
+                    "promotion_id",
                     "material_id",
+                    "source_video_id",
                 ],
             },
             "field_sources": {

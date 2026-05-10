@@ -15,14 +15,26 @@ _FIELD_PURPOSES = {
     "daily_budget": "planned project daily budget",
     "field_defaults": "project and unit default fields",
     "project_key": "local planned project key",
+    "project_id": "provider project id lookup placeholder",
     "unit_key": "local planned unit key",
+    "promotion_name": "planned provider-facing unit name",
+    "promotion_id": "provider promotion id lookup placeholder",
     "material_id": "source material identity",
+    "source_video_id": "source video identity",
 }
 
 _REQUIRED_FIELDS_BY_OPERATION = {
     "create_project": ["advertiser_id", "project_name", "project_type", "daily_budget", "field_defaults"],
-    "create_unit": ["advertiser_id", "project_key", "unit_key", "field_defaults"],
-    "bind_material": ["advertiser_id", "project_key", "unit_key", "material_id"],
+    "create_unit": ["advertiser_id", "project_key", "project_id", "unit_key", "promotion_name", "field_defaults"],
+    "bind_material": [
+        "advertiser_id",
+        "project_key",
+        "project_id",
+        "unit_key",
+        "promotion_id",
+        "material_id",
+        "source_video_id",
+    ],
 }
 
 
