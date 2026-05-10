@@ -35,9 +35,24 @@ def disabled_create_payload_schema(policy: dict[str, Any] | None = None) -> dict
                 "project_id",
                 "unit_key",
                 "promotion_name",
+                "promotion_materials.video_material_list",
+                "promotion_materials.title_material_list",
+                "promotion_materials.call_to_action_buttons",
+                "budget",
+                "budget_mode",
+                "source",
+                "operation",
                 "field_defaults.landing_type",
                 "field_defaults.pricing",
                 "field_defaults.inventory_type",
+            ],
+            "lookup_target_material": [
+                "source_advertiser_id",
+                "target_advertiser_id",
+                "source_video_id",
+                "material_id",
+                "target_video_id",
+                "target_video_cover_id",
             ],
             "bind_material": [
                 "source_advertiser_id",
@@ -52,6 +67,7 @@ def disabled_create_payload_schema(policy: dict[str, Any] | None = None) -> dict
         "field_sources": {
             "create_project": "create_strategy_plan.strategy.projects[]",
             "create_unit": "create_strategy_plan.strategy.projects[].units[]",
+            "lookup_target_material": "create_strategy_plan.strategy.projects[].units[].materials[]",
             "bind_material": "create_strategy_plan.strategy.projects[].units[].materials[]",
         },
     }
@@ -65,9 +81,11 @@ def validate_create_payload_contract(
     required = payload_schema.get("required_fields") if isinstance(payload_schema.get("required_fields"), dict) else {}
     project_required = [str(item) for item in required.get("create_project") or []]
     unit_required = [str(item) for item in required.get("create_unit") or []]
+    lookup_required = [str(item) for item in required.get("lookup_target_material") or []]
     bind_required = [str(item) for item in required.get("bind_material") or []]
     missing_fields: list[str] = []
     checked_unit_count = 0
+    checked_material_lookup_count = 0
     checked_material_binding_count = 0
     for project in projects:
         project_key = str(project.get("project_key") or "")
@@ -84,6 +102,11 @@ def validate_create_payload_contract(
                     missing_fields.append(f"create_unit unit {unit_key} missing {field}")
             materials = unit.get("materials") if isinstance(unit.get("materials"), list) else []
             for material in [row for row in materials if isinstance(row, dict)]:
+                checked_material_lookup_count += 1
+                lookup_scope = {**project, **unit, **material}
+                for field in lookup_required:
+                    if not _has_payload_value(lookup_scope, field):
+                        missing_fields.append(f"lookup_target_material unit {unit_key} missing {field}")
                 checked_material_binding_count += 1
                 bind_scope = {**project, **unit, **material}
                 for field in bind_required:
@@ -94,6 +117,7 @@ def validate_create_payload_contract(
         "schema_version": str(payload_schema.get("version") or CREATE_PAYLOAD_SCHEMA_VERSION),
         "checked_project_count": len(projects),
         "checked_unit_count": checked_unit_count,
+        "checked_material_lookup_count": checked_material_lookup_count,
         "checked_material_binding_count": checked_material_binding_count,
         "missing_fields": missing_fields,
     }

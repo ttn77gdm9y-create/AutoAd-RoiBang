@@ -104,6 +104,78 @@
         "source": "internal_phase1_schema"
       },
       {
+        "internal_field": "promotion_materials.video_material_list",
+        "provider_field": "",
+        "purpose": "provider-facing promotion video material list",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
+        "internal_field": "promotion_materials.title_material_list",
+        "provider_field": "",
+        "purpose": "provider-facing promotion title material list",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
+        "internal_field": "promotion_materials.call_to_action_buttons",
+        "provider_field": "",
+        "purpose": "provider-facing call-to-action button list",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
+        "internal_field": "promotion_materials.mini_program_info",
+        "provider_field": "",
+        "purpose": "provider-facing mini program landing information",
+        "verified": false,
+        "required": false,
+        "source": "internal_phase1_schema"
+      },
+      {
+        "internal_field": "budget",
+        "provider_field": "",
+        "purpose": "unit budget",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
+        "internal_field": "budget_mode",
+        "provider_field": "",
+        "purpose": "unit budget mode",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
+        "internal_field": "roi_goal",
+        "provider_field": "",
+        "purpose": "unit ROI goal",
+        "verified": false,
+        "required": false,
+        "source": "internal_phase1_schema"
+      },
+      {
+        "internal_field": "source",
+        "provider_field": "",
+        "purpose": "unit creative source",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
+        "internal_field": "operation",
+        "provider_field": "",
+        "purpose": "provider object status operation",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
         "internal_field": "field_defaults.landing_type",
         "provider_field": "",
         "purpose": "default landing type",
@@ -123,6 +195,56 @@
         "internal_field": "field_defaults.inventory_type",
         "provider_field": "",
         "purpose": "default inventory type",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      }
+    ],
+    "lookup_target_material": [
+      {
+        "internal_field": "source_advertiser_id",
+        "provider_field": "",
+        "purpose": "source material advertiser account id",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
+        "internal_field": "target_advertiser_id",
+        "provider_field": "",
+        "purpose": "target advertiser account id for material lookup",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
+        "internal_field": "source_video_id",
+        "provider_field": "",
+        "purpose": "source video identity",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
+        "internal_field": "material_id",
+        "provider_field": "",
+        "purpose": "source material identity",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
+        "internal_field": "target_video_id",
+        "provider_field": "",
+        "purpose": "target account video id lookup placeholder",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
+        "internal_field": "target_video_cover_id",
+        "provider_field": "",
+        "purpose": "target account video cover id lookup placeholder",
         "verified": false,
         "required": true,
         "source": "internal_phase1_schema"

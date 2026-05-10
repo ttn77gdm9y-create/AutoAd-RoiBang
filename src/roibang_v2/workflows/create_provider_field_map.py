@@ -24,9 +24,21 @@ _FIELD_PURPOSES = {
     "project_id": "provider project id lookup placeholder",
     "unit_key": "local planned unit key",
     "promotion_name": "planned provider-facing unit name",
+    "promotion_materials.video_material_list": "provider-facing promotion video material list",
+    "promotion_materials.title_material_list": "provider-facing promotion title material list",
+    "promotion_materials.call_to_action_buttons": "provider-facing call-to-action button list",
+    "promotion_materials.mini_program_info": "provider-facing mini program landing information",
+    "budget": "unit budget",
+    "budget_mode": "unit budget mode",
+    "roi_goal": "unit ROI goal",
+    "source": "unit creative source",
+    "operation": "provider object status operation",
     "promotion_id": "provider promotion id lookup placeholder",
     "material_id": "source material identity",
     "source_video_id": "source video identity",
+    "target_advertiser_id": "target advertiser account id for material lookup",
+    "target_video_id": "target account video id lookup placeholder",
+    "target_video_cover_id": "target account video cover id lookup placeholder",
 }
 
 _FIELD_DEFAULT_SUBFIELDS = [
@@ -37,7 +49,31 @@ _FIELD_DEFAULT_SUBFIELDS = [
 
 _REQUIRED_FIELDS_BY_OPERATION = {
     "create_project": ["advertiser_id", "project_name", "project_type", "daily_budget", *_FIELD_DEFAULT_SUBFIELDS],
-    "create_unit": ["advertiser_id", "project_key", "project_id", "unit_key", "promotion_name", *_FIELD_DEFAULT_SUBFIELDS],
+    "create_unit": [
+        "advertiser_id",
+        "project_key",
+        "project_id",
+        "unit_key",
+        "promotion_name",
+        "promotion_materials.video_material_list",
+        "promotion_materials.title_material_list",
+        "promotion_materials.call_to_action_buttons",
+        "promotion_materials.mini_program_info",
+        "budget",
+        "budget_mode",
+        "roi_goal",
+        "source",
+        "operation",
+        *_FIELD_DEFAULT_SUBFIELDS,
+    ],
+    "lookup_target_material": [
+        "source_advertiser_id",
+        "target_advertiser_id",
+        "source_video_id",
+        "material_id",
+        "target_video_id",
+        "target_video_cover_id",
+    ],
     "bind_material": [
         "source_advertiser_id",
         "target_advertiser_ids",
@@ -159,10 +195,9 @@ def _is_valid_provider_field_map(value: Any) -> bool:
     operations = value.get("operations")
     if not isinstance(operations, dict):
         return False
-    required_operations = set(_REQUIRED_FIELDS_BY_OPERATION)
-    if not required_operations.issubset(set(operations)):
+    if not operations:
         return False
-    for operation in required_operations:
+    for operation in operations:
         rows = operations.get(operation)
         if not isinstance(rows, list) or not rows:
             return False

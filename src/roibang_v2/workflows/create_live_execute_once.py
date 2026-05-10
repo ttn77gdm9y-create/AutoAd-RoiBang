@@ -15,7 +15,7 @@ from roibang_v2.workflows.create_provider_id_ledger import (
 )
 
 Transport = Callable[[dict[str, Any]], dict[str, Any]]
-OPERATION_ORDER = ["create_project", "create_unit", "bind_material"]
+OPERATION_ORDER = ["create_project", "bind_material", "lookup_target_material", "create_unit"]
 
 
 def _once_config(request: dict[str, Any]) -> dict[str, Any]:
@@ -139,6 +139,15 @@ def _unit_records(create_execute: dict[str, Any]) -> list[dict[str, Any]]:
     return _rows(_provider_id_requirements(create_execute).get("produced_by_create_unit"))
 
 
+def _target_material_records(create_execute: dict[str, Any]) -> list[dict[str, Any]]:
+    requirements = _rows(_provider_id_requirements(create_execute).get("required_before_create_unit"))
+    return [
+        row
+        for row in requirements
+        if str(row.get("entity_type") or "") in {"target_video", "target_video_cover"}
+    ]
+
+
 def _summary(create_execute: dict[str, Any]) -> dict[str, Any]:
     value = create_execute.get("summary")
     return dict(value) if isinstance(value, dict) else {}
@@ -205,6 +214,24 @@ def _promotion_id(response: dict[str, Any]) -> str:
     return str(data.get("promotion_id") or response.get("promotion_id") or "")
 
 
+def _target_video_id(response: dict[str, Any]) -> str:
+    data = _response_data(response)
+    return str(data.get("target_video_id") or data.get("video_id") or response.get("target_video_id") or response.get("video_id") or "")
+
+
+def _target_video_cover_id(response: dict[str, Any]) -> str:
+    data = _response_data(response)
+    return str(
+        data.get("target_video_cover_id")
+        or data.get("video_cover_id")
+        or data.get("cover_id")
+        or response.get("target_video_cover_id")
+        or response.get("video_cover_id")
+        or response.get("cover_id")
+        or ""
+    )
+
+
 def _material_bind_task_id(response: dict[str, Any]) -> str:
     data = _response_data(response)
     return str(
@@ -240,8 +267,47 @@ def _record_provider_id(
     operation: str,
     index: int,
     response: dict[str, Any],
-) -> dict[str, Any] | None:
+) -> dict[str, Any] | list[dict[str, Any]] | None:
     summary = _summary(create_execute_artifact)
+    if operation == "lookup_target_material":
+        records = _target_material_records(create_execute_artifact)
+        provider_ids = {
+            "target_video": _target_video_id(response),
+            "target_video_cover": _target_video_cover_id(response),
+        }
+        results: list[dict[str, Any]] = []
+        for row in records[index * 2 : index * 2 + 2]:
+            entity_type = str(row.get("entity_type") or "")
+            local_key = str(row.get("local_key") or "")
+            provider_id = provider_ids.get(entity_type, "")
+            if not local_key or not provider_id:
+                results.append(
+                    {
+                        "status": "missing_provider_id",
+                        "entity_type": entity_type,
+                        "local_key": local_key,
+                        "provider_id": provider_id,
+                        "execution_enabled": False,
+                        "external_api_calls": 0,
+                        "actions": [],
+                    }
+                )
+                continue
+            results.append(
+                record_create_provider_id(
+                    db_path=db_path,
+                    entity_type=entity_type,
+                    local_key=local_key,
+                    provider_id=provider_id,
+                    plan_id=str(summary.get("plan_id") or ""),
+                    request_id=str(summary.get("request_id") or ""),
+                    advertiser_id="",
+                    parent_local_key="",
+                    source_workflow="create_live_execute_once",
+                    response_payload=_safe_response(response),
+                )
+            )
+        return results
     if operation == "create_project":
         provider_id = _project_id(response)
         entity_type = "project"
@@ -385,6 +451,8 @@ def _resumable_create_http_run(
 
     for operation in OPERATION_ORDER:
         drafts = _drafts_for_operation(create_execute_artifact, operation)
+        if not drafts:
+            continue
         if operation == "bind_material":
             pending, skipped_binds = _split_existing_material_binds(db_path=db_path, drafts=drafts)
             skipped_material_bind_records.extend(skipped_binds)
@@ -465,14 +533,15 @@ def _resumable_create_http_run(
                         skipped_material_bind_records=skipped_material_bind_records,
                     ),
                 }
-            record = _record_provider_id(
+            record_result = _record_provider_id(
                 db_path=db_path,
                 create_execute_artifact=create_execute_artifact,
                 operation=operation,
                 index=original_index,
                 response=response,
             )
-            if record is not None:
+            records = record_result if isinstance(record_result, list) else [record_result] if record_result is not None else []
+            for record in records:
                 provider_id_records.append(record)
                 if str(record.get("status") or "") != "recorded":
                     return {

@@ -304,11 +304,11 @@ def test_create_live_execute_once_runs_create_http_transport_in_order(tmp_path: 
     assert result["live_execute_enabled"] is True
     assert result["external_api_calls"] == 3
     assert result["transport_call_count"] == 3
-    assert [call["operation"] for call in calls] == ["create_project", "create_unit", "bind_material"]
+    assert [call["operation"] for call in calls] == ["create_project", "bind_material", "create_unit"]
     assert result["ordered_steps"] == [
         {"operation": "create_project", "planned_count": 1, "status": "completed", "test_transport_call_count": 1},
-        {"operation": "create_unit", "planned_count": 1, "status": "completed", "test_transport_call_count": 1},
         {"operation": "bind_material", "planned_count": 1, "status": "completed", "test_transport_call_count": 1},
+        {"operation": "create_unit", "planned_count": 1, "status": "completed", "test_transport_call_count": 1},
     ]
     assert [row["provider_id"] for row in result["provider_id_records"]] == ["project-001", "promotion-001"]
 
@@ -377,7 +377,7 @@ def test_create_live_execute_once_skips_existing_project_and_resumes_unit(tmp_pa
     assert result["ok"] is True
     assert result["status"] == "create_http_completed"
     assert result["external_api_calls"] == 2
-    assert [call["operation"] for call in calls] == ["create_unit", "bind_material"]
+    assert [call["operation"] for call in calls] == ["bind_material", "create_unit"]
     assert result["idempotency"]["skipped_existing_provider_id_count"] == 1
     assert result["ordered_steps"][0] == {
         "operation": "create_project",
@@ -452,8 +452,8 @@ def test_create_live_execute_once_skips_existing_project_and_unit_then_binds_mat
     assert result["idempotency"]["skipped_existing_provider_id_count"] == 2
     assert [step["status"] for step in result["ordered_steps"]] == [
         "skipped_existing_provider_id",
-        "skipped_existing_provider_id",
         "completed",
+        "skipped_existing_provider_id",
     ]
 
 
@@ -518,8 +518,8 @@ def test_create_live_execute_once_skips_existing_material_bind(tmp_path: Path):
     assert result["idempotency"]["skipped_existing_material_bind_count"] == 1
     assert [step["status"] for step in result["ordered_steps"]] == [
         "skipped_existing_provider_id",
-        "skipped_existing_provider_id",
         "skipped_existing_material_bind",
+        "skipped_existing_provider_id",
     ]
 
 

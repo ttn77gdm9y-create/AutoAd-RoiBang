@@ -227,7 +227,7 @@ def test_create_live_execution_pack_marks_ready_only_when_all_live_gates_are_exp
     assert result["final_preflight"]["ready_for_live_execute"] is True
     assert result["final_preflight"]["blocking_reasons"] == []
     assert result["execution_pack"]["scope"] == _runbook_artifact()["scope"]
-    assert result["execution_pack"]["ordered_operations"] == ["create_project", "create_unit", "bind_material"]
+    assert result["execution_pack"]["ordered_operations"] == ["create_project", "bind_material", "create_unit"]
     assert result["execution_pack"]["payloads_by_operation"]["bind_material"][0]["payload"] == {
         "source_advertiser_id": "source-1",
         "target_advertiser_ids": ["target-1"],

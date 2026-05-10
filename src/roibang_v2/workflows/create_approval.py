@@ -15,7 +15,7 @@ from roibang_v2.workflows.create_lineage import (
 from roibang_v2.workflows.create_provider_readiness import not_ready_provider_readiness_contract
 
 
-_PAYLOAD_REVIEW_OPERATIONS = ("create_project", "create_unit", "bind_material")
+_PAYLOAD_REVIEW_OPERATIONS = ("create_project", "bind_material", "lookup_target_material", "create_unit")
 
 
 def _approval_config(request: dict[str, Any]) -> dict[str, Any]:

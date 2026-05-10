@@ -198,7 +198,7 @@ configs/provider-evidence/oceanengine.create.phase2-review.example.json
 下一步不再是补字段证据，而是继续把真实创建前的边界做牢：
 
 1. 继续保持 `create_execute` 硬阻断。
-2. 完善 dry-run 请求体草稿，让项目、单元、素材推送都能被人工复核。
+2. 完善 dry-run 请求体草稿，让项目、素材推送、目标账户素材回查、单元创建都能被人工复核。
 3. 增加 approve 产物里的字段复核摘要。
 4. 之后再进入 execute 边界设计，但仍不执行真实业务动作。
 
@@ -208,11 +208,12 @@ configs/provider-evidence/oceanengine.create.phase2-review.example.json
 
 `create_approval` 现在会输出 `payload_review` 人工复核视图。
 
-`payload_review.drafts_by_operation` 按三类操作展示 payload 草稿：
+`payload_review.drafts_by_operation` 按四类操作展示 payload 草稿：
 
 - `create_project`：项目创建请求体草稿。
-- `create_unit`：单元创建请求体草稿。
 - `bind_material`：素材推送请求体草稿。
+- `lookup_target_material`：目标账户素材回查草稿，用于拿到目标账户视频 ID 和封面 ID。
+- `create_unit`：单元创建请求体草稿。
 
 `payload_review.manual_review_summary` 会汇总：
 
@@ -230,7 +231,7 @@ configs/provider-evidence/oceanengine.create.phase2-review.example.json
 
 `create_execute` 现在会输出两个最终复核字段：
 
-- `execute_review_pack`：按 `create_project`、`create_unit`、`bind_material` 展示 resolved payload 草稿。`resolved` 的意思是“已经用本地 provider ID ledger（平台 ID 台账）尝试替换 `<lookup:...>` 占位符”。
+- `execute_review_pack`：按 `create_project`（创建项目）、`bind_material`（素材推送）、`lookup_target_material`（目标账户素材回查）、`create_unit`（创建单元）展示 resolved payload 草稿。`resolved` 的意思是“已经用本地 provider ID ledger（平台 ID 台账）尝试替换 `<lookup:...>` 占位符”。
 - `chain_boundary_contract`：汇总 approve 是否仍是 record-only、execute 是否仍 hard-block、是否没有 live payload、是否没有可执行 payload、是否 `external_api_calls=0`、是否 `actions=[]`。
 
 `create_chain_final_report` 现在会读取最新 `create_execute` 产物，并输出 `creation_boundary_summary`：
@@ -246,10 +247,10 @@ configs/provider-evidence/oceanengine.create.phase2-review.example.json
 `create_mock_execute` 用本地 mock provider ID 打通真实创建顺序：
 
 ```text
-create_project -> create_unit -> bind_material
+create_project -> bind_material -> lookup_target_material -> create_unit
 ```
 
-它会模拟平台返回的 `project_id` 和 `promotion_id`，写入 `create_provider_id_ledger`（平台 ID 台账），再回跑 `create_execute` 的 resolved payload 复核。这个流程只写本地 SQLite 和 run artifact，不调用真实接口，`external_api_calls` 必须继续为 0。
+它会模拟平台返回的 `project_id`（平台项目 ID）、目标账户 `video_id`（目标账户视频 ID）、`video_cover_id`（目标账户视频封面 ID）和 `promotion_id`（平台单元 ID），写入 `create_provider_id_ledger`（平台 ID 台账），再回跑 `create_execute` 的 resolved payload 复核。这个流程只写本地 SQLite 和 run artifact，不调用真实接口，`external_api_calls` 必须继续为 0。
 
 `create_live_payload_adapter_scaffold` 现在输出 `live_adapter_gate`，把正式执行所需闸门集中展示：
 
@@ -270,7 +271,7 @@ create_project -> create_unit -> bind_material
 - `approve` 仍只是 approval record（批准记录），不是 execute switch（执行开关）。
 - 只有 runtime、policy、phase gate、runbook、人工批准记录和测试 transport 全部满足时，单元测试才会进入 `test_transport_completed`。
 - 单元测试里的 transport 是假的本地函数，不是 HTTP 请求；因此 `external_api_calls` 仍必须是 0。
-- 执行顺序固定为 `create_project -> create_unit -> bind_material`。
+- 执行顺序固定为 `create_project -> bind_material -> lookup_target_material -> create_unit`。也就是先创建项目，再把源素材账户的视频推送到目标账户，然后回查目标账户素材 ID，最后用目标账户素材创建单元。
 - 任一步失败立即停止，`auto_retry_enabled=false`，不自动重试。
 
 当前 runner 的固定脚本入口用途：
@@ -344,7 +345,7 @@ PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_live_approva
 它会把以下信息集中到一个 artifact（运行产物）：
 
 - `final_preflight`：最终执行前检查，列出 runtime（运行时配置）、policy（策略配置）、phase gate（阶段闸门）、runbook（首单手册）、approval artifact（批准产物）、payload（请求体）安全边界。
-- `execution_pack`：执行包，按 `create_project`、`create_unit`、`bind_material` 三类展示 payload drafts（请求体草稿）、endpoint（接口地址）、scope（首单范围）和 approval（批准记录）。
+- `execution_pack`：执行包，按 `create_project`（创建项目）、`bind_material`（素材推送）、`lookup_target_material`（目标账户素材回查）、`create_unit`（创建单元）展示 payload drafts（请求体草稿）、endpoint（接口地址）、scope（首单范围）和 approval（批准记录）。
 - `ready_for_live_enablement`：表示本地安全边界已通过，只差真实启用项。
 - `ready_for_live_execute`：表示真实启用项也全部显式打开，但这个 artifact 本身仍不执行。
 
@@ -378,10 +379,10 @@ PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_live_execute
 - `execution_enabled=true`：本次确实进入执行尝试。
 - `live_execute_enabled=true`：本次确实进入真实执行路径。
 - `external_api_calls`：真实发送层调用次数。
-- `provider_id_records`：平台返回的 `project_id`（平台项目 ID）和 `promotion_id`（平台单元 ID）写入本地台账的记录。
+- `provider_id_records`：平台返回的 `project_id`（平台项目 ID）、目标账户 `video_id`（目标账户视频 ID）、`video_cover_id`（目标账户视频封面 ID）和 `promotion_id`（平台单元 ID）写入本地台账的记录。
 - `material_bind_records`：`bind_material`（素材推送）成功后的结果台账记录。
 
-失败策略保持不变：创建项目失败就不创建单元；创建单元失败就不做素材推送；素材推送失败则停止并保留已创建的 ID 供人工复核。变更请求不自动 retry（重试），避免重复创建。
+失败策略按新业务顺序执行：创建项目失败就不做素材推送；素材推送失败就不做目标账户素材回查；目标账户素材回查失败就不创建单元；创建单元失败则停止并保留已创建的 ID 供人工复核。变更请求不自动 retry（重试），避免重复创建。
 
 ## idempotency and resume
 
@@ -394,6 +395,7 @@ PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_live_execute
 - 素材推送成功后会写入 `create_material_bind_ledger`（素材推送台账）。
 - 如果某次 `bind_material`（素材推送）已有 active（有效）台账记录，就跳过这次素材推送，不再调用真实接口。
 - 素材推送跳过记录会写入 `idempotency.skipped_material_bind_records`。
+- `lookup_target_material`（目标账户素材回查）成功后会把目标账户 `video_id` 和 `video_cover_id` 写入 `create_provider_id_ledger`，供后续 `create_unit` 的 `promotion_materials`（单元素材组合）使用。
 - 后续 payload（请求体）里的 lookup placeholder（本地占位符）会继续从 SQLite 台账解析成真实平台 ID。
 
 这意味着首单执行如果中途失败，下一次运行可以从已写入台账的位置继续，不会重复创建已经成功的平台项目、单元，也不会重复推送已经记录成功的同一组素材。
@@ -412,7 +414,7 @@ PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_first_live_p
 
 - `readiness.local_boundary_ready`：本地边界是否已准备好。
 - `readiness.ready_for_live_execute`：真实执行开关是否已经全部显式打开。
-- `payload_review`：首单项目、单元、素材推送的 payload（请求体）数量和 scope（执行范围）。
+- `payload_review`：首单项目、素材推送、目标账户素材回查、单元创建的 payload（请求体）数量和 scope（执行范围）。
 - `required_enablement`：真正执行前需要打开哪些 runtime（运行时配置）和 policy（策略配置）开关。
 - `human_review_checklist`：人工核对清单。
 

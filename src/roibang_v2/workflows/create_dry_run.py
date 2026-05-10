@@ -73,6 +73,68 @@ def _idempotency_key(scope: str, source_fields: dict[str, Any]) -> dict[str, Any
     }
 
 
+def _request_payload(plan: dict[str, Any]) -> dict[str, Any]:
+    value = plan.get("request")
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _template_parameters(plan: dict[str, Any]) -> dict[str, Any]:
+    value = _request_payload(plan).get("template_parameters")
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _target_video_lookup_key(*, advertiser_id: str, source_video_id: str) -> str:
+    return f"target_video:{advertiser_id}:{source_video_id}"
+
+
+def _target_video_placeholder(*, advertiser_id: str, source_video_id: str) -> str:
+    return f"<lookup:{_target_video_lookup_key(advertiser_id=advertiser_id, source_video_id=source_video_id)}>"
+
+
+def _target_video_cover_placeholder(*, advertiser_id: str, source_video_id: str) -> str:
+    return f"<lookup:target_video_cover:{advertiser_id}:{source_video_id}>"
+
+
+def _unit_source() -> str:
+    return "RoiBang"
+
+
+def _unit_title(project: dict[str, Any]) -> str:
+    name = str(project.get("project_name") or "")
+    return name[:30] if len(name) >= 5 else "立即体验精彩玩法"
+
+
+def _unit_promotion_materials(
+    *,
+    plan: dict[str, Any],
+    project: dict[str, Any],
+    materials: list[dict[str, Any]],
+) -> dict[str, Any]:
+    advertiser_id = str(project.get("advertiser_id") or "")
+    template_parameters = _template_parameters(plan)
+    video_materials: list[dict[str, Any]] = []
+    for material in materials:
+        source_video_id = str(material.get("source_video_id") or "")
+        if not source_video_id:
+            continue
+        video_materials.append(
+            {
+                "image_mode": "CREATIVE_IMAGE_MODE_VIDEO_VERTICAL",
+                "video_id": _target_video_placeholder(advertiser_id=advertiser_id, source_video_id=source_video_id),
+                "video_cover_id": _target_video_cover_placeholder(advertiser_id=advertiser_id, source_video_id=source_video_id),
+            }
+        )
+    payload: dict[str, Any] = {
+        "video_material_list": video_materials,
+        "title_material_list": [{"title": _unit_title(project)}],
+        "call_to_action_buttons": ["立即查看"],
+    }
+    touch_url = str(template_parameters.get("effective_touch_url") or "").strip()
+    if touch_url:
+        payload["mini_program_info"] = {"url": touch_url}
+    return payload
+
+
 def _with_idempotency(plan: dict[str, Any], project: dict[str, Any]) -> dict[str, Any]:
     plan_fields = {
         "plan_id": str(plan.get("plan_id") or ""),
@@ -96,20 +158,36 @@ def _with_idempotency(plan: dict[str, Any], project: dict[str, Any]) -> dict[str
             if not isinstance(material, dict):
                 continue
             material_fields = {**unit_fields, "material_id": str(material.get("material_id") or "")}
+            source_video_id = str(material.get("source_video_id") or "")
+            advertiser_id = str(project.get("advertiser_id") or "")
             materials.append(
                 {
                     **material,
                     "source_advertiser_id": source_advertiser_id,
-                    "target_advertiser_ids": [str(project.get("advertiser_id") or "")],
-                    "source_video_ids": [str(material.get("source_video_id") or "")],
+                    "target_advertiser_id": advertiser_id,
+                    "target_advertiser_ids": [advertiser_id],
+                    "source_video_ids": [source_video_id],
+                    "target_video_id": _target_video_placeholder(advertiser_id=advertiser_id, source_video_id=source_video_id),
+                    "target_video_cover_id": _target_video_cover_placeholder(
+                        advertiser_id=advertiser_id,
+                        source_video_id=source_video_id,
+                    ),
                     "idempotency_key": _idempotency_key("bind_material", material_fields),
                 }
             )
+        promotion_materials = _unit_promotion_materials(plan=plan, project=project, materials=materials)
+        template_parameters = _template_parameters(plan)
         units.append(
             {
                 **unit,
                 "project_id": project_id_placeholder,
                 "promotion_id": promotion_id_placeholder,
+                "budget": float(project.get("daily_budget") or 0),
+                "budget_mode": "BUDGET_MODE_DAY",
+                "roi_goal": template_parameters.get("roi_coefficient"),
+                "source": _unit_source(),
+                "operation": "ENABLE",
+                "promotion_materials": promotion_materials,
                 "materials": materials,
                 "idempotency_key": _idempotency_key("create_unit", unit_fields),
             }
@@ -160,24 +238,6 @@ def _task_payload_drafts(project: dict[str, Any], *, payload_schema: dict[str, A
     ]
     units = project.get("units") if isinstance(project.get("units"), list) else []
     for unit in [row for row in units if isinstance(row, dict)]:
-        drafts.append(
-            {
-                "operation": "create_unit",
-                "transport": "disabled_schema_only",
-                "executable": False,
-                "idempotency_key": str(unit.get("idempotency_key", {}).get("value") or ""),
-                "endpoint": str(endpoints.get("create_unit") or ""),
-                "payload": {
-                    "advertiser_id": str(project.get("advertiser_id") or ""),
-                    "project_key": str(project.get("project_key") or ""),
-                    "project_id": str(unit.get("project_id") or ""),
-                    "unit_key": str(unit.get("unit_key") or ""),
-                    "promotion_name": str(unit.get("promotion_name") or ""),
-                    "field_defaults": project.get("field_defaults") if isinstance(project.get("field_defaults"), dict) else {},
-                },
-            }
-        )
-    for unit in [row for row in units if isinstance(row, dict)]:
         materials = unit.get("materials") if isinstance(unit.get("materials"), list) else []
         for material in [row for row in materials if isinstance(row, dict)]:
             drafts.append(
@@ -201,6 +261,61 @@ def _task_payload_drafts(project: dict[str, Any], *, payload_schema: dict[str, A
                     },
                 }
             )
+    for unit in [row for row in units if isinstance(row, dict)]:
+        materials = unit.get("materials") if isinstance(unit.get("materials"), list) else []
+        for material in [row for row in materials if isinstance(row, dict)]:
+            source_video_id = str(material.get("source_video_id") or "")
+            drafts.append(
+                {
+                    "operation": "lookup_target_material",
+                    "transport": "manual_or_readonly_lookup_required",
+                    "executable": False,
+                    "idempotency_key": str(material.get("idempotency_key", {}).get("value") or ""),
+                    "endpoint": "",
+                    "payload": {
+                        "source_advertiser_id": str(material.get("source_advertiser_id") or ""),
+                        "target_advertiser_id": str(project.get("advertiser_id") or ""),
+                        "source_video_id": source_video_id,
+                        "material_id": str(material.get("material_id") or ""),
+                    },
+                    "expected_outputs": {
+                        "target_video_id": _target_video_placeholder(
+                            advertiser_id=str(project.get("advertiser_id") or ""),
+                            source_video_id=source_video_id,
+                        ),
+                        "target_video_cover_id": _target_video_cover_placeholder(
+                            advertiser_id=str(project.get("advertiser_id") or ""),
+                            source_video_id=source_video_id,
+                        ),
+                    },
+                }
+            )
+    for unit in [row for row in units if isinstance(row, dict)]:
+        drafts.append(
+            {
+                "operation": "create_unit",
+                "transport": "disabled_schema_only",
+                "executable": False,
+                "idempotency_key": str(unit.get("idempotency_key", {}).get("value") or ""),
+                "endpoint": str(endpoints.get("create_unit") or ""),
+                "payload": {
+                    "advertiser_id": str(project.get("advertiser_id") or ""),
+                    "project_key": str(project.get("project_key") or ""),
+                    "project_id": str(unit.get("project_id") or ""),
+                    "unit_key": str(unit.get("unit_key") or ""),
+                    "promotion_name": str(unit.get("promotion_name") or ""),
+                    "promotion_materials": unit.get("promotion_materials")
+                    if isinstance(unit.get("promotion_materials"), dict)
+                    else {},
+                    "budget": float(unit.get("budget") or 0),
+                    "budget_mode": str(unit.get("budget_mode") or ""),
+                    "roi_goal": unit.get("roi_goal"),
+                    "source": str(unit.get("source") or ""),
+                    "operation": str(unit.get("operation") or ""),
+                    "field_defaults": project.get("field_defaults") if isinstance(project.get("field_defaults"), dict) else {},
+                },
+            }
+        )
     return drafts
 
 
@@ -243,6 +358,7 @@ def _payload_draft_contract(tasks: list[dict[str, Any]], redacted_payload_drafts
     return {
         "status": "passed",
         "draft_count": len(task_drafts),
+        "ordered_operations": _unique_ordered_operations(task_drafts),
         "live_payload_count": sum(
             len(task.get("live_api_payloads") if isinstance(task.get("live_api_payloads"), list) else [])
             for task in tasks
@@ -250,6 +366,17 @@ def _payload_draft_contract(tasks: list[dict[str, Any]], redacted_payload_drafts
         "executable_draft_count": sum(1 for draft in task_drafts + redacted_payload_drafts if bool(draft.get("executable", False))),
         "redacted": True,
     }
+
+
+def _unique_ordered_operations(drafts: list[dict[str, Any]]) -> list[str]:
+    rows: list[str] = []
+    seen: set[str] = set()
+    for draft in drafts:
+        operation = str(draft.get("operation") or "")
+        if operation and operation not in seen:
+            rows.append(operation)
+            seen.add(operation)
+    return rows
 
 
 def _idempotency_contract(tasks: list[dict[str, Any]]) -> dict[str, Any]:
@@ -294,6 +421,7 @@ def _provider_id_ledger_requirements(tasks: list[dict[str, Any]]) -> dict[str, A
     produced_units: list[dict[str, str]] = []
     required_before_units: list[dict[str, str]] = []
     required_before_materials: list[dict[str, str]] = []
+    required_target_materials: list[dict[str, str]] = []
     for task in tasks:
         project_key = str(task.get("project_key") or "")
         if not project_key:
@@ -329,6 +457,30 @@ def _provider_id_ledger_requirements(tasks: list[dict[str, Any]]) -> dict[str, A
                 )
             materials = unit.get("materials") if isinstance(unit.get("materials"), list) else []
             for material in [row for row in materials if isinstance(row, dict)]:
+                source_video_id = str(material.get("source_video_id") or "")
+                target_video_placeholder = str(material.get("target_video_id") or "")
+                target_cover_placeholder = str(material.get("target_video_cover_id") or "")
+                if target_video_placeholder:
+                    required_target_materials.append(
+                        {
+                            "field": "promotion_materials.video_material_list[].video_id",
+                            "entity_type": "target_video",
+                            "local_key": _target_video_lookup_key(
+                                advertiser_id=str(task.get("advertiser_id") or ""),
+                                source_video_id=source_video_id,
+                            ),
+                            "placeholder": target_video_placeholder,
+                        }
+                    )
+                if target_cover_placeholder:
+                    required_target_materials.append(
+                        {
+                            "field": "promotion_materials.video_material_list[].video_cover_id",
+                            "entity_type": "target_video_cover",
+                            "local_key": f"target_video_cover:{str(task.get('advertiser_id') or '')}:{source_video_id}",
+                            "placeholder": target_cover_placeholder,
+                        }
+                    )
                 material_project_placeholder = str(material.get("project_id") or "")
                 material_promotion_placeholder = str(material.get("promotion_id") or "")
                 if material_project_placeholder:
@@ -354,7 +506,7 @@ def _provider_id_ledger_requirements(tasks: list[dict[str, Any]]) -> dict[str, A
         "produced_by_create_project": _unique_rows(produced_projects, ("entity_type", "local_key")),
         "produced_by_create_unit": _unique_rows(produced_units, ("entity_type", "local_key")),
         "required_before_create_unit": _unique_rows(
-            required_before_units,
+            [*required_before_units, *required_target_materials],
             ("field", "entity_type", "local_key", "placeholder"),
         ),
         "required_before_bind_material": _unique_rows(

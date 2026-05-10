@@ -22,6 +22,14 @@ def _entity_type_for_field(field: str) -> str:
         return "project"
     if field == "promotion_id":
         return "promotion"
+    if field == "video_id":
+        return "target_video"
+    if field == "video_cover_id":
+        return "target_video_cover"
+    if field == "target_video_id":
+        return "target_video"
+    if field == "target_video_cover_id":
+        return "target_video_cover"
     return ""
 
 
@@ -111,43 +119,50 @@ def record_create_provider_id(
 
 
 def resolve_create_lookup_placeholders(*, db_path: str | Path, payload: dict[str, Any]) -> dict[str, Any]:
-    resolved_payload: dict[str, Any] = {}
     unresolved: list[dict[str, str]] = []
     lookup_count = 0
+    resolved_count = 0
+
+    def resolve_value(conn: sqlite3.Connection, value: Any, *, field: str) -> Any:
+        nonlocal lookup_count, resolved_count
+        if isinstance(value, dict):
+            return {key: resolve_value(conn, item, field=str(key)) for key, item in value.items()}
+        if isinstance(value, list):
+            return [resolve_value(conn, item, field=field) for item in value]
+        text = str(value) if isinstance(value, str) else ""
+        local_key = _lookup_key(text)
+        if not local_key:
+            return value
+        lookup_count += 1
+        entity_type = _entity_type_for_field(str(field))
+        params: tuple[str, ...]
+        where = "local_key = ? AND status = 'active'"
+        params = (local_key,)
+        if entity_type:
+            where += " AND entity_type = ?"
+            params = (local_key, entity_type)
+        row = conn.execute(
+            f"""
+            SELECT provider_id
+            FROM create_provider_id_ledger
+            WHERE {where}
+            ORDER BY entity_type
+            LIMIT 1
+            """,
+            params,
+        ).fetchone()
+        if row:
+            resolved_count += 1
+            return str(row[0])
+        unresolved.append({"field": str(field), "placeholder": text, "local_key": local_key})
+        return value
+
     with sqlite3.connect(db_path) as conn:
-        for field, value in payload.items():
-            text = str(value) if isinstance(value, str) else ""
-            local_key = _lookup_key(text)
-            if not local_key:
-                resolved_payload[field] = value
-                continue
-            lookup_count += 1
-            entity_type = _entity_type_for_field(str(field))
-            params: tuple[str, ...]
-            where = "local_key = ? AND status = 'active'"
-            params = (local_key,)
-            if entity_type:
-                where += " AND entity_type = ?"
-                params = (local_key, entity_type)
-            row = conn.execute(
-                f"""
-                SELECT provider_id
-                FROM create_provider_id_ledger
-                WHERE {where}
-                ORDER BY entity_type
-                LIMIT 1
-                """,
-                params,
-            ).fetchone()
-            if row:
-                resolved_payload[field] = str(row[0])
-            else:
-                resolved_payload[field] = value
-                unresolved.append({"field": str(field), "placeholder": text, "local_key": local_key})
+        resolved_payload = {field: resolve_value(conn, value, field=str(field)) for field, value in payload.items()}
     return {
         "status": "resolved" if not unresolved else "blocked",
         "lookup_count": lookup_count,
-        "resolved_count": lookup_count - len(unresolved),
+        "resolved_count": resolved_count,
         "unresolved_count": len(unresolved),
         "unresolved_placeholders": unresolved,
         "resolved_payload": resolved_payload,

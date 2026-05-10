@@ -48,8 +48,22 @@ def _unit_records(requirements: dict[str, Any]) -> list[dict[str, Any]]:
     return _rows(requirements.get("produced_by_create_unit"))
 
 
+def _target_material_requirements(requirements: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        row
+        for row in _rows(requirements.get("required_before_create_unit"))
+        if str(row.get("entity_type") or "") in {"target_video", "target_video_cover"}
+    ]
+
+
 def _mock_provider_id(entity_type: str, local_key: str) -> str:
-    prefix = "mock_project" if entity_type == "project" else "mock_promotion"
+    prefixes = {
+        "project": "mock_project",
+        "promotion": "mock_promotion",
+        "target_video": "mock_target_video",
+        "target_video_cover": "mock_target_video_cover",
+    }
+    prefix = prefixes.get(entity_type, "mock_provider")
     return f"{prefix}_{_safe_key(local_key)}"
 
 
@@ -115,10 +129,42 @@ def _record_units(
     return records
 
 
+def _record_target_materials(
+    *,
+    db_path: str | Path,
+    approval_summary: dict[str, Any],
+    requirements: dict[str, Any],
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for row in _target_material_requirements(requirements):
+        local_key = str(row.get("local_key") or "")
+        entity_type = str(row.get("entity_type") or "")
+        if not local_key or entity_type not in {"target_video", "target_video_cover"}:
+            continue
+        records.append(
+            record_create_provider_id(
+                db_path=db_path,
+                entity_type=entity_type,
+                local_key=local_key,
+                provider_id=_mock_provider_id(entity_type, local_key),
+                plan_id=str(approval_summary.get("plan_id") or ""),
+                request_id=str(approval_summary.get("request_id") or ""),
+                source_workflow="create_mock_execute",
+                response_payload={
+                    "mock": True,
+                    "entity_type": entity_type,
+                    "local_key": local_key,
+                },
+            )
+        )
+    return records
+
+
 def _ordered_steps(
     *,
     summary: dict[str, Any],
     project_record_count: int,
+    target_material_record_count: int,
     unit_record_count: int,
 ) -> list[dict[str, Any]]:
     return [
@@ -129,15 +175,21 @@ def _ordered_steps(
             "status": "simulated",
         },
         {
-            "operation": "create_unit",
-            "planned_count": int(summary.get("unit_count") or 0),
-            "recorded_provider_id_count": unit_record_count,
-            "status": "simulated",
-        },
-        {
             "operation": "bind_material",
             "planned_count": int(summary.get("material_count") or 0),
             "recorded_provider_id_count": 0,
+            "status": "simulated",
+        },
+        {
+            "operation": "lookup_target_material",
+            "planned_count": int(summary.get("material_count") or 0),
+            "recorded_provider_id_count": target_material_record_count,
+            "status": "simulated",
+        },
+        {
+            "operation": "create_unit",
+            "planned_count": int(summary.get("unit_count") or 0),
+            "recorded_provider_id_count": unit_record_count,
             "status": "simulated",
         },
     ]
@@ -156,6 +208,11 @@ def build_create_mock_execute(
         approval_summary=approval_summary,
         requirements=requirements,
     )
+    target_material_records = _record_target_materials(
+        db_path=db_path,
+        approval_summary=approval_summary,
+        requirements=requirements,
+    )
     unit_records = _record_units(
         db_path=db_path,
         approval_summary=approval_summary,
@@ -167,7 +224,7 @@ def build_create_mock_execute(
         db_path=db_path,
     )
     unresolved_after_mock = int(final_execute.get("resolved_payload_contract", {}).get("unresolved_lookup_count") or 0)
-    provider_id_records = project_records + unit_records
+    provider_id_records = project_records + target_material_records + unit_records
     return {
         "ok": unresolved_after_mock == 0 and all(str(row.get("status") or "") == "recorded" for row in provider_id_records),
         "workflow": "create_mock_execute",
@@ -184,6 +241,7 @@ def build_create_mock_execute(
         "ordered_steps": _ordered_steps(
             summary=approval_summary,
             project_record_count=len(project_records),
+            target_material_record_count=len(target_material_records),
             unit_record_count=len(unit_records),
         ),
         "provider_id_records": provider_id_records,

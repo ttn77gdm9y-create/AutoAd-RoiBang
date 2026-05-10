@@ -17,7 +17,7 @@ from roibang_v2.workflows.create_provider_id_ledger import resolve_provider_payl
 from roibang_v2.workflows.create_provider_readiness import not_ready_provider_readiness_contract
 
 
-_PAYLOAD_REVIEW_OPERATIONS = ("create_project", "create_unit", "bind_material")
+_PAYLOAD_REVIEW_OPERATIONS = ("create_project", "bind_material", "lookup_target_material", "create_unit")
 
 
 def _execute_config(request: dict[str, Any]) -> dict[str, Any]:
@@ -89,23 +89,29 @@ def _execution_plan(
                 "status": "blocked_in_phase1",
             },
             {
-                "step": "create_unit",
-                "order": 2,
-                "planned_count": int(summary.get("unit_count") or 0),
-                "status": "blocked_in_phase1",
-                "requires_provider_id_ledger": {
-                    "status": "required",
-                    "required_count": int(provider_id_ledger_gate.get("required_before_create_unit_count") or 0),
-                },
-            },
-            {
                 "step": "bind_material",
-                "order": 3,
+                "order": 2,
                 "planned_count": int(summary.get("material_count") or 0),
                 "status": "blocked_in_phase1",
                 "requires_provider_id_ledger": {
                     "status": "required",
                     "required_count": int(provider_id_ledger_gate.get("required_before_bind_material_count") or 0),
+                },
+            },
+            {
+                "step": "lookup_target_material",
+                "order": 3,
+                "planned_count": int(summary.get("material_count") or 0),
+                "status": "blocked_in_phase1",
+            },
+            {
+                "step": "create_unit",
+                "order": 4,
+                "planned_count": int(summary.get("unit_count") or 0),
+                "status": "blocked_in_phase1",
+                "requires_provider_id_ledger": {
+                    "status": "required",
+                    "required_count": int(provider_id_ledger_gate.get("required_before_create_unit_count") or 0),
                 },
             },
         ],

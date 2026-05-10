@@ -172,6 +172,127 @@
         "open_questions": []
       },
       {
+        "internal_field": "promotion_materials.video_material_list",
+        "provider_field": "promotion_materials.video_material_list",
+        "provider_object": "promotion_create_request",
+        "mapping_kind": "direct",
+        "value_source": "create_dry_run.candidate_tasks[].units[].promotion_materials.video_material_list",
+        "purpose": "target account video material list for unit creation",
+        "verified": true,
+        "required": true,
+        "source": "local_api_doc_review",
+        "evidence_refs": ["oceanengine_openapi_promotion_create_request"],
+        "open_questions": [
+          "目标账户 video_id/video_cover_id 需要在素材推送后回查得到，不能直接使用源素材账户 video_id。"
+        ]
+      },
+      {
+        "internal_field": "promotion_materials.title_material_list",
+        "provider_field": "promotion_materials.title_material_list",
+        "provider_object": "promotion_create_request",
+        "mapping_kind": "direct",
+        "value_source": "create_dry_run.candidate_tasks[].units[].promotion_materials.title_material_list",
+        "purpose": "unit title material list",
+        "verified": true,
+        "required": true,
+        "source": "local_api_doc_review",
+        "evidence_refs": ["oceanengine_openapi_promotion_create_request"],
+        "open_questions": []
+      },
+      {
+        "internal_field": "promotion_materials.call_to_action_buttons",
+        "provider_field": "promotion_materials.call_to_action_buttons",
+        "provider_object": "promotion_create_request",
+        "mapping_kind": "direct",
+        "value_source": "create_dry_run.candidate_tasks[].units[].promotion_materials.call_to_action_buttons",
+        "purpose": "unit call-to-action button list",
+        "verified": true,
+        "required": true,
+        "source": "local_api_doc_review",
+        "evidence_refs": ["oceanengine_openapi_promotion_create_request"],
+        "open_questions": []
+      },
+      {
+        "internal_field": "promotion_materials.mini_program_info",
+        "provider_field": "promotion_materials.mini_program_info",
+        "provider_object": "promotion_create_request",
+        "mapping_kind": "direct",
+        "value_source": "create_dry_run.candidate_tasks[].units[].promotion_materials.mini_program_info",
+        "purpose": "mini game landing information for unit material",
+        "verified": true,
+        "required": false,
+        "source": "local_api_doc_review",
+        "evidence_refs": ["oceanengine_openapi_promotion_create_request"],
+        "open_questions": [
+          "effective_touch_url 当前仍来自固定脚本占位，正式执行前需要替换为真实小游戏调起链接。"
+        ]
+      },
+      {
+        "internal_field": "budget",
+        "provider_field": "budget",
+        "provider_object": "promotion_create_request",
+        "mapping_kind": "direct",
+        "value_source": "create_dry_run.candidate_tasks[].units[].budget",
+        "purpose": "unit budget",
+        "verified": true,
+        "required": true,
+        "source": "local_api_doc_review",
+        "evidence_refs": ["oceanengine_openapi_promotion_create_request"],
+        "open_questions": []
+      },
+      {
+        "internal_field": "budget_mode",
+        "provider_field": "budget_mode",
+        "provider_object": "promotion_create_request",
+        "mapping_kind": "direct",
+        "value_source": "create_dry_run.candidate_tasks[].units[].budget_mode",
+        "purpose": "unit budget mode",
+        "verified": true,
+        "required": true,
+        "source": "local_api_doc_review",
+        "evidence_refs": ["oceanengine_openapi_promotion_create_request"],
+        "open_questions": []
+      },
+      {
+        "internal_field": "roi_goal",
+        "provider_field": "roi_goal",
+        "provider_object": "promotion_create_request",
+        "mapping_kind": "direct",
+        "value_source": "create_dry_run.candidate_tasks[].units[].roi_goal",
+        "purpose": "7-day ROI coefficient for micro game ROI unit",
+        "verified": true,
+        "required": false,
+        "source": "local_api_doc_review",
+        "evidence_refs": ["oceanengine_openapi_promotion_create_request"],
+        "open_questions": []
+      },
+      {
+        "internal_field": "source",
+        "provider_field": "source",
+        "provider_object": "promotion_create_request",
+        "mapping_kind": "direct",
+        "value_source": "create_dry_run.candidate_tasks[].units[].source",
+        "purpose": "unit creative source",
+        "verified": true,
+        "required": true,
+        "source": "local_api_doc_review",
+        "evidence_refs": ["oceanengine_openapi_promotion_create_request"],
+        "open_questions": []
+      },
+      {
+        "internal_field": "operation",
+        "provider_field": "operation",
+        "provider_object": "promotion_create_request",
+        "mapping_kind": "direct",
+        "value_source": "create_dry_run.candidate_tasks[].units[].operation",
+        "purpose": "unit initial status",
+        "verified": true,
+        "required": true,
+        "source": "local_api_doc_review",
+        "evidence_refs": ["oceanengine_openapi_promotion_create_request"],
+        "open_questions": []
+      },
+      {
         "internal_field": "field_defaults.landing_type",
         "provider_field": "",
         "provider_object": "promotion_create_request",
@@ -215,6 +336,104 @@
         "source": "local_api_doc_review",
         "evidence_refs": [],
         "open_questions": []
+      }
+    ],
+    "lookup_target_material": [
+      {
+        "internal_field": "source_advertiser_id",
+        "provider_field": "",
+        "provider_object": "target_material_lookup",
+        "mapping_kind": "local_only",
+        "local_only_confirmed": true,
+        "local_only_confirmation_note": "本地目标素材回查输入字段；不直接进入创建单元或素材推送请求体。",
+        "value_source": "create_dry_run.candidate_tasks[].units[].materials[].source_advertiser_id",
+        "purpose": "source material advertiser account id for target material lookup",
+        "verified": false,
+        "required": true,
+        "source": "local_api_doc_review",
+        "evidence_refs": [],
+        "open_questions": [
+          "素材推送接口只返回任务信息；目标账户 video_id 需要通过后续只读素材查询确认。"
+        ]
+      },
+      {
+        "internal_field": "target_advertiser_id",
+        "provider_field": "",
+        "provider_object": "target_material_lookup",
+        "mapping_kind": "local_only",
+        "local_only_confirmed": true,
+        "local_only_confirmation_note": "本地目标素材回查输入字段；不直接进入创建单元或素材推送请求体。",
+        "value_source": "create_dry_run.candidate_tasks[].units[].materials[].target_advertiser_id",
+        "purpose": "target advertiser account id for material lookup",
+        "verified": false,
+        "required": true,
+        "source": "local_api_doc_review",
+        "evidence_refs": [],
+        "open_questions": []
+      },
+      {
+        "internal_field": "source_video_id",
+        "provider_field": "",
+        "provider_object": "target_material_lookup",
+        "mapping_kind": "local_only",
+        "local_only_confirmed": true,
+        "local_only_confirmation_note": "本地目标素材回查输入字段；不直接进入创建单元或素材推送请求体。",
+        "value_source": "create_dry_run.candidate_tasks[].units[].materials[].source_video_id",
+        "purpose": "source account video id used for matching after push",
+        "verified": false,
+        "required": true,
+        "source": "local_api_doc_review",
+        "evidence_refs": [],
+        "open_questions": []
+      },
+      {
+        "internal_field": "material_id",
+        "provider_field": "",
+        "provider_object": "target_material_lookup",
+        "mapping_kind": "local_only",
+        "local_only_confirmed": true,
+        "local_only_confirmation_note": "本地素材追溯字段；目标素材回查以目标账户 video_id 为最终单元创建字段。",
+        "value_source": "create_dry_run.candidate_tasks[].units[].materials[].material_id",
+        "purpose": "local material trace id",
+        "verified": false,
+        "required": true,
+        "source": "local_api_doc_review",
+        "evidence_refs": [],
+        "open_questions": []
+      },
+      {
+        "internal_field": "target_video_id",
+        "provider_field": "",
+        "provider_object": "target_material_lookup",
+        "mapping_kind": "local_only",
+        "local_only_confirmed": true,
+        "local_only_confirmation_note": "目标素材回查输出占位字段；真实 provider 字段出现在 create_unit 的 promotion_materials.video_material_list[].video_id。",
+        "value_source": "create_dry_run.candidate_tasks[].units[].materials[].target_video_id",
+        "purpose": "target account video id required by create_unit promotion_materials",
+        "verified": false,
+        "required": true,
+        "source": "local_api_doc_review",
+        "evidence_refs": [],
+        "open_questions": [
+          "需要实现目标账户素材回查后写入本地 provider id ledger。"
+        ]
+      },
+      {
+        "internal_field": "target_video_cover_id",
+        "provider_field": "",
+        "provider_object": "target_material_lookup",
+        "mapping_kind": "local_only",
+        "local_only_confirmed": true,
+        "local_only_confirmation_note": "目标素材回查输出占位字段；真实 provider 字段出现在 create_unit 的 promotion_materials.video_material_list[].video_cover_id。",
+        "value_source": "create_dry_run.candidate_tasks[].units[].materials[].target_video_cover_id",
+        "purpose": "target account video cover id required by create_unit promotion_materials",
+        "verified": false,
+        "required": true,
+        "source": "local_api_doc_review",
+        "evidence_refs": [],
+        "open_questions": [
+          "需要确认目标账户素材回查是否能稳定返回封面图片 ID。"
+        ]
       }
     ],
     "bind_material": [

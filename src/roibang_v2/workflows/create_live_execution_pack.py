@@ -5,7 +5,7 @@ from typing import Any
 
 from roibang_v2.runs import write_run_artifact
 
-OPERATION_ORDER = ["create_project", "create_unit", "bind_material"]
+OPERATION_ORDER = ["create_project", "bind_material", "create_unit"]
 
 
 def _pack_config(request: dict[str, Any]) -> dict[str, Any]:

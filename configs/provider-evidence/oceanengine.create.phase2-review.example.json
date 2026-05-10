@@ -31,12 +31,21 @@
       "provider_fields": [
         "advertiser_id",
         "project_id",
-        "name"
+        "name",
+        "promotion_materials.video_material_list",
+        "promotion_materials.title_material_list",
+        "promotion_materials.call_to_action_buttons",
+        "promotion_materials.mini_program_info",
+        "budget",
+        "budget_mode",
+        "roi_goal",
+        "source",
+        "operation"
       ],
       "reviewed": true,
       "reviewed_by": "codex_local_api_doc_review",
       "reviewed_at": "2026-05-10T09:45:00Z",
-      "notes": "本地 MiniGameApi 文档已核对：创建单元基础参数包含 advertiser_id、project_id、name；landing_type/pricing/inventory_type 不作为单元顶层字段传入。"
+      "notes": "本地 MiniGameApi 文档已核对：创建单元基础参数包含 advertiser_id、project_id、name；promotion_materials 包含视频素材、标题素材、行动号召和小程序信息；预算、ROI、来源和状态字段也在创建单元请求体中。landing_type/pricing/inventory_type 不作为单元顶层字段传入。"
     },
     "oceanengine_openapi_material_binding_request": {
       "title": "OceanEngine material binding request schema",
