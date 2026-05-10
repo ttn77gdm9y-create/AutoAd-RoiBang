@@ -397,3 +397,23 @@ PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_live_execute
 - 后续 payload（请求体）里的 lookup placeholder（本地占位符）会继续从 SQLite 台账解析成真实平台 ID。
 
 这意味着首单执行如果中途失败，下一次运行可以从已写入台账的位置继续，不会重复创建已经成功的平台项目、单元，也不会重复推送已经记录成功的同一组素材。
+
+## first live prepare pack
+
+`create_first_live_prepare_pack` 是真实首单创建前的本地交接包。它不是小批量执行包，也不是 execute switch（执行开关）；它只读取 `create_live_execution_pack`（执行包），把是否可以进入人工最终核对说清楚。
+
+固定脚本入口：
+
+```bash
+PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_first_live_prepare_pack.py --config configs/runtime.example.json
+```
+
+输出重点：
+
+- `readiness.local_boundary_ready`：本地边界是否已准备好。
+- `readiness.ready_for_live_execute`：真实执行开关是否已经全部显式打开。
+- `payload_review`：首单项目、单元、素材推送的 payload（请求体）数量和 scope（执行范围）。
+- `required_enablement`：真正执行前需要打开哪些 runtime（运行时配置）和 policy（策略配置）开关。
+- `human_review_checklist`：人工核对清单。
+
+在默认示例配置下，它应该是 `ready_for_human_live_enablement`：意思是本地边界已可交给人核对，但真实执行开关仍未打开，固定脚本不会调用真实接口。
