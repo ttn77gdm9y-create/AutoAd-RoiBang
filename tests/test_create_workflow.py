@@ -6810,6 +6810,31 @@ def test_create_execute_resolves_provider_payload_drafts_from_id_ledger(tmp_path
         "external_api_calls": 0,
         "actions": [],
     }
+    assert result["execute_review_summary"] == {
+        "status": "ready_for_manual_review",
+        "plain_language": "真实创建仍然硬阻断；7 个平台 payload 草稿已完成本地 ID 解析，可人工复核字段，但不会执行真实创建。",
+        "checks": {
+            "execute_hard_blocked": True,
+            "external_api_calls_zero": True,
+            "provider_payload_resolution": "resolved",
+            "resolved_payload_contract": "passed",
+            "provider_id_ledger_gate": "hard_blocked_phase1",
+        },
+        "counts": {
+            "project_count": 1,
+            "unit_count": 2,
+            "material_count": 4,
+            "resolved_draft_count": 7,
+            "unresolved_lookup_count": 0,
+        },
+        "human_next_steps": [
+            "人工复核 resolved_provider_payload_drafts 的账户、项目ID、单元ID、预算和素材。",
+            "继续保持 create_execute 硬阻断，等待单独批准的真实执行阶段。",
+        ],
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "actions": [],
+    }
     assert result["execution_plan"]["live_api_payloads"] == []
     assert result["resolved_provider_payload_drafts"]
     assert {draft["executable"] for draft in result["resolved_provider_payload_drafts"]} == {False}
@@ -6845,6 +6870,31 @@ def test_create_execute_resolved_payload_contract_blocks_unresolved_lookups(tmp_
         "live_payload_count": 0,
         "violation_count": 1,
         "violations": ["resolved provider payload drafts must not contain lookup placeholders"],
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "actions": [],
+    }
+    assert result["execute_review_summary"] == {
+        "status": "blocked_missing_provider_ids",
+        "plain_language": "真实创建仍然硬阻断；已解析草稿仍有 10 个 lookup 占位未解析，需要先登记平台返回的 project_id/promotion_id。",
+        "checks": {
+            "execute_hard_blocked": True,
+            "external_api_calls_zero": True,
+            "provider_payload_resolution": "blocked",
+            "resolved_payload_contract": "blocked",
+            "provider_id_ledger_gate": "hard_blocked_phase1",
+        },
+        "counts": {
+            "project_count": 1,
+            "unit_count": 2,
+            "material_count": 4,
+            "resolved_draft_count": 7,
+            "unresolved_lookup_count": 10,
+        },
+        "human_next_steps": [
+            "先确认项目和单元真实创建返回的 project_id/promotion_id 已写入本地 ID 台账。",
+            "重新运行 create_execute，只复核 resolved_payload_contract，不执行真实创建。",
+        ],
         "execution_enabled": False,
         "external_api_calls": 0,
         "actions": [],

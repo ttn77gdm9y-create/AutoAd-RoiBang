@@ -255,6 +255,59 @@ def _resolved_payload_contract(
     }
 
 
+def _execute_review_summary(
+    *,
+    summary: dict[str, Any],
+    provider_id_ledger_gate: dict[str, Any],
+    provider_payload_resolution: dict[str, Any],
+    resolved_payload_contract: dict[str, Any],
+) -> dict[str, Any]:
+    unresolved_lookup_count = int(resolved_payload_contract.get("unresolved_lookup_count") or 0)
+    resolved_draft_count = int(resolved_payload_contract.get("checked_draft_count") or 0)
+    if unresolved_lookup_count:
+        status = "blocked_missing_provider_ids"
+        plain_language = (
+            f"真实创建仍然硬阻断；已解析草稿仍有 {unresolved_lookup_count} 个 lookup "
+            "占位未解析，需要先登记平台返回的 project_id/promotion_id。"
+        )
+        human_next_steps = [
+            "先确认项目和单元真实创建返回的 project_id/promotion_id 已写入本地 ID 台账。",
+            "重新运行 create_execute，只复核 resolved_payload_contract，不执行真实创建。",
+        ]
+    else:
+        status = "ready_for_manual_review"
+        plain_language = (
+            f"真实创建仍然硬阻断；{resolved_draft_count} 个平台 payload 草稿已完成本地 ID 解析，"
+            "可人工复核字段，但不会执行真实创建。"
+        )
+        human_next_steps = [
+            "人工复核 resolved_provider_payload_drafts 的账户、项目ID、单元ID、预算和素材。",
+            "继续保持 create_execute 硬阻断，等待单独批准的真实执行阶段。",
+        ]
+    return {
+        "status": status,
+        "plain_language": plain_language,
+        "checks": {
+            "execute_hard_blocked": True,
+            "external_api_calls_zero": True,
+            "provider_payload_resolution": str(provider_payload_resolution.get("status") or ""),
+            "resolved_payload_contract": str(resolved_payload_contract.get("status") or ""),
+            "provider_id_ledger_gate": str(provider_id_ledger_gate.get("status") or ""),
+        },
+        "counts": {
+            "project_count": int(summary.get("project_count") or 0),
+            "unit_count": int(summary.get("unit_count") or 0),
+            "material_count": int(summary.get("material_count") or 0),
+            "resolved_draft_count": resolved_draft_count,
+            "unresolved_lookup_count": unresolved_lookup_count,
+        },
+        "human_next_steps": human_next_steps,
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "actions": [],
+    }
+
+
 def _policy_violations(policy: dict[str, Any]) -> list[str]:
     violations: list[str] = []
     if bool(policy.get("allow_execute_phase1", False)):
@@ -344,6 +397,12 @@ def build_create_execute(
         resolved_provider_payload_drafts=resolved_provider_payload_drafts,
         execution_plan=execution_plan,
     )
+    execute_review_summary = _execute_review_summary(
+        summary=summary,
+        provider_id_ledger_gate=provider_id_gate,
+        provider_payload_resolution=payload_resolution,
+        resolved_payload_contract=resolved_payload_contract,
+    )
     return {
         "ok": not violations,
         "workflow": "create_execute",
@@ -375,6 +434,7 @@ def build_create_execute(
         },
         "resolved_provider_payload_drafts": resolved_provider_payload_drafts,
         "resolved_payload_contract": resolved_payload_contract,
+        "execute_review_summary": execute_review_summary,
         "provider_readiness_contract": _provider_readiness(create_approval_artifact),
         "provider_id_ledger_requirements": provider_id_requirements,
         "provider_id_ledger_gate": provider_id_gate,
