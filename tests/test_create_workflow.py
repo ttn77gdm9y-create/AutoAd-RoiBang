@@ -27,6 +27,10 @@ from roibang_v2.workflows.create_phase2_provider_mapping_prep import (
     build_create_phase2_provider_mapping_prep,
     run_create_phase2_provider_mapping_prep_request,
 )
+from roibang_v2.workflows.create_provider_evidence_review import (
+    build_create_provider_evidence_review,
+    run_create_provider_evidence_review_request,
+)
 from roibang_v2.workflows.create_field_mapping_review_pack import (
     build_create_field_mapping_review_pack,
     run_create_field_mapping_review_pack_request,
@@ -1830,6 +1834,130 @@ def test_create_phase2_provider_mapping_prep_cli_uses_policy_config(tmp_path: Pa
     assert output["status"] == "needs_review"
     assert artifact["phase"] == "phase2_preparation"
     assert artifact["summary"]["field_map_path"] == "configs/provider-field-maps/oceanengine.create.phase2-prep.example.json"
+    assert artifact["execution_enabled"] is False
+    assert artifact["external_api_calls"] == 0
+    assert artifact["actions"] == []
+
+
+def test_create_provider_evidence_review_flags_unreviewed_phase2_evidence():
+    result = build_create_provider_evidence_review(
+        policy={
+            "provider_adapter": {
+                "provider": "oceanengine",
+                "field_mapping_version": "phase2.oceanengine.create_payload.prep.v1",
+            },
+            "provider_field_map_path": "configs/provider-field-maps/oceanengine.create.phase2-prep.example.json",
+            "provider_evidence_catalog_path": "configs/provider-evidence/oceanengine.create.phase2-review.example.json",
+        }
+    )
+
+    assert result["ok"] is True
+    assert result["workflow"] == "create_provider_evidence_review"
+    assert result["phase"] == "phase2_preparation"
+    assert result["execution_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert result["status"] == "needs_review"
+    assert result["summary"] == {
+        "provider": "oceanengine",
+        "field_mapping_version": "phase2.oceanengine.create_payload.prep.v1",
+        "field_map_path": "configs/provider-field-maps/oceanengine.create.phase2-prep.example.json",
+        "evidence_catalog_path": "configs/provider-evidence/oceanengine.create.phase2-review.example.json",
+        "field_count": 18,
+        "catalog_evidence_count": 3,
+        "reviewed_evidence_count": 0,
+        "ready_field_count": 0,
+        "unresolved_field_count": 18,
+        "ready_for_live_payload_development": False,
+        "ready_for_live_execute": False,
+    }
+    first_section = result["evidence_review_sections"][0]
+    assert first_section["operation"] == "create_project"
+    assert first_section["fields"][0] == {
+        "internal_field": "advertiser_id",
+        "provider_field": "advertiser_id",
+        "mapping_kind": "direct",
+        "evidence_refs": ["oceanengine_openapi_project_create_request"],
+        "evidence_status": "needs_evidence_review",
+        "evidence_issues": ["evidence oceanengine_openapi_project_create_request is not reviewed"],
+    }
+    unresolved_local = [
+        item
+        for item in result["unresolved_evidence_items"]
+        if item["operation"] == "create_unit" and item["internal_field"] == "project_key"
+    ]
+    assert unresolved_local == [
+        {
+            "operation": "create_unit",
+            "internal_field": "project_key",
+            "provider_field": "",
+            "evidence_status": "local_only_needs_confirmation",
+            "evidence_issues": ["local-only field requires explicit confirmation"],
+        }
+    ]
+    assert result["phase2_provider_evidence_contract"] == {
+        "review_only": True,
+        "external_api_allowed": False,
+        "live_payload_generation_enabled": False,
+        "create_execute_hard_block_required": True,
+        "mapping_verified_must_remain_false": True,
+    }
+    assert result["violations"] == []
+    assert result["actions"] == []
+
+
+def test_create_provider_evidence_review_rejects_missing_catalog(tmp_path: Path):
+    result = build_create_provider_evidence_review(
+        policy={
+            "provider_field_map_path": "configs/provider-field-maps/oceanengine.create.phase2-prep.example.json",
+            "provider_evidence_catalog_path": str(tmp_path / "missing.json"),
+        }
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "invalid"
+    assert result["summary"]["catalog_evidence_count"] == 0
+    assert result["violations"] == ["provider evidence catalog config is missing or malformed"]
+    assert result["execution_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert result["actions"] == []
+
+
+def test_run_create_provider_evidence_review_request_writes_artifact(tmp_path: Path):
+    result = run_create_provider_evidence_review_request(
+        {
+            "create_provider_evidence_review": {
+                "policy": {
+                    "provider_field_map_path": "configs/provider-field-maps/oceanengine.create.phase2-prep.example.json",
+                    "provider_evidence_catalog_path": "configs/provider-evidence/oceanengine.create.phase2-review.example.json",
+                }
+            }
+        },
+        runs_dir=tmp_path / "runs",
+    )
+
+    artifact = json.loads(Path(result["artifact_path"]).read_text(encoding="utf-8"))
+    assert result["workflow"] == "create_provider_evidence_review"
+    assert result["summary"]["field_count"] == 18
+    assert artifact["workflow"] == "create_provider_evidence_review"
+    assert artifact["execution_enabled"] is False
+    assert artifact["external_api_calls"] == 0
+    assert artifact["actions"] == []
+
+
+def test_create_provider_evidence_review_cli_uses_policy_config(tmp_path: Path, capsys):
+    db_path = tmp_path / "roibang.sqlite3"
+    runtime_path = _runtime_config(tmp_path, db_path)
+    module = _load_script("run_create_provider_evidence_review")
+
+    exit_code = module.run_from_args(["--config", str(runtime_path), "--policy", "policies/strategy.example.json"])
+
+    output = json.loads(capsys.readouterr().out)
+    artifact = json.loads(Path(output["artifact_path"]).read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert output["workflow"] == "create_provider_evidence_review"
+    assert output["status"] == "needs_review"
+    assert artifact["phase"] == "phase2_preparation"
+    assert artifact["summary"]["evidence_catalog_path"] == "configs/provider-evidence/oceanengine.create.phase2-review.example.json"
     assert artifact["execution_enabled"] is False
     assert artifact["external_api_calls"] == 0
     assert artifact["actions"] == []

@@ -1,0 +1,56 @@
+{
+  "provider": "oceanengine",
+  "evidence_catalog_version": "phase2.oceanengine.create_evidence.review.v1",
+  "source": "phase2_review_placeholder_no_live_execute",
+  "evidence": {
+    "oceanengine_openapi_project_create_request": {
+      "title": "OceanEngine project create request schema",
+      "source_type": "official_doc_pending",
+      "source_url": "",
+      "operation": "create_project",
+      "provider_object": "project_create_request",
+      "provider_fields": [
+        "advertiser_id",
+        "name",
+        "budget"
+      ],
+      "reviewed": false,
+      "reviewed_by": "",
+      "reviewed_at": "",
+      "notes": "Pending official documentation or captured request evidence review."
+    },
+    "oceanengine_openapi_promotion_create_request": {
+      "title": "OceanEngine promotion create request schema",
+      "source_type": "official_doc_pending",
+      "source_url": "",
+      "operation": "create_unit",
+      "provider_object": "promotion_create_request",
+      "provider_fields": [
+        "advertiser_id",
+        "project_id",
+        "name"
+      ],
+      "reviewed": false,
+      "reviewed_by": "",
+      "reviewed_at": "",
+      "notes": "Pending official documentation or captured request evidence review."
+    },
+    "oceanengine_openapi_material_binding_request": {
+      "title": "OceanEngine material binding request schema",
+      "source_type": "official_doc_pending",
+      "source_url": "",
+      "operation": "bind_material",
+      "provider_object": "material_bind_request",
+      "provider_fields": [
+        "advertiser_id",
+        "project_id",
+        "promotion_id",
+        "material_id"
+      ],
+      "reviewed": false,
+      "reviewed_by": "",
+      "reviewed_at": "",
+      "notes": "Pending official documentation or captured request evidence review."
+    }
+  }
+}

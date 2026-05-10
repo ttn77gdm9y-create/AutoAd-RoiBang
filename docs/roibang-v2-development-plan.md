@@ -109,15 +109,21 @@ Mid-term priorities:
 
 1. Complete project and unit payload draft generation without live API calls.
 2. Design the final platform-facing unit name, such as `promotion_name`.
-3. Strengthen schema validation for create request, strategy plan, preflight,
+3. Add provider evidence review before marking any field mapping verified.
+4. Strengthen schema validation for create request, strategy plan, preflight,
    dry-run, approval, and execute artifacts.
-4. Strengthen enum mapping, such as platform review status code `3` mapping to
+5. Strengthen enum mapping, such as platform review status code `3` mapping to
    `APPROVED`.
-5. Make dry-run artifacts show projects, units, budgets, materials, provider
+6. Make dry-run artifacts show projects, units, budgets, materials, provider
    fields, idempotency keys, and blocking reasons clearly.
-6. Require an explicit approve artifact before any execute attempt.
-7. Keep `create_execute` disabled unless a separate live phase is approved.
-8. Add audit records for any future live execution attempt.
+7. Require an explicit approve artifact before any execute attempt.
+8. Keep `create_execute` disabled unless a separate live phase is approved.
+9. Add audit records for any future live execution attempt.
+
+Field meanings:
+
+- `provider evidence review`: 平台字段证据复核, checking that every provider
+  field has reviewed documentation or captured-request evidence.
 
 The first live create phase, when separately approved, should be deliberately
 small:

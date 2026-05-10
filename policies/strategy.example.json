@@ -77,6 +77,7 @@
       "field_mapping_version": "phase2.oceanengine.create_payload.prep.v1"
     },
     "provider_field_map_path": "configs/provider-field-maps/oceanengine.create.phase2-prep.example.json",
+    "provider_evidence_catalog_path": "configs/provider-evidence/oceanengine.create.phase2-review.example.json",
     "live_api": {
       "endpoints": {
         "create_project": "/open_api/2/project/create/",
@@ -84,6 +85,14 @@
         "bind_material": "/open_api/2/promotion/material/bind/"
       }
     }
+  },
+  "create_provider_evidence_review": {
+    "provider_adapter": {
+      "provider": "oceanengine",
+      "field_mapping_version": "phase2.oceanengine.create_payload.prep.v1"
+    },
+    "provider_field_map_path": "configs/provider-field-maps/oceanengine.create.phase2-prep.example.json",
+    "provider_evidence_catalog_path": "configs/provider-evidence/oceanengine.create.phase2-review.example.json"
   },
   "create_phase2_template_slot_prep": {
     "product_template_catalog": {
