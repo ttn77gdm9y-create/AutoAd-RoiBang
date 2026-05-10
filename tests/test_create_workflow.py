@@ -901,6 +901,85 @@ def test_create_dry_run_outputs_non_executable_project_unit_material_combination
     assert result["actions"] == []
 
 
+def test_create_dry_run_emits_non_executable_candidate_provider_payloads_for_phase2_mapping(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    plan = build_create_strategy_plan(request=_create_request()["create_request"], db_path=db_path, policy={})
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+
+    result = build_create_dry_run(
+        create_strategy_plan_artifact=plan,
+        create_preflight_artifact=preflight,
+        policy={
+            "provider_adapter": {
+                "provider": "oceanengine",
+                "field_mapping_version": "phase2.oceanengine.create_payload.prep.v1",
+                "mapping_verified": False,
+            },
+            "provider_field_map_path": "configs/provider-field-maps/oceanengine.create.phase2-prep.example.json",
+            "live_api": {
+                "endpoints": {
+                    "create_project": "/open_api/2/project/create/",
+                    "create_unit": "/open_api/2/promotion/create/",
+                    "bind_material": "/open_api/2/promotion/material/bind/",
+                }
+            },
+        },
+    )
+
+    project_draft = result["provider_payload_drafts"][0]
+    assert project_draft["operation"] == "create_project"
+    assert project_draft["field_mapping_mode"] == "candidate"
+    assert project_draft["candidate_field_mapping_applied"] is True
+    assert project_draft["field_mapping_applied"] is False
+    assert project_draft["executable"] is False
+    assert project_draft["endpoint"] == "/open_api/2/project/create/"
+    assert project_draft["payload"] == {
+        "advertiser_id": "target-1",
+        "name": "0508_郭靖_勇者突进_微小每付7R通投_B80C4C430_01",
+        "budget": 300.0,
+        "landing_type": "MICRO_GAME",
+        "pricing": "PRICING_CPA",
+        "inventory_type": "UNION",
+    }
+    assert project_draft["candidate_unverified_field_count"] == 6
+    assert {
+        (row["operation"], row["internal_field"], row["provider_field"])
+        for row in project_draft["candidate_unverified_fields"]
+    } == {
+        ("create_project", "advertiser_id", "advertiser_id"),
+        ("create_project", "project_name", "name"),
+        ("create_project", "daily_budget", "budget"),
+        ("create_project", "field_defaults.landing_type", "landing_type"),
+        ("create_project", "field_defaults.pricing", "pricing"),
+        ("create_project", "field_defaults.inventory_type", "inventory_type"),
+    }
+    assert "candidate provider fields require evidence review before execution" in project_draft["non_executable_reasons"]
+
+    unit_draft = next(draft for draft in result["provider_payload_drafts"] if draft["operation"] == "create_unit")
+    assert unit_draft["field_mapping_mode"] == "candidate"
+    assert unit_draft["payload"]["project_id"] == "<lookup:target-1-p001>"
+    assert unit_draft["payload"]["name"] == "0508_郭靖_勇者突进_微小每付7R通投_B80C4C430_01_U01"
+    assert unit_draft["payload"]["landing_type"] == "MICRO_GAME"
+    assert "project_key" not in unit_draft["payload"]
+    assert "unit_key" not in unit_draft["payload"]
+
+    material_draft = next(draft for draft in result["provider_payload_drafts"] if draft["operation"] == "bind_material")
+    assert material_draft["field_mapping_mode"] == "candidate"
+    assert material_draft["payload"]["project_id"] == "<lookup:target-1-p001>"
+    assert material_draft["payload"]["promotion_id"] == "<lookup:target-1-p001-u01>"
+    assert material_draft["payload"]["material_id"] == "m-high"
+    assert "project_key" not in material_draft["payload"]
+    assert "unit_key" not in material_draft["payload"]
+
+    assert result["provider_adapter_contract"]["executable_draft_count"] == 0
+    assert result["provider_adapter_contract"]["unmapped_payload_field_count"] == 0
+    assert result["provider_readiness_contract"]["ready_for_live_execute"] is False
+    assert result["execution_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert result["actions"] == []
+
+
 def test_create_dry_run_can_load_provider_field_map_from_json_config(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     _seed_create_db(db_path)

@@ -41,8 +41,36 @@ def build_provider_payload_drafts(
                 payload=payload,
                 provider_field_map=provider_field_map,
                 field_mapping_requested=field_mapping_applied,
+                verified_only=True,
             )
             draft_mapping_applied = field_mapping_applied and not unmapped_fields
+            candidate_unmapped_fields = _unmapped_payload_fields(
+                operation=operation,
+                payload=payload,
+                provider_field_map=provider_field_map,
+                field_mapping_requested=not draft_mapping_applied,
+                verified_only=False,
+            )
+            candidate_mapping_applied = (
+                not draft_mapping_applied
+                and isinstance(provider_field_map, dict)
+                and bool(_operation_field_map(provider_field_map=provider_field_map, operation=operation, verified_only=False))
+                and not candidate_unmapped_fields
+            )
+            mapping_mode = (
+                "verified"
+                if draft_mapping_applied
+                else "candidate"
+                if candidate_mapping_applied
+                else "blocked_unmapped"
+                if candidate_unmapped_fields
+                else "none"
+            )
+            candidate_unverified_fields = _candidate_unverified_fields(
+                operation=operation,
+                payload=payload,
+                provider_field_map=provider_field_map,
+            ) if candidate_mapping_applied else []
             drafts.append(
                 {
                     "operation": operation,
@@ -50,7 +78,19 @@ def build_provider_payload_drafts(
                     "transport": str(adapter.get("transport") or "disabled_provider_adapter"),
                     "mapping_verified": bool(adapter.get("mapping_verified", False)),
                     "field_mapping_applied": draft_mapping_applied,
+                    "candidate_field_mapping_applied": candidate_mapping_applied,
+                    "field_mapping_mode": mapping_mode,
                     "unmapped_payload_fields": unmapped_fields,
+                    "candidate_unmapped_payload_fields": candidate_unmapped_fields,
+                    "candidate_unverified_field_count": len(candidate_unverified_fields),
+                    "candidate_unverified_fields": candidate_unverified_fields,
+                    "non_executable_reasons": _non_executable_reasons(
+                        adapter=adapter,
+                        field_mapping_applied=draft_mapping_applied,
+                        candidate_mapping_applied=candidate_mapping_applied,
+                        candidate_unverified_fields=candidate_unverified_fields,
+                        candidate_unmapped_fields=candidate_unmapped_fields,
+                    ),
                     "field_mapping_version": str(adapter.get("field_mapping_version") or PROVIDER_FIELD_MAPPING_VERSION),
                     "executable": False,
                     "idempotency_key": str(draft.get("idempotency_key") or ""),
@@ -59,7 +99,8 @@ def build_provider_payload_drafts(
                         operation=operation,
                         payload=payload,
                         provider_field_map=provider_field_map,
-                        field_mapping_applied=draft_mapping_applied,
+                        field_mapping_applied=draft_mapping_applied or candidate_mapping_applied,
+                        verified_only=draft_mapping_applied,
                     ),
                 }
             )
@@ -110,10 +151,15 @@ def _provider_payload(
     payload: dict[str, Any],
     provider_field_map: dict[str, Any] | None,
     field_mapping_applied: bool,
+    verified_only: bool = True,
 ) -> dict[str, Any]:
     if not field_mapping_applied or not isinstance(provider_field_map, dict):
         return dict(payload)
-    operation_map = _operation_field_map(provider_field_map=provider_field_map, operation=operation)
+    operation_map = _operation_field_map(
+        provider_field_map=provider_field_map,
+        operation=operation,
+        verified_only=verified_only,
+    )
     provider_payload: dict[str, Any] = {}
     for internal_field, provider_field in operation_map.items():
         value = _payload_value(payload, internal_field)
@@ -128,14 +174,20 @@ def _unmapped_payload_fields(
     payload: dict[str, Any],
     provider_field_map: dict[str, Any] | None,
     field_mapping_requested: bool,
+    verified_only: bool = True,
 ) -> list[dict[str, str]]:
     if not field_mapping_requested or not isinstance(provider_field_map, dict):
         return []
-    operation_map = _operation_field_map(provider_field_map=provider_field_map, operation=operation)
+    operation_map = _operation_field_map(
+        provider_field_map=provider_field_map,
+        operation=operation,
+        verified_only=verified_only,
+    )
+    local_only_fields = _operation_local_only_fields(provider_field_map=provider_field_map, operation=operation)
     return [
         {"operation": operation, "internal_field": str(field)}
         for field in _payload_field_paths(payload)
-        if field not in operation_map
+        if field not in operation_map and field not in local_only_fields
     ]
 
 
@@ -160,7 +212,12 @@ def _contract_unmapped_payload_fields(provider_payload_drafts: list[dict[str, An
     return fields
 
 
-def _operation_field_map(*, provider_field_map: dict[str, Any], operation: str) -> dict[str, str]:
+def _operation_field_map(
+    *,
+    provider_field_map: dict[str, Any],
+    operation: str,
+    verified_only: bool = True,
+) -> dict[str, str]:
     operations = provider_field_map.get("operations") if isinstance(provider_field_map.get("operations"), dict) else {}
     rows = operations.get(operation)
     if not isinstance(rows, list):
@@ -171,9 +228,79 @@ def _operation_field_map(*, provider_field_map: dict[str, Any], operation: str) 
             continue
         internal_field = str(row.get("internal_field") or "").strip()
         provider_field = str(row.get("provider_field") or "").strip()
-        if internal_field and provider_field and bool(row.get("verified", False)):
+        if internal_field and provider_field and (bool(row.get("verified", False)) or not verified_only):
             mapping[internal_field] = provider_field
     return mapping
+
+
+def _operation_local_only_fields(*, provider_field_map: dict[str, Any], operation: str) -> set[str]:
+    operations = provider_field_map.get("operations") if isinstance(provider_field_map.get("operations"), dict) else {}
+    rows = operations.get(operation)
+    if not isinstance(rows, list):
+        return set()
+    return {
+        str(row.get("internal_field") or "").strip()
+        for row in rows
+        if isinstance(row, dict)
+        and str(row.get("internal_field") or "").strip()
+        and str(row.get("mapping_kind") or "").strip() in {"local_lookup_key", "local_only"}
+    }
+
+
+def _operation_entries(*, provider_field_map: dict[str, Any] | None, operation: str) -> list[dict[str, Any]]:
+    if not isinstance(provider_field_map, dict):
+        return []
+    operations = provider_field_map.get("operations") if isinstance(provider_field_map.get("operations"), dict) else {}
+    rows = operations.get(operation)
+    return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+
+
+def _candidate_unverified_fields(
+    *,
+    operation: str,
+    payload: dict[str, Any],
+    provider_field_map: dict[str, Any] | None,
+) -> list[dict[str, str]]:
+    payload_fields = set(_payload_field_paths(payload))
+    rows: list[dict[str, str]] = []
+    for entry in _operation_entries(provider_field_map=provider_field_map, operation=operation):
+        internal_field = str(entry.get("internal_field") or "").strip()
+        provider_field = str(entry.get("provider_field") or "").strip()
+        if not internal_field or not provider_field or internal_field not in payload_fields:
+            continue
+        if bool(entry.get("verified", False)):
+            continue
+        rows.append(
+            {
+                "operation": operation,
+                "internal_field": internal_field,
+                "provider_field": provider_field,
+                "mapping_kind": str(entry.get("mapping_kind") or ""),
+            }
+        )
+    return rows
+
+
+def _non_executable_reasons(
+    *,
+    adapter: dict[str, Any],
+    field_mapping_applied: bool,
+    candidate_mapping_applied: bool,
+    candidate_unverified_fields: list[dict[str, str]],
+    candidate_unmapped_fields: list[dict[str, str]],
+) -> list[str]:
+    reasons = ["provider payload drafts are dry-run only"]
+    if not bool(adapter.get("mapping_verified", False)):
+        reasons.append("provider adapter mapping is not verified")
+    if candidate_mapping_applied:
+        reasons.append("candidate provider fields require evidence review before execution")
+    if candidate_unverified_fields:
+        reasons.append("candidate provider fields are not verified")
+    if candidate_unmapped_fields:
+        reasons.append("provider payload contains unmapped internal fields")
+    if not field_mapping_applied:
+        reasons.append("verified provider field mapping is not applied")
+    return reasons
 
 
 def _payload_value(payload: dict[str, Any], field: str) -> Any:
