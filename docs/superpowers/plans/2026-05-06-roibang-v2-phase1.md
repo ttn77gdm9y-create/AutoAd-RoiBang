@@ -1,208 +1,73 @@
-# RoiBang-v2 Phase 1 Implementation Plan
+# RoiBang-v2 第一阶段 实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+日期：2026-05-10
 
-**Goal:** Build the first safe phase of RoiBang-v2: local data contracts, SQLite state, daily learning artifacts, material supplement planning, and strategy plan generation without live business execution.
+本文档已经改为中文说明。代码字段、命令、路径和 JSON 键名会保留英文原名，因为脚本和配置必须使用这些名字。
 
-**Architecture:** Use deterministic Python scripts as scheduler entrypoints. Scripts read JSON config, JSON policy, and SQLite, then write result JSON artifacts. AI reviews outputs and edits code or policy files outside runtime execution.
+## 文档定位
 
-**Tech Stack:** Python, JSON, SQLite, launchd/cron-compatible scripts, pytest.
+本文档用于记录 RoiBang-v2 当前阶段的设计、边界和操作方式。当前项目坚持“脚本 + JSON 策略 + SQLite + 运行产物”的形态，后续流程稳定后再考虑统一成 CLI 工具和策略引擎。
 
----
+字段解释：
 
-## File Structure
+- `script`：脚本，固定执行逻辑。
+- `JSON policy`：JSON 策略文件，保存预算、命名、素材、字段映射等规则。
+- `SQLite`：本地数据库，保存账户、素材、项目、报表和台账。
+- `run artifact`：运行产物，也就是脚本输出的 JSON 复盘文件。
+- `CLI`：命令行工具，后期可能统一成 `roibang ...` 形式。
+- `policy engine`：策略引擎，后期用于统一读取、校验和解释策略。
 
-- `configs/runtime.example.json`: local runtime defaults with external APIs and execution disabled.
-- `policies/strategy.example.json`: phase policy defaults for learning, materials, and planning.
-- `docs/legacy-migration-inventory.md`: read-only inventory of useful old RoiBang code and migration risks.
-- `src/roibang_v2/config.py`: JSON and runtime config loading.
-- `src/roibang_v2/db/schema.sql`: SQLite tables for imported facts, metrics, plans, and run history.
-- `src/roibang_v2/db/bootstrap.py`: schema initialization helper.
-- `src/roibang_v2/runs.py`: result artifact writer.
-- `src/roibang_v2/workflows/`: one module per phase workflow.
-- `scripts/`: stable command-line entrypoints for schedulers.
-- `data/`: local SQLite, fixtures, and generated run artifacts.
-- `tests/`: local tests proving deterministic and safe behavior.
+## 当前安全原则
 
-## Task 1: Lock Phase 1 Safety Contract
+当前阶段不允许真实业务动作。所有创建链路必须保持：
 
-**Files:**
-- Modify: `src/roibang_v2/config.py`
-- Modify: `scripts/run_phase1_workflow.py`
-- Test: `tests/test_phase1_safety.py`
-
-- [ ] **Step 1: Add tests for refusing execution-enabled config**
-
-```python
-import pytest
-
-from roibang_v2.workflows.placeholders import phase1_noop_result
-
-
-def test_phase1_placeholder_cannot_execute_business_actions():
-    result = phase1_noop_result("strategy_plan", {"policy_version": "test"})
-
-    assert result["phase"] == "phase1"
-    assert result["status"] == "noop"
-    assert result["execution_enabled"] is False
-    assert result["external_api_calls"] == 0
+```text
+request -> strategy -> preflight -> dry-run -> approve -> execute
 ```
 
-- [ ] **Step 2: Run the test**
+含义：
 
-Run: `PYTHONPATH=src pytest tests/test_phase1_safety.py -q`
+- `request`：创建请求。
+- `strategy`：策略计划。
+- `preflight`：执行前检查。
+- `dry-run`：本地预演。
+- `approve`：批准记录。
+- `execute`：执行阶段，目前必须硬阻断。
 
-Expected: PASS.
+所有相关脚本必须保持：
 
-- [ ] **Step 3: Keep scripts hard-failed when execution is enabled**
-
-Ensure `scripts/run_phase1_workflow.py` raises `RuntimeError` when config or
-policy contains `"execution_enabled": true`.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add configs policies scripts src tests docs README.md data
-git commit -m "chore: establish roibang v2 phase1 skeleton"
+```json
+{
+  "execution_enabled": false,
+  "external_api_calls": 0,
+  "actions": []
+}
 ```
 
-## Task 2: Implement Local Data Sync Contract
+## 当前重点
 
-**Files:**
-- Create: `src/roibang_v2/reports/snapshot.py`
-- Create: `src/roibang_v2/workflows/data_sync.py`
-- Create: `scripts/run_data_sync.py`
-- Create: `configs/data-sync.example.json`
-- Create: `data/fixtures/report-snapshot.sample.json`
-- Create: `tests/test_report_snapshot.py`
-- Modify: `src/roibang_v2/db/schema.sql`
-- Reference: `docs/legacy-migration-inventory.md`
+当前重点是勇者突进微信小游戏创建链路的第二阶段准备工作：
 
-- [ ] **Step 1: Define fixture-to-SQLite sync tests**
+1. 手填配置只保留每次需要填写的内容。
+2. 账户池、素材池和命名规则都必须本地检查。
+3. 字段映射必须有平台证据，不能猜。
+4. `create_execute` 继续硬阻断。
+5. 本地私有配置、数据库、token、session、运行产物不能提交。
 
-Use local JSON fixtures only. Assert accounts, projects, materials, and metric
-snapshots insert deterministically.
+## 重要约束
 
-- [ ] **Step 2: Implement idempotent inserts**
+- 不调用真实创建接口。
+- 不提交真实账户 CSV。
+- 不提交 token 或 session。
+- 不提交 SQLite 数据库。
+- 不提交 `data/runs` 里的运行产物。
+- 不让 AI 在业务运行时做临场判断。
+- 脚本出错时按 BUG 修复，并补测试。
 
-Use SQLite upserts for stable entity tables and append-only rows for metric
-snapshots.
+## 后续方向
 
-- [ ] **Step 3: Write result artifact**
+短期继续完善本地预演、字段证据复核、请求体草稿和审批边界。
 
-Return counts for inserted or updated records and include
-`external_api_calls: 0`.
+中期把 `dry-run / approve / execute` 的边界做牢，确保真实创建前每一步都可复盘。
 
-- [ ] **Step 4: Run tests**
-
-Run: `PYTHONPATH=src pytest tests/test_data_sync.py -q`
-
-Expected: PASS.
-
-## Task 3: Implement Daily Learning Artifact
-
-**Files:**
-- Create: `src/roibang_v2/workflows/daily_learning.py`
-- Create: `scripts/run_daily_learning.py`
-- Create: `configs/daily-learning.example.json`
-- Create: `tests/test_daily_learning.py`
-- Modify: `policies/strategy.example.json`
-- Reference: `docs/legacy-migration-inventory.md`
-
-- [ ] **Step 1: Test policy-threshold signal generation**
-
-Seed SQLite metrics and assert the workflow emits deterministic signals based
-on `lookback_days`, `min_cost_for_signal`, and
-`min_conversions_for_signal`.
-
-- [ ] **Step 2: Implement read-only learning query**
-
-Read SQLite snapshots and policy JSON. Do not write operational mutations.
-
-- [ ] **Step 3: Write result JSON shape**
-
-Include `signals`, `anomalies`, `policy_suggestions`, and
-`execution_enabled: false`.
-
-- [ ] **Step 4: Run tests**
-
-Run: `PYTHONPATH=src pytest tests/test_daily_learning.py -q`
-
-Expected: PASS.
-
-## Task 4: Implement Material Supplement Planning
-
-**Files:**
-- Create: `src/roibang_v2/materials/library.py`
-- Create: `src/roibang_v2/materials/product_source.py`
-- Create: `src/roibang_v2/workflows/material_sync.py`
-- Create: `src/roibang_v2/workflows/material_source.py`
-- Create: `scripts/run_material_sync.py`
-- Create: `scripts/run_material_source.py`
-- Create: `configs/material-sync.example.json`
-- Create: `configs/material-source.example.json`
-- Create: `data/fixtures/material-cache.sample.json`
-- Create: `data/fixtures/product-source-materials.sample.json`
-- Create: `tests/test_material_sync.py`
-- Create: `tests/test_material_source.py`
-- Modify: `src/roibang_v2/db/schema.sql`
-- Reference: `docs/legacy-migration-inventory.md`
-
-- [ ] **Step 1: Test supplement threshold logic**
-
-Seed materials and project usage facts. Assert the workflow emits supplement
-needs when available material count is below policy threshold.
-
-- [ ] **Step 2: Implement local material inventory query**
-
-Read material rows and usage records from SQLite.
-
-- [ ] **Step 3: Emit plan-only output**
-
-Output recommended supplement quantities and reasons. Do not upload or bind
-materials.
-
-- [ ] **Step 4: Run tests**
-
-Run: `PYTHONPATH=src pytest tests/test_material_sync.py -q`
-
-Expected: PASS.
-
-## Task 5: Implement Strategy Plan Generation
-
-**Files:**
-- Create: `src/roibang_v2/workflows/strategy_plan.py`
-- Create: `configs/requests/example.strategy-request.json`
-- Create: `scripts/run_strategy_plan.py`
-- Create: `tests/test_strategy_plan.py`
-- Reference: `docs/legacy-migration-inventory.md`
-
-- [ ] **Step 1: Test request-to-plan conversion**
-
-Given a request JSON, policy JSON, and SQLite facts, assert a plan JSON is
-created with `phase: "phase1"`, `execution_enabled: false`, preflight
-requirements, and dry-run placeholders.
-
-- [ ] **Step 2: Implement plan generation**
-
-Convert operator request into deterministic strategy plan records. Store plan
-JSON in SQLite and write a run artifact.
-
-- [ ] **Step 3: Preserve future chain**
-
-Ensure output sections are named `request`, `strategy`, `preflight`, `dry_run`,
-`approval`, and `execute`, with approval and execute disabled in Phase 1.
-
-- [ ] **Step 4: Run tests**
-
-Run: `PYTHONPATH=src pytest tests/test_strategy_plan.py -q`
-
-Expected: PASS.
-
-## Self-Review
-
-- The plan covers Phase 1 only.
-- All live business execution remains explicitly excluded.
-- JSON config, policy, SQLite, scripts, and AI boundaries are represented.
-- Future creation chain is preserved as a contract, not implemented as live
-  execution.
+后期等流程稳定后，再把脚本收敛为 CLI 工具和策略引擎。

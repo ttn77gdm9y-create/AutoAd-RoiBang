@@ -1,241 +1,73 @@
-# Phase 1 Scope
+# 第一阶段 安全本地能力说明
 
-Closeout review: `docs/phase-1-closeout-review.md`.
+日期：2026-05-10
 
-## Included
+本文档已经改为中文说明。代码字段、命令、路径和 JSON 键名会保留英文原名，因为脚本和配置必须使用这些名字。
 
-- Local project skeleton.
-- SQLite schema bootstrap.
-- JSON config and policy examples.
-- No-op script entrypoints for data sync, daily learning, material sync, and
-  strategy planning.
-- Local material cache import and supplement-plan generation.
-- Product source material import and target-account provision planning.
-- Local report snapshot import for projects, promotions, material bindings,
-  promotion metrics, operation logs, and material summaries.
-- Daily learning artifact generation from local SQLite.
-- Strategy plan generation with preflight, dry-run, approval record, and execute
-  hard-block artifacts only.
-- Scheduler job registry for the Phase 1 fixed scripts.
-- Run artifact layout under `data/runs/`.
-- Documentation for AI boundaries and future execution chain.
+## 文档定位
 
-## Excluded
+本文档用于记录 RoiBang-v2 当前阶段的设计、边界和操作方式。当前项目坚持“脚本 + JSON 策略 + SQLite + 运行产物”的形态，后续流程稳定后再考虑统一成 CLI 工具和策略引擎。
 
-- Real project creation.
-- Real unit creation.
-- Real pause, delete, budget, targeting, or schedule changes.
-- Pulling live data from ad platforms.
-- Uploading or binding material.
-- Executable approval.
-- Real execute implementation.
+字段解释：
 
-## Success Criteria
+- `script`：脚本，固定执行逻辑。
+- `JSON policy`：JSON 策略文件，保存预算、命名、素材、字段映射等规则。
+- `SQLite`：本地数据库，保存账户、素材、项目、报表和台账。
+- `run artifact`：运行产物，也就是脚本输出的 JSON 复盘文件。
+- `CLI`：命令行工具，后期可能统一成 `roibang ...` 形式。
+- `policy engine`：策略引擎，后期用于统一读取、校验和解释策略。
 
-- A developer can understand where configs, policies, scripts, database schema,
-  and generated artifacts belong.
-- Running placeholder scripts cannot perform real business actions.
-- Future implementation has clear boundaries for deterministic scripts and AI
-  review.
+## 当前安全原则
 
-## Material Sync Entry
+当前阶段不允许真实业务动作。所有创建链路必须保持：
 
-Phase 1 material sync is local-only:
-
-```bash
-PYTHONPATH=src scripts/run_material_sync.py \
-  --config configs/runtime.example.json \
-  --request configs/material-sync.example.json
+```text
+request -> strategy -> preflight -> dry-run -> approve -> execute
 ```
 
-The script imports a local material cache fixture into SQLite and writes a
-supplement plan artifact under `data/runs/material_sync/`. It refuses to run if
-`external_api_enabled` or `execution_enabled` is true.
+含义：
 
-## Product Source Material Entry
+- `request`：创建请求。
+- `strategy`：策略计划。
+- `preflight`：执行前检查。
+- `dry-run`：本地预演。
+- `approve`：批准记录。
+- `execute`：执行阶段，目前必须硬阻断。
 
-Phase 1 source material planning is local-only:
+所有相关脚本必须保持：
 
-```bash
-PYTHONPATH=src scripts/run_material_source.py \
-  --config configs/runtime.example.json \
-  --request configs/material-source.example.json
+```json
+{
+  "execution_enabled": false,
+  "external_api_calls": 0,
+  "actions": []
+}
 ```
 
-The script imports source-account materials into `product_source_materials`,
-checks which selected materials the target account already has, and writes a
-provision plan artifact under `data/runs/material_source/`. It does not push,
-bind, upload, create, or call external APIs.
+## 当前重点
 
-The OpenAPI source-account material template is disabled by default and can be
-preflighted without external calls:
+当前重点是勇者突进微信小游戏创建链路的第二阶段准备工作：
 
-```bash
-PYTHONPATH=src scripts/run_material_source.py \
-  --config configs/runtime.example.json \
-  --request configs/material-source.openapi-http.disabled.example.json \
-  --preflight
-```
+1. 手填配置只保留每次需要填写的内容。
+2. 账户池、素材池和命名规则都必须本地检查。
+3. 字段映射必须有平台证据，不能猜。
+4. `create_execute` 继续硬阻断。
+5. 本地私有配置、数据库、token、session、运行产物不能提交。
 
-The only supported real sync shape for Phase 1 is read-only
-`/open_api/2/file/video/get/`, driven by JSON config and redacted HTTP audit
-logs. It must keep `execution_enabled=false`.
+## 重要约束
 
-## Data Sync Entry
+- 不调用真实创建接口。
+- 不提交真实账户 CSV。
+- 不提交 token 或 session。
+- 不提交 SQLite 数据库。
+- 不提交 `data/runs` 里的运行产物。
+- 不让 AI 在业务运行时做临场判断。
+- 脚本出错时按 BUG 修复，并补测试。
 
-Phase 1 data sync is local-only:
+## 后续方向
 
-The read-only report snapshot fetching design is documented in
-`docs/api/report-snapshot-fetching.md`. Phase 1 starts with local snapshot files;
-future OpenAPI fetching must stay behind explicit read-only config.
+短期继续完善本地预演、字段证据复核、请求体草稿和审批边界。
 
-```bash
-PYTHONPATH=src scripts/run_data_sync.py \
-  --config configs/runtime.example.json \
-  --request configs/data-sync.example.json
-```
+中期把 `dry-run / approve / execute` 的边界做牢，确保真实创建前每一步都可复盘。
 
-The script imports a local report snapshot fixture into SQLite, including
-account/project/promotion operation logs, and writes an artifact under
-`data/runs/data_sync/`. It refuses to run if
-`external_api_enabled` or `execution_enabled` is true.
-
-## Daily Learning Entry
-
-Phase 1 daily learning is local-only:
-
-```bash
-PYTHONPATH=src scripts/run_daily_learning.py \
-  --config configs/runtime.example.json \
-  --request configs/daily-learning.example.json
-```
-
-The script reads SQLite and writes an artifact under
-`data/runs/daily_learning/`. It emits account signals, material deltas,
-operation log summaries, decision hints, and guardrails. It refuses to run if
-`external_api_enabled` or `execution_enabled` is true.
-
-## Strategy Plan Entry
-
-Phase 1 strategy planning is local-only:
-
-```bash
-PYTHONPATH=src scripts/run_strategy_plan.py \
-  --config configs/runtime.example.json \
-  --request configs/requests/example.strategy-request.json \
-  --policy policies/strategy.example.json
-```
-
-The script reads the latest daily learning artifact by default, stores the plan
-in SQLite, and writes an artifact under `data/runs/strategy_plan/`. Executable
-approval and real execute are disabled in Phase 1.
-
-If `data/runs/material_source/` contains a latest artifact, the strategy plan
-also includes plan-only material provision recommendations based on
-`missing_materials`. It still writes no executable payloads and does not push,
-bind, upload, create, pause, delete, or update live objects.
-
-Phase 1 strategy preflight is also local-only:
-
-```bash
-PYTHONPATH=src scripts/run_strategy_preflight.py \
-  --config configs/runtime.example.json
-```
-
-It reads the latest strategy plan artifact, validates phase and plan-only
-guardrails, checks material provision recommendation structure, writes a
-`strategy_preflight` artifact with source-plan lineage, and never approves
-execution in Phase 1.
-
-Phase 1 strategy dry-run is also local-only:
-
-```bash
-PYTHONPATH=src scripts/run_strategy_dry_run.py \
-  --config configs/runtime.example.json \
-  --policy policies/strategy.example.json
-```
-
-It reads the latest strategy plan and preflight artifacts, requires preflight to
-pass, applies dry-run policy limits, and writes non-executable candidate tasks.
-It emits no live API payloads and cannot approve or execute business actions.
-It blocks if the plan and preflight do not carry matching `plan_id` and
-`target_date` values.
-
-Phase 1 strategy approval is local-only:
-
-```bash
-PYTHONPATH=src scripts/run_strategy_approval.py \
-  --config configs/runtime.example.json \
-  --policy policies/strategy.example.json
-```
-
-It reads the latest dry-run artifact and records the policy decision. Phase 1
-keeps `approved=false` and `execute_allowed=false` even when policy would
-approve the simulated candidate tasks. It requires dry-run lineage to include
-matching plan and preflight references.
-
-Phase 1 strategy execute is a local-only hard-block:
-
-```bash
-PYTHONPATH=src scripts/run_strategy_execute.py \
-  --config configs/runtime.example.json \
-  --policy policies/strategy.example.json
-```
-
-It reads the latest approval artifact and writes a `strategy_execute` artifact
-with `status=blocked`, `reason=phase1_execute_disabled`,
-`execution_enabled=false`, `external_api_calls=0`,
-`approved_for_execute=false`, `executed_task_count=0`, and `actions=[]`. This
-keeps the future execution chain shape complete while preventing real business
-execution in Phase 1. It records lineage back to approval, dry-run, preflight,
-and plan, and fails closed if required `plan_id` / `target_date` references are
-missing or mismatched.
-
-## Scheduler Registry
-
-Phase 1 includes a job registry but does not install cron or launchd jobs:
-
-```bash
-PYTHONPATH=src scripts/validate_scheduler_jobs.py \
-  --registry configs/scheduler/roibang-v2.jobs.example.json
-```
-
-The registry is intentionally script-driven. It does not contain AI prompts,
-agent IDs, operator tasks, or ad hoc command instructions.
-
-Scheduler templates can be rendered for review:
-
-```bash
-PYTHONPATH=src scripts/render_scheduler_templates.py \
-  --registry configs/scheduler/roibang-v2.jobs.example.json \
-  --output-dir scheduler
-```
-
-The renderer writes example cron and launchd files only. It does not call
-`crontab`, `launchctl`, or any business workflow script.
-
-Cron and launchd templates call the unified scheduler runner:
-
-```bash
-PYTHONPATH=src scripts/run_scheduler_job.py \
-  --job-id roibang-material-sync
-```
-
-The runner executes only the foreground script configured in the registry,
-captures stdout, stderr, exit code, validates the resulting artifact contract,
-and writes a scheduler execution result JSON under
-`data/runs/scheduler/<job-id>/`.
-
-## Artifact Contract Validation
-
-Each scheduler job declares a result contract. Validate the latest artifact for
-a job with:
-
-```bash
-PYTHONPATH=src scripts/validate_run_artifact.py \
-  --job-id roibang-daily-learning
-```
-
-The validator checks that the JSON file exists, has the expected workflow, and
-contains all fields declared in `result_contract.must_include`. It is a read-only
-check and does not run the scheduled job.
+后期等流程稳定后，再把脚本收敛为 CLI 工具和策略引擎。

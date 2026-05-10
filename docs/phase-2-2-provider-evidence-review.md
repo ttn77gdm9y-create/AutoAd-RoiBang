@@ -1,66 +1,67 @@
-# Phase 2.2 Provider Evidence Review
+# 第二阶段.2 平台字段证据复核
 
-Date: 2026-05-10
+日期：2026-05-10
 
-This document defines the next safety slice after Phase 2.1 payload draft
-closeout. `provider evidence review` means 平台字段证据复核: before real payload
-generation, each provider field must have a reviewed source.
+本文档说明 第二阶段.2 的安全切片：平台字段证据复核。
 
-## Goal
+`provider evidence review` 的意思是“平台字段证据复核”。在未来生成真实平台请求体之前，每个字段都必须有可复核的来源证据。
 
-Add a review-only gate for OceanEngine create field evidence.
+## 目标
 
-The gate reads:
+新增一个只读复核闸门，用来检查 OceanEngine 创建链路字段证据。
 
-- provider field map JSON,
-- provider evidence catalog JSON,
-- existing runtime safety config.
+这个闸门读取：
 
-It writes a run artifact and performs no external API call.
+- 平台字段映射 JSON。
+- 平台证据目录 JSON。
+- 当前运行安全配置。
 
-## New Workflow
+它只写运行产物，不访问外网，不调用接口，不创建项目。
 
-The new workflow is:
+## 工作流
+
+工作流名称：
 
 ```text
 create_provider_evidence_review
 ```
 
-Field meanings:
+字段解释：
 
-- `provider`: 广告平台, currently `oceanengine`.
-- `evidence`: 字段依据, such as official docs or captured request evidence.
-- `catalog`: 目录, the JSON file listing evidence references.
-- `reviewed`: 已复核, meaning a human has checked the evidence.
+- `provider`：广告平台，目前是 `oceanengine`。
+- `evidence`：字段依据，例如官方文档或已捕获请求证据。
+- `catalog`：证据目录，也就是列出证据引用的 JSON 文件。
+- `reviewed`：已复核，表示人工已经检查过该证据。
 
-The workflow reports:
+## 输出内容
 
-- fields with empty provider field,
-- fields missing evidence refs,
-- evidence refs missing from the catalog,
-- evidence entries that exist but are not reviewed,
-- local-only fields that still need explicit confirmation.
+工作流会报告：
 
-It also reports:
+- 哪些字段缺平台字段名。
+- 哪些字段缺证据引用。
+- 哪些证据引用在证据目录里不存在。
+- 哪些证据存在但还没有人工复核。
+- 哪些本地字段还需要确认不进入平台请求体。
 
-- `evidence_status_counts`: 证据状态计数, grouped by unresolved reason.
-- `operator_guide`: 操作员指南, the exact human next steps.
-- `evidence_worksheet`: 证据填写清单, one row per reviewed field.
-- `provider_field_gap_report`: 缺平台字段报告, only for fields whose
-  provider field name is still empty.
+同时输出：
 
-Common status meanings:
+- `evidence_status_counts`：证据状态计数。
+- `operator_guide`：操作员指南。
+- `evidence_worksheet`：证据填写清单，每个字段一行。
+- `provider_field_gap_report`：缺平台字段报告，只列出 `provider_field` 为空的字段。
 
-- `needs_provider_field`: 缺平台字段名.
-- `needs_evidence_ref`: 缺证据引用.
-- `needs_evidence_review`: 有证据引用, 但还没有人工复核.
-- `local_only_needs_confirmation`: 本地字段需要确认不会进入平台请求体.
-- `local_only_confirmed`: 本地字段已确认不进入平台请求体.
-- `verified`: 字段映射和证据都已确认.
+## 状态解释
 
-## Safety Contract
+- `needs_provider_field`：缺平台字段名。
+- `needs_evidence_ref`：缺证据引用。
+- `needs_evidence_review`：有证据引用，但还没有人工复核。
+- `local_only_needs_confirmation`：本地字段需要确认不会进入平台请求体。
+- `local_only_confirmed`：本地字段已确认不进入平台请求体。
+- `verified`：字段映射和证据都已确认。
 
-The workflow must always return:
+## 安全契约
+
+工作流必须始终返回：
 
 ```json
 {
@@ -70,78 +71,68 @@ The workflow must always return:
 }
 ```
 
-It also keeps:
+同时必须保持：
 
-- `live_payload_generation_enabled=false`
-- `create_execute_hard_block_required=true`
-- `mapping_verified_must_remain_false=true`
+- `live_payload_generation_enabled=false`：不生成可发送的真实请求体。
+- `create_execute_hard_block_required=true`：创建执行继续硬阻断。
+- `mapping_verified_must_remain_false=true`：当前阶段不能把整体映射标记为已验证。
 
-This means the review can improve confidence in field mapping, but it cannot
-turn on real creation.
+这意味着证据复核只能提高字段可信度，不能打开真实创建。
 
-## Current Status
+## 当前状态
 
-The current example catalog is intentionally not reviewed:
+当前示例证据目录故意保持未复核：
 
 ```text
 configs/provider-evidence/oceanengine.create.phase2-review.example.json
 ```
 
-This lets the script report `needs_review` until real evidence is checked.
+当前预期结果：
 
-Current expected result:
+- 检查 18 个映射字段。
+- 载入 3 条证据目录项。
+- 已复核证据数为 0。
+- 未解决字段数为 18。
+- `operator_guide.status=needs_review`。
+- `evidence_worksheet.summary.row_count=18`。
+- `provider_field_gap_report.summary.gap_count=4`。
+- 真实请求体开发仍未就绪。
+- 真实执行仍未就绪。
 
-- 18 mapped fields inspected.
-- 3 evidence catalog entries loaded.
-- 0 evidence entries reviewed.
-- 18 fields unresolved.
-- `operator_guide.status=needs_review`.
-- `evidence_worksheet.summary.row_count=18`.
-- `provider_field_gap_report.summary.gap_count=4`.
-- live payload development remains not ready.
-- live execute remains not ready.
+## 证据填写清单
 
-## Evidence Worksheet
+`evidence_worksheet` 是人工填写清单。它把每个字段整理成一行，并告诉操作员该行还需要补什么。
 
-`evidence_worksheet` is a human-fillable checklist. It groups each field into a
-row and tells the operator what must be filled before that row can be marked
-ready.
+重要字段：
 
-Important fields:
+- `fill_required`：需要补的内容，例如 `source_url` 或复核人信息。
+- `do_not_change`：禁止改动的安全字段，例如 `execution_enabled`。
+- `ready_row_count`：已就绪字段行数。
+- `local_only_confirmed`：本地字段确认开关。只有人工确认该字段只用于查表、幂等或链路追踪，并且绝不会发送到平台请求体后，才能改成 `true`。
 
-- `fill_required`: 需要补的内容, such as `source_url` or reviewer metadata.
-- `do_not_change`: 禁止改动的安全字段, such as `execution_enabled`.
-- `ready_row_count`: 已就绪字段行数.
-- `local_only_confirmed`: 本地字段确认开关. Only set it to `true` after
-  manually confirming the field is used only for lookup, idempotency, or
-  lineage and must not be sent to the provider payload.
+这个填写清单不是批准产物，不能开启真实执行。
 
-The worksheet is not an approval artifact and cannot enable live execution.
+## 缺平台字段报告
 
-## Provider Field Gap Report
+`provider_field_gap_report` 会单独列出 `provider_field` 仍为空的字段。它比完整填写清单更窄，只用于聚焦缺字段问题。
 
-`provider_field_gap_report` isolates the fields that still have empty
-`provider_field` values. This report is narrower than the full worksheet.
-
-Current expected gaps:
+当前 4 个缺口：
 
 - `create_project.project_type`
 - `create_project.field_defaults`
 - `create_unit.field_defaults`
 - `bind_material.source_video_id`
 
-Do not fill these by guessing. Each gap must be resolved with provider evidence
-or by explicitly deciding the local field should be split or removed from the
-future provider payload draft.
+不要猜这些字段。每个缺口都必须通过平台证据确认，或者明确决定该本地字段需要拆分、改名，或者不进入未来平台请求体草稿。
 
-## Next Manual Review
+## 下一步人工复核
 
-Before changing any field to verified, review the exact source for:
+在把任何字段改成 `verified=true` 之前，需要先复核：
 
-1. project create request fields,
-2. promotion/unit create request fields,
-3. material binding request fields,
-4. whether local-only keys truly stay out of provider payloads,
-5. whether `material_id` or `source_video_id` is required for material binding.
+1. 项目创建请求字段。
+2. 单元创建请求字段。
+3. 素材绑定请求字段。
+4. 本地键是否确实不进入平台请求体。
+5. `material_id` 和 `source_video_id` 在素材绑定里各自是否需要。
 
-Only after that should the JSON evidence catalog be updated.
+只有复核完成后，才能更新证据目录 JSON。
