@@ -1868,9 +1868,9 @@ def test_create_provider_evidence_review_flags_unreviewed_phase2_evidence():
         "ready_field_count": 0,
         "unresolved_field_count": 18,
         "evidence_status_counts": {
-            "local_only_needs_confirmation": 4,
+            "local_only_needs_confirmation": 5,
             "needs_evidence_review": 10,
-            "needs_provider_field": 4,
+            "needs_provider_field": 3,
         },
         "ready_for_live_payload_development": False,
         "ready_for_live_execute": False,
@@ -1927,8 +1927,8 @@ def test_create_provider_evidence_review_flags_unreviewed_phase2_evidence():
         "worksheet_version": "phase2.provider_evidence_worksheet.v1",
         "row_count": 18,
         "requires_evidence_review_count": 10,
-        "requires_local_confirmation_count": 4,
-        "requires_provider_field_count": 4,
+        "requires_local_confirmation_count": 5,
+        "requires_provider_field_count": 3,
         "ready_row_count": 0,
     }
     assert result["evidence_worksheet"]["rows"][0] == {
@@ -1961,22 +1961,22 @@ def test_create_provider_evidence_review_flags_unreviewed_phase2_evidence():
         "set_local_only_confirmed_true_after_manual_check",
     ]
     assert result["provider_field_gap_report"]["summary"] == {
-        "gap_count": 4,
+        "gap_count": 3,
         "operation_counts": {
             "bind_material": 1,
-            "create_project": 2,
+            "create_project": 1,
             "create_unit": 1,
         },
         "ready_for_live_payload_development": False,
     }
     assert result["provider_field_gap_report"]["rows"][0] == {
         "operation": "create_project",
-        "internal_field": "project_type",
+        "internal_field": "field_defaults",
         "provider_object": "project_create_request",
-        "value_source": "create_strategy_plan.strategy.projects[].project_type",
-        "purpose": "internal project type",
+        "value_source": "create_strategy_plan.strategy.projects[].field_defaults",
+        "purpose": "project default fields",
         "open_questions": [
-            "Confirm whether internal project_type selects landing_type, delivery mode, or a fixed template branch."
+            "Split field_defaults into explicit project API fields before live payload development."
         ],
         "fill_required": [
             "provider_field",
@@ -1986,25 +1986,24 @@ def test_create_provider_evidence_review_flags_unreviewed_phase2_evidence():
     }
     assert result["provider_field_gap_resolution_plan"]["summary"] == {
         "plan_version": "phase2.provider_field_gap_resolution.v1",
-        "gap_count": 4,
+        "gap_count": 3,
         "manual_review_required": True,
         "ready_for_live_payload_development": False,
     }
     assert result["provider_field_gap_resolution_plan"]["items"][0] == {
         "operation": "create_project",
-        "internal_field": "project_type",
-        "recommended_action": "confirm_local_template_selector_or_split_to_provider_fields",
+        "internal_field": "field_defaults",
+        "recommended_action": "split_field_defaults_into_explicit_provider_fields",
         "review_questions": [
-            "这个 project_type 是否只用于本地模板选择、项目命名和策略分支？",
-            "它是否已经被拆到 landing_type、pricing、inventory_type 等平台字段？",
-            "是否有官方文档或已捕获请求证明平台请求体不接收 project_type？",
+            "field_defaults 里的每个子字段分别对应哪个平台字段？",
+            "哪些子字段只用于本地模板，不应该进入平台请求体？",
+            "拆分后的每个 provider_field 是否都有官方文档或已捕获请求证据？",
             "复核证据来自官方文档还是已捕获请求？",
         ],
         "blocked_until": [
-            "本地用途已复核",
-            "mapping_kind 已确认",
-            "如果确认本地字段，local_only_confirmed 必须由人工确认",
-            "如果需要进入平台请求体，必须拆成明确 provider_field 并补证据",
+            "field_defaults 的每个子字段都有去向",
+            "每个要进入平台请求体的子字段都有 provider_field",
+            "每个 provider_field 都有已复核 evidence_refs",
         ],
         "do_not_do": [
             "不要猜 provider_field",
@@ -2043,6 +2042,35 @@ def test_create_provider_evidence_review_flags_unreviewed_phase2_evidence():
         "meaning": "从项目模板名称推导本地 project_type，用于区分 WX_PAY 和 WX_PAY_7R。",
     }
     assert result["project_type_local_usage_review"]["blocking_items"] == []
+    assert result["field_gap_convergence_plan"]["summary"] == {
+        "plan_version": "phase2.field_gap_convergence.v1",
+        "project_type_ready_for_manual_local_only_confirmation": True,
+        "remaining_provider_field_gap_count": 3,
+        "field_defaults_split_item_count": 2,
+        "source_video_id_review_required": True,
+        "ready_for_live_payload_development": False,
+    }
+    assert result["field_gap_convergence_plan"]["project_type_decision"] == {
+        "operation": "create_project",
+        "internal_field": "project_type",
+        "recommended_mapping_kind": "local_only",
+        "local_only_confirmed": False,
+        "reason": "已从禁用请求体 schema 和 dry-run payload 移除，只保留本地模板、命名、批次码和复盘用途。",
+        "blocked_until": ["人工确认 local_only_confirmed=true"],
+    }
+    assert result["field_gap_convergence_plan"]["field_defaults_split_plan"]["items"][0] == {
+        "operation": "create_project",
+        "internal_field": "field_defaults",
+        "subfields": ["landing_type", "pricing", "inventory_type"],
+        "recommended_action": "split_into_explicit_provider_fields",
+        "blocked_until": ["每个子字段都有 provider_field", "每个 provider_field 都有已复核证据"],
+    }
+    assert result["field_gap_convergence_plan"]["source_video_id_review"] == {
+        "operation": "bind_material",
+        "internal_field": "source_video_id",
+        "recommended_action": "confirm_provider_field_or_local_provenance",
+        "blocked_until": ["确认素材绑定是否需要 source_video_id", "确认后补 provider_field 或改为 local_only"],
+    }
     assert result["violations"] == []
     assert result["actions"] == []
 
@@ -2070,7 +2098,7 @@ def test_create_provider_evidence_review_accepts_explicit_local_only_confirmatio
     )
     for rows in field_map["operations"].values():
         for entry in rows:
-            if entry.get("mapping_kind") == "local_lookup_key":
+            if entry.get("mapping_kind") in {"local_lookup_key", "local_only"}:
                 entry["local_only_confirmed"] = True
                 entry["local_only_confirmation_note"] = "unit test confirms the field is used only for local lookup"
     field_map_path = tmp_path / "field-map.json"
@@ -2084,18 +2112,18 @@ def test_create_provider_evidence_review_accepts_explicit_local_only_confirmatio
     )
 
     assert result["summary"]["evidence_status_counts"] == {
-        "local_only_confirmed": 4,
+        "local_only_confirmed": 5,
         "needs_evidence_review": 10,
-        "needs_provider_field": 4,
+        "needs_provider_field": 3,
     }
-    assert result["summary"]["unresolved_field_count"] == 14
+    assert result["summary"]["unresolved_field_count"] == 13
     assert result["evidence_worksheet"]["summary"]["requires_local_confirmation_count"] == 0
     confirmed_rows = [
         row
         for row in result["evidence_worksheet"]["rows"]
         if row["evidence_status"] == "local_only_confirmed"
     ]
-    assert len(confirmed_rows) == 4
+    assert len(confirmed_rows) == 5
     assert all(row["fill_required"] == [] for row in confirmed_rows)
     assert result["execution_enabled"] is False
     assert result["external_api_calls"] == 0
@@ -2140,13 +2168,15 @@ def test_create_provider_evidence_review_cli_uses_policy_config(tmp_path: Path, 
     assert artifact["summary"]["evidence_catalog_path"] == "configs/provider-evidence/oceanengine.create.phase2-review.example.json"
     assert output["operator_guide"]["status"] == "needs_review"
     assert output["evidence_worksheet_summary"]["row_count"] == 18
-    assert output["provider_field_gap_summary"]["gap_count"] == 4
-    assert output["provider_field_gap_resolution_summary"]["gap_count"] == 4
+    assert output["provider_field_gap_summary"]["gap_count"] == 3
+    assert output["provider_field_gap_resolution_summary"]["gap_count"] == 3
     assert output["project_type_local_usage_summary"]["ready_to_mark_local_only"] is True
+    assert output["field_gap_convergence_summary"]["remaining_provider_field_gap_count"] == 3
     assert artifact["evidence_worksheet"]["summary"]["requires_evidence_review_count"] == 10
-    assert artifact["provider_field_gap_report"]["summary"]["operation_counts"]["create_project"] == 2
+    assert artifact["provider_field_gap_report"]["summary"]["operation_counts"]["create_project"] == 1
     assert artifact["provider_field_gap_resolution_plan"]["summary"]["manual_review_required"] is True
     assert artifact["project_type_local_usage_review"]["summary"]["blocking_item_count"] == 0
+    assert artifact["field_gap_convergence_plan"]["summary"]["field_defaults_split_item_count"] == 2
     assert artifact["execution_enabled"] is False
     assert artifact["external_api_calls"] == 0
     assert artifact["actions"] == []

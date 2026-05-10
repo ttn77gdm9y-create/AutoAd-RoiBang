@@ -119,14 +119,15 @@ configs/provider-evidence/oceanengine.create.phase2-review.example.json
 
 `provider_field_gap_report` 会单独列出 `provider_field` 仍为空的字段。它比完整填写清单更窄，只用于聚焦缺字段问题。
 
-当前 4 个缺口：
+当前缺口已收敛为 3 个：
 
-- `create_project.project_type`
 - `create_project.field_defaults`
 - `create_unit.field_defaults`
 - `bind_material.source_video_id`
 
-不要猜这些字段。每个缺口都必须通过平台证据确认，或者明确决定该本地字段需要拆分、改名，或者不进入未来平台请求体草稿。
+`create_project.project_type` 已改为 `local_only` 候选字段。它仍需要人工确认 `local_only_confirmed=true`，但不再算缺平台字段。
+
+不要猜剩余字段。每个缺口都必须通过平台证据确认，或者明确决定该本地字段需要拆分、改名，或者不进入未来平台请求体草稿。
 
 ## 缺平台字段处理计划
 
@@ -137,11 +138,10 @@ configs/provider-evidence/oceanengine.create.phase2-review.example.json
 - `blocked_until`：解除阻塞前必须完成的条件。
 - `do_not_do`：禁止事项，例如不要猜字段、不要打开 `create_execute`。
 
-这个计划的目标是让 4 个缺口逐个可复核，而不是让脚本替人判断平台字段。
+这个计划的目标是让剩余缺口逐个可复核，而不是让脚本替人判断平台字段。
 
 当前建议动作：
 
-- `confirm_local_template_selector_or_split_to_provider_fields`：确认 `project_type` 是不是只用于本地模板选择、项目命名和策略分支；如果不是本地字段，就必须拆成明确平台字段。
 - `split_field_defaults_into_explicit_provider_fields`：把 `field_defaults` 拆成明确平台字段，不能把默认字段集合整包塞进平台请求体。
 - `confirm_material_identifier_or_local_provenance`：确认 `source_video_id` 是平台素材绑定字段，还是只用于本地素材来源追溯。
 
@@ -164,6 +164,23 @@ configs/provider-evidence/oceanengine.create.phase2-review.example.json
 - dry-run 草稿不再把它放在 `disabled_schema_only` 请求体里。
 
 所以这个清单现在显示 `ready_to_mark_local_only=true`。但它仍然不做自动确认，下一步必须由人工确认字段映射里的 `mapping_kind` 和 `local_only_confirmed`。
+
+## 字段缺口收敛计划
+
+`field_gap_convergence_plan` 是 第二阶段.3 的收敛计划。它把剩余问题压缩成 3 类：
+
+- `project_type`：已准备好进入人工本地字段确认，但不会自动确认。
+- `field_defaults`：项目和单元各有一项，需要拆成 `landing_type`、`pricing`、`inventory_type` 等明确平台字段。
+- `source_video_id`：需要确认它是平台素材绑定字段，还是只用于本地素材来源追溯。
+
+当前状态：
+
+- `remaining_provider_field_gap_count=3`。
+- `field_defaults_split_item_count=2`。
+- `source_video_id_review_required=true`。
+- `ready_for_live_payload_development=false`。
+
+这个计划仍然只读、只复核，不会打开真实请求体开发，也不会打开 `create_execute`。
 
 ## 下一步人工复核
 

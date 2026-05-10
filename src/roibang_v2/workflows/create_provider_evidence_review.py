@@ -576,6 +576,59 @@ def _project_type_local_usage_review() -> dict[str, Any]:
     }
 
 
+def _field_gap_convergence_plan(gap_report: dict[str, Any]) -> dict[str, Any]:
+    gap_rows = gap_report.get("rows") if isinstance(gap_report.get("rows"), list) else []
+    field_defaults_items = [
+        {
+            "operation": str(row.get("operation") or ""),
+            "internal_field": "field_defaults",
+            "subfields": ["landing_type", "pricing", "inventory_type"],
+            "recommended_action": "split_into_explicit_provider_fields",
+            "blocked_until": ["每个子字段都有 provider_field", "每个 provider_field 都有已复核证据"],
+        }
+        for row in gap_rows
+        if isinstance(row, dict) and str(row.get("internal_field") or "") == "field_defaults"
+    ]
+    source_video_id_review = {
+        "operation": "bind_material",
+        "internal_field": "source_video_id",
+        "recommended_action": "confirm_provider_field_or_local_provenance",
+        "blocked_until": ["确认素材绑定是否需要 source_video_id", "确认后补 provider_field 或改为 local_only"],
+    }
+    return {
+        "summary": {
+            "plan_version": "phase2.field_gap_convergence.v1",
+            "project_type_ready_for_manual_local_only_confirmation": True,
+            "remaining_provider_field_gap_count": int(gap_report.get("summary", {}).get("gap_count") or 0),
+            "field_defaults_split_item_count": len(field_defaults_items),
+            "source_video_id_review_required": any(
+                isinstance(row, dict)
+                and str(row.get("operation") or "") == "bind_material"
+                and str(row.get("internal_field") or "") == "source_video_id"
+                for row in gap_rows
+            ),
+            "ready_for_live_payload_development": False,
+        },
+        "project_type_decision": {
+            "operation": "create_project",
+            "internal_field": "project_type",
+            "recommended_mapping_kind": "local_only",
+            "local_only_confirmed": False,
+            "reason": "已从禁用请求体 schema 和 dry-run payload 移除，只保留本地模板、命名、批次码和复盘用途。",
+            "blocked_until": ["人工确认 local_only_confirmed=true"],
+        },
+        "field_defaults_split_plan": {
+            "items": field_defaults_items,
+        },
+        "source_video_id_review": source_video_id_review,
+        "do_not_do": [
+            "不要猜 provider_field",
+            "不要把 field_defaults 整包塞进平台请求体",
+            "不要打开 create_execute",
+        ],
+    }
+
+
 def build_create_provider_evidence_review(*, policy: dict[str, Any]) -> dict[str, Any]:
     field_map = load_provider_field_map(policy)
     field_contract = provider_field_map_contract(field_map, policy)
@@ -611,6 +664,7 @@ def build_create_provider_evidence_review(*, policy: dict[str, Any]) -> dict[str
         "provider_field_gap_report": gap_report,
         "provider_field_gap_resolution_plan": _provider_field_gap_resolution_plan(gap_report),
         "project_type_local_usage_review": _project_type_local_usage_review(),
+        "field_gap_convergence_plan": _field_gap_convergence_plan(gap_report),
         "operator_guide": _operator_guide(status=status),
         "violations": violations,
         "actions": [],
