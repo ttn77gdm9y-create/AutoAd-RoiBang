@@ -665,6 +665,21 @@
       "delivery": {"channel": "none"}
     },
     {
+      "id": "roibang-create-live-execute-report",
+      "name": "RoiBang-v2 首单真实执行结果汇报",
+      "category": "create_live_execute_report",
+      "enabled": false,
+      "schedule": {"type": "cron", "expr": "15 11 * * *", "tz": "Asia/Shanghai"},
+      "script": {
+        "path": "scripts/run_create_live_execute_report.py",
+        "mode": "foreground",
+        "args": ["--config", "configs/runtime.example.json"]
+      },
+      "policy": {"config": "configs/runtime.example.json"},
+      "result_contract": {"workflow": "create_live_execute_report", "artifact_dir": "data/runs/create_live_execute_report", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "message", "summary", "db_ledger_summary", "source_artifact_path", "actions"], "must_equal": {"phase": "phase2_preparation", "execution_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
+      "delivery": {"channel": "none"}
+    },
+    {
       "id": "roibang-create-adapter-review-pack",
       "name": "RoiBang-v2 创建适配器审阅包",
       "category": "create_adapter_review_pack",

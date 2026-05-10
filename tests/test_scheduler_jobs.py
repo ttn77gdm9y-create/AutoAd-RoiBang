@@ -12,9 +12,9 @@ def test_scheduler_registry_has_no_ai_execution_prompts():
 
     assert result == {
         "ok": True,
-        "jobs": 49,
+        "jobs": 50,
         "enabled_jobs": 9,
-        "disabled_jobs": 40,
+        "disabled_jobs": 41,
         "violations": [],
     }
 
@@ -100,6 +100,10 @@ def test_scheduler_registry_includes_disabled_fixed_create_chain_jobs():
             "create_live_execute_once",
             "scripts/run_create_live_execute_once.py",
         ),
+        "roibang-create-live-execute-report": (
+            "create_live_execute_report",
+            "scripts/run_create_live_execute_report.py",
+        ),
         "roibang-create-phase2-project-naming-prep": (
             "create_phase2_project_naming_prep",
             "scripts/run_create_phase2_project_naming_prep.py",
@@ -184,6 +188,7 @@ def test_scheduler_registry_phase1_contracts_pin_safe_execution_values():
         "roibang-create-readiness-matrix",
         "roibang-create-live-execute-phase-gate",
         "roibang-create-live-payload-adapter-scaffold",
+        "roibang-create-live-execute-report",
         "roibang-create-adapter-review-pack",
         "roibang-create-chain-index",
         "roibang-create-chain-final-report",
