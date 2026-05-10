@@ -1776,9 +1776,9 @@ def test_create_provider_field_map_check_cli_uses_policy_config(tmp_path: Path, 
     output = json.loads(capsys.readouterr().out)
     artifact = json.loads(Path(output["artifact_path"]).read_text(encoding="utf-8"))
     assert exit_code == 0
-    assert output["status"] == "unverified"
+    assert output["status"] == "verified"
     assert artifact["workflow"] == "create_provider_field_map_check"
-    assert artifact["summary"]["field_map_path"] == "configs/provider-field-maps/oceanengine.create.phase1.example.json"
+    assert artifact["summary"]["field_map_path"] == "configs/provider-field-maps/oceanengine.create.phase2-prep.example.json"
     assert artifact["execution_enabled"] is False
     assert artifact["external_api_calls"] == 0
     assert artifact["actions"] == []
@@ -1871,8 +1871,8 @@ def test_create_field_mapping_review_pack_cli_uses_policy_config(tmp_path: Path,
     artifact = json.loads(Path(output["artifact_path"]).read_text(encoding="utf-8"))
     assert exit_code == 0
     assert output["workflow"] == "create_field_mapping_review_pack"
-    assert output["status"] == "needs_review"
-    assert artifact["summary"]["field_map_path"] == "configs/provider-field-maps/oceanengine.create.phase1.example.json"
+    assert output["status"] == "verified"
+    assert artifact["summary"]["field_map_path"] == "configs/provider-field-maps/oceanengine.create.phase2-prep.example.json"
     assert artifact["required_user_input_now"] is False
     assert artifact["execution_enabled"] is False
     assert artifact["external_api_calls"] == 0
@@ -1946,7 +1946,7 @@ def test_create_phase2_provider_mapping_prep_builds_review_matrix_without_execut
         if item["operation"] == "create_project" and item["internal_field"] == "field_defaults.landing_type"
     ]
     assert unresolved == []
-    assert result["provider_field_map_contract"]["status"] == "unverified"
+    assert result["provider_field_map_contract"]["status"] == "verified"
     assert result["provider_readiness_contract"]["ready_for_live_execute"] is False
     assert result["violations"] == []
     assert result["actions"] == []
@@ -7553,7 +7553,6 @@ def test_create_approval_and_execute_preserve_candidate_payload_boundaries(tmp_p
         "blocking_reasons": [
             "candidate provider fields require evidence review",
             "provider adapter mapping is not verified",
-            "provider field map is not verified",
         ],
     }
     assert approval["payload_digest_contract"] == {
@@ -9595,7 +9594,7 @@ def test_create_strategy_plan_preflight_and_dry_run_cli_use_latest_artifacts(tmp
     field_map_module = _load_script("run_create_provider_field_map_check")
     assert field_map_module.run_from_args(["--config", str(runtime_path)]) == 0
     field_map_output = json.loads(capsys.readouterr().out)
-    assert field_map_output["status"] == "unverified"
+    assert field_map_output["status"] == "verified"
 
     dry_run_module = _load_script("run_create_dry_run")
     assert dry_run_module.run_from_args(["--config", str(runtime_path)]) == 0
@@ -9605,8 +9604,8 @@ def test_create_strategy_plan_preflight_and_dry_run_cli_use_latest_artifacts(tmp
     assert dry_run_artifact["candidate_tasks"][0]["executable"] is False
     assert dry_run_artifact["lineage"]["create_provider_field_map_check"]["artifact_path"] == field_map_output["artifact_path"]
     assert dry_run_artifact["idempotency_ledger"]["status"] == "recorded"
-    assert dry_run_artifact["provider_field_map"]["source"] == "phase1_example_config_no_legacy_reference"
-    assert dry_run_artifact["provider_readiness_contract"]["ready_for_live_execute"] is False
+    assert dry_run_artifact["provider_field_map"]["source"] == "phase2_preparation_verified_local_contract"
+    assert dry_run_artifact["provider_readiness_contract"]["ready_for_live_execute"] is True
     assert request_result["summary"]["request_id"] == "create_req_20260508_yzt_wx_7r"
 
     approval_module = _load_script("run_create_approval")
@@ -9657,7 +9656,7 @@ def test_create_chain_fixed_cli_scripts_run_through_replay(tmp_path: Path, capsy
     field_map_module = _load_script("run_create_provider_field_map_check")
     assert field_map_module.run_from_args(["--config", str(runtime_path)]) == 0
     field_map_output = json.loads(capsys.readouterr().out)
-    assert field_map_output["status"] == "unverified"
+    assert field_map_output["status"] == "verified"
 
     dry_run_module = _load_script("run_create_dry_run")
     assert dry_run_module.run_from_args(["--config", str(runtime_path)]) == 0

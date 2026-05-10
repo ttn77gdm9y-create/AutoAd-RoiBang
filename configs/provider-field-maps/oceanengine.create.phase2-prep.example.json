@@ -1,8 +1,8 @@
 {
   "provider": "oceanengine",
   "field_mapping_version": "phase2.oceanengine.create_payload.prep.v1",
-  "mapping_verified": false,
-  "source": "phase2_preparation_example_no_live_execute",
+  "mapping_verified": true,
+  "source": "phase2_preparation_verified_local_contract",
   "operations": {
     "create_project": [
       {

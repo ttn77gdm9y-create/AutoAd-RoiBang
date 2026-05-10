@@ -67,9 +67,10 @@
     "max_units_per_dry_run": 500,
     "provider_adapter": {
       "provider": "oceanengine",
-      "field_mapping_version": "phase1.oceanengine.create_payload.draft.v1"
+      "field_mapping_version": "phase2.oceanengine.create_payload.prep.v1",
+      "mapping_verified": true
     },
-    "provider_field_map_path": "configs/provider-field-maps/oceanengine.create.phase1.example.json"
+    "provider_field_map_path": "configs/provider-field-maps/oceanengine.create.phase2-prep.example.json"
   },
   "create_phase2_provider_mapping_prep": {
     "provider_adapter": {
