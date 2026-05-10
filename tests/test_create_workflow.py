@@ -1960,6 +1960,30 @@ def test_create_provider_evidence_review_flags_unreviewed_phase2_evidence():
         "confirm_field_is_local_only",
         "set_local_only_confirmed_true_after_manual_check",
     ]
+    assert result["provider_field_gap_report"]["summary"] == {
+        "gap_count": 4,
+        "operation_counts": {
+            "bind_material": 1,
+            "create_project": 2,
+            "create_unit": 1,
+        },
+        "ready_for_live_payload_development": False,
+    }
+    assert result["provider_field_gap_report"]["rows"][0] == {
+        "operation": "create_project",
+        "internal_field": "project_type",
+        "provider_object": "project_create_request",
+        "value_source": "create_strategy_plan.strategy.projects[].project_type",
+        "purpose": "internal project type",
+        "open_questions": [
+            "Confirm whether internal project_type selects landing_type, delivery mode, or a fixed template branch."
+        ],
+        "fill_required": [
+            "provider_field",
+            "mapping_kind",
+            "evidence_refs",
+        ],
+    }
     assert result["violations"] == []
     assert result["actions"] == []
 
@@ -2057,7 +2081,9 @@ def test_create_provider_evidence_review_cli_uses_policy_config(tmp_path: Path, 
     assert artifact["summary"]["evidence_catalog_path"] == "configs/provider-evidence/oceanengine.create.phase2-review.example.json"
     assert output["operator_guide"]["status"] == "needs_review"
     assert output["evidence_worksheet_summary"]["row_count"] == 18
+    assert output["provider_field_gap_summary"]["gap_count"] == 4
     assert artifact["evidence_worksheet"]["summary"]["requires_evidence_review_count"] == 10
+    assert artifact["provider_field_gap_report"]["summary"]["operation_counts"]["create_project"] == 2
     assert artifact["execution_enabled"] is False
     assert artifact["external_api_calls"] == 0
     assert artifact["actions"] == []

@@ -46,6 +46,8 @@ It also reports:
 - `evidence_status_counts`: 证据状态计数, grouped by unresolved reason.
 - `operator_guide`: 操作员指南, the exact human next steps.
 - `evidence_worksheet`: 证据填写清单, one row per reviewed field.
+- `provider_field_gap_report`: 缺平台字段报告, only for fields whose
+  provider field name is still empty.
 
 Common status meanings:
 
@@ -95,6 +97,7 @@ Current expected result:
 - 18 fields unresolved.
 - `operator_guide.status=needs_review`.
 - `evidence_worksheet.summary.row_count=18`.
+- `provider_field_gap_report.summary.gap_count=4`.
 - live payload development remains not ready.
 - live execute remains not ready.
 
@@ -114,6 +117,22 @@ Important fields:
   lineage and must not be sent to the provider payload.
 
 The worksheet is not an approval artifact and cannot enable live execution.
+
+## Provider Field Gap Report
+
+`provider_field_gap_report` isolates the fields that still have empty
+`provider_field` values. This report is narrower than the full worksheet.
+
+Current expected gaps:
+
+- `create_project.project_type`
+- `create_project.field_defaults`
+- `create_unit.field_defaults`
+- `bind_material.source_video_id`
+
+Do not fill these by guessing. Each gap must be resolved with provider evidence
+or by explicitly deciding the local field should be split or removed from the
+future provider payload draft.
 
 ## Next Manual Review
 

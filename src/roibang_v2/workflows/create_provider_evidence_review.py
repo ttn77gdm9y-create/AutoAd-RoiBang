@@ -374,6 +374,54 @@ def _evidence_worksheet(sections: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _provider_field_gap_report(field_map: dict[str, Any]) -> dict[str, Any]:
+    operations = field_map.get("operations") if isinstance(field_map.get("operations"), dict) else {}
+    rows: list[dict[str, Any]] = []
+    for operation, entries in operations.items():
+        for entry in entries if isinstance(entries, list) else []:
+            if not isinstance(entry, dict):
+                continue
+            if str(entry.get("provider_field") or "").strip():
+                continue
+            if _is_local_only(entry):
+                continue
+            open_questions = entry.get("open_questions")
+            rows.append(
+                {
+                    "operation": str(operation),
+                    "internal_field": str(entry.get("internal_field") or ""),
+                    "provider_object": str(entry.get("provider_object") or ""),
+                    "value_source": str(entry.get("value_source") or ""),
+                    "purpose": str(entry.get("purpose") or ""),
+                    "open_questions": [
+                        str(item) for item in open_questions if str(item or "").strip()
+                    ] if isinstance(open_questions, list) else [],
+                    "fill_required": [
+                        "provider_field",
+                        "mapping_kind",
+                        "evidence_refs",
+                    ],
+                }
+            )
+    operation_counts: dict[str, int] = {}
+    for row in rows:
+        operation = str(row.get("operation") or "")
+        operation_counts[operation] = operation_counts.get(operation, 0) + 1
+    return {
+        "summary": {
+            "gap_count": len(rows),
+            "operation_counts": dict(sorted(operation_counts.items())),
+            "ready_for_live_payload_development": False,
+        },
+        "instructions": [
+            "先确认每个 internal_field 是否应拆成多个 provider_field。",
+            "不要为了消除 gap 编造 provider_field。",
+            "补 provider_field 前必须同步补 evidence_refs。",
+        ],
+        "rows": rows,
+    }
+
+
 def build_create_provider_evidence_review(*, policy: dict[str, Any]) -> dict[str, Any]:
     field_map = load_provider_field_map(policy)
     field_contract = provider_field_map_contract(field_map, policy)
@@ -405,6 +453,7 @@ def build_create_provider_evidence_review(*, policy: dict[str, Any]) -> dict[str
         "evidence_review_sections": sections,
         "unresolved_evidence_items": _unresolved_items(sections),
         "evidence_worksheet": _evidence_worksheet(sections),
+        "provider_field_gap_report": _provider_field_gap_report(field_map),
         "operator_guide": _operator_guide(status=status),
         "violations": violations,
         "actions": [],

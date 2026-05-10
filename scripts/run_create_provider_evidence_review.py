@@ -39,6 +39,7 @@ def run_from_args(argv: list[str] | None = None) -> int:
                 "summary": result["summary"],
                 "operator_guide": result["operator_guide"],
                 "evidence_worksheet_summary": result["evidence_worksheet"]["summary"],
+                "provider_field_gap_summary": result["provider_field_gap_report"]["summary"],
                 "artifact_path": result["artifact_path"],
             },
             ensure_ascii=False,
