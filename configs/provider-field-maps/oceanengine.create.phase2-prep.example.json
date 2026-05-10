@@ -63,47 +63,47 @@
       },
       {
         "internal_field": "field_defaults.landing_type",
-        "provider_field": "",
+        "provider_field": "landing_type",
         "provider_object": "project_create_request",
-        "mapping_kind": "",
+        "mapping_kind": "candidate_direct",
         "value_source": "create_strategy_plan.strategy.projects[].field_defaults.landing_type",
         "purpose": "project landing type default",
         "verified": false,
         "required": true,
         "source": "phase2_preparation",
-        "evidence_refs": [],
+        "evidence_refs": ["oceanengine_openapi_project_create_request"],
         "open_questions": [
-          "Confirm project landing_type provider field before live payload development."
+          "Review evidence before changing candidate_direct to direct and verified=true."
         ]
       },
       {
         "internal_field": "field_defaults.pricing",
-        "provider_field": "",
+        "provider_field": "pricing",
         "provider_object": "project_create_request",
-        "mapping_kind": "",
+        "mapping_kind": "candidate_direct",
         "value_source": "create_strategy_plan.strategy.projects[].field_defaults.pricing",
         "purpose": "project pricing default",
         "verified": false,
         "required": true,
         "source": "phase2_preparation",
-        "evidence_refs": [],
+        "evidence_refs": ["oceanengine_openapi_project_create_request"],
         "open_questions": [
-          "Confirm project pricing provider field before live payload development."
+          "Review evidence before changing candidate_direct to direct and verified=true."
         ]
       },
       {
         "internal_field": "field_defaults.inventory_type",
-        "provider_field": "",
+        "provider_field": "inventory_type",
         "provider_object": "project_create_request",
-        "mapping_kind": "",
+        "mapping_kind": "candidate_direct",
         "value_source": "create_strategy_plan.strategy.projects[].field_defaults.inventory_type",
         "purpose": "project inventory type default",
         "verified": false,
         "required": true,
         "source": "phase2_preparation",
-        "evidence_refs": [],
+        "evidence_refs": ["oceanengine_openapi_project_create_request"],
         "open_questions": [
-          "Confirm project inventory_type provider field before live payload development."
+          "Review evidence before changing candidate_direct to direct and verified=true."
         ]
       }
     ],
@@ -185,47 +185,47 @@
       },
       {
         "internal_field": "field_defaults.landing_type",
-        "provider_field": "",
+        "provider_field": "landing_type",
         "provider_object": "promotion_create_request",
-        "mapping_kind": "",
+        "mapping_kind": "candidate_direct",
         "value_source": "create_strategy_plan.strategy.projects[].field_defaults.landing_type",
         "purpose": "unit landing type default",
         "verified": false,
         "required": true,
         "source": "phase2_preparation",
-        "evidence_refs": [],
+        "evidence_refs": ["oceanengine_openapi_promotion_create_request"],
         "open_questions": [
-          "Confirm promotion landing_type provider field before live payload development."
+          "Review evidence before changing candidate_direct to direct and verified=true."
         ]
       },
       {
         "internal_field": "field_defaults.pricing",
-        "provider_field": "",
+        "provider_field": "pricing",
         "provider_object": "promotion_create_request",
-        "mapping_kind": "",
+        "mapping_kind": "candidate_direct",
         "value_source": "create_strategy_plan.strategy.projects[].field_defaults.pricing",
         "purpose": "unit pricing default",
         "verified": false,
         "required": true,
         "source": "phase2_preparation",
-        "evidence_refs": [],
+        "evidence_refs": ["oceanengine_openapi_promotion_create_request"],
         "open_questions": [
-          "Confirm promotion pricing provider field before live payload development."
+          "Review evidence before changing candidate_direct to direct and verified=true."
         ]
       },
       {
         "internal_field": "field_defaults.inventory_type",
-        "provider_field": "",
+        "provider_field": "inventory_type",
         "provider_object": "promotion_create_request",
-        "mapping_kind": "",
+        "mapping_kind": "candidate_direct",
         "value_source": "create_strategy_plan.strategy.projects[].field_defaults.inventory_type",
         "purpose": "unit inventory type default",
         "verified": false,
         "required": true,
         "source": "phase2_preparation",
-        "evidence_refs": [],
+        "evidence_refs": ["oceanengine_openapi_promotion_create_request"],
         "open_questions": [
-          "Confirm promotion inventory_type provider field before live payload development."
+          "Review evidence before changing candidate_direct to direct and verified=true."
         ]
       }
     ],

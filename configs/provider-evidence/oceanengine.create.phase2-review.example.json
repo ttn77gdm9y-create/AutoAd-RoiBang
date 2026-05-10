@@ -12,7 +12,10 @@
       "provider_fields": [
         "advertiser_id",
         "name",
-        "budget"
+        "budget",
+        "landing_type",
+        "pricing",
+        "inventory_type"
       ],
       "reviewed": false,
       "reviewed_by": "",
@@ -28,7 +31,10 @@
       "provider_fields": [
         "advertiser_id",
         "project_id",
-        "name"
+        "name",
+        "landing_type",
+        "pricing",
+        "inventory_type"
       ],
       "reviewed": false,
       "reviewed_by": "",

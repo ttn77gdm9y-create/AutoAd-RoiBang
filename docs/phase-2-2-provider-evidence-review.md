@@ -97,8 +97,8 @@ configs/provider-evidence/oceanengine.create.phase2-review.example.json
 - 未解决字段数为 22。
 - `operator_guide.status=needs_review`。
 - `evidence_worksheet.summary.row_count=22`。
-- `provider_field_gap_report.summary.gap_count=6`。
-- `provider_field_gap_resolution_plan.summary.gap_count=6`。
+- `provider_field_gap_report.summary.gap_count=0`。
+- `provider_field_gap_resolution_plan.summary.gap_count=0`。
 - 真实请求体开发仍未就绪。
 - 真实执行仍未就绪。
 
@@ -119,7 +119,7 @@ configs/provider-evidence/oceanengine.create.phase2-review.example.json
 
 `provider_field_gap_report` 会单独列出 `provider_field` 仍为空的字段。它比完整填写清单更窄，只用于聚焦缺字段问题。
 
-当前剩余问题已经从 3 个粗粒度缺口拆成 6 个可逐项复核的字段缺口：
+当前 6 个 `field_defaults` 字段已经从“缺平台字段名”推进为“候选字段待证据复核”：
 
 - `create_project.field_defaults.landing_type`
 - `create_project.field_defaults.pricing`
@@ -128,11 +128,13 @@ configs/provider-evidence/oceanengine.create.phase2-review.example.json
 - `create_unit.field_defaults.pricing`
 - `create_unit.field_defaults.inventory_type`
 
+这些字段现在使用 `candidate_direct`。它的意思是“候选直接映射”：字段名已经先放进配置，方便后续生成请求体草稿和人工复核；但 `verified=false`，证据目录也仍未复核，所以不能视为已确认字段。
+
 `create_project.project_type` 已改为 `local_only` 候选字段。它仍需要人工确认 `local_only_confirmed=true`，但不再算缺平台字段。
 
 `bind_material.source_video_id` 也已改为 `local_only` 候选字段。它继续保留在本地材料对象里，用于追溯素材来自哪个源视频；但已从禁用版请求体 schema 和 dry-run 请求参数中移除，所以不再算缺平台字段。
 
-不要猜剩余字段。每个缺口都必须通过平台证据确认，或者明确决定该本地字段需要改名，或者不进入未来平台请求体草稿。
+不要把候选字段当成已确认字段。每个候选字段都必须通过平台证据复核后，才能改成 `direct` 和 `verified=true`。
 
 ## 缺平台字段处理计划
 
@@ -145,9 +147,7 @@ configs/provider-evidence/oceanengine.create.phase2-review.example.json
 
 这个计划的目标是让剩余缺口逐个可复核，而不是让脚本替人判断平台字段。
 
-当前建议动作：
-
-- `map_field_default_subfield_to_provider_field`：给每个 `field_defaults` 子字段单独确认平台字段，不能把默认字段集合整包塞进平台请求体。
+当前缺平台字段名已经归零，所以这个计划不再输出单项缺口。但证据复核仍未完成，真实请求体开发仍未就绪。
 
 ## project_type 本地用途复核
 
@@ -174,13 +174,13 @@ configs/provider-evidence/oceanengine.create.phase2-review.example.json
 `field_gap_convergence_plan` 是 第二阶段.3 的收敛计划。它把剩余问题压缩成 3 类：
 
 - `project_type`：已准备好进入人工本地字段确认，但不会自动确认。
-- `field_defaults`：项目和单元各拆成 `landing_type`、`pricing`、`inventory_type` 三个子字段。
+- `field_defaults`：项目和单元各 3 个字段已经变成候选直接映射，等待人工复核证据。
 - `source_video_id`：已从平台字段缺口里移出，作为本地素材来源追溯字段等待人工确认。
 
 当前状态：
 
-- `remaining_provider_field_gap_count=6`。
-- `field_defaults_split_item_count=6`。
+- `remaining_provider_field_gap_count=0`。
+- `field_defaults_split_item_count=0`。
 - `source_video_id_review_required=false`。
 - `ready_for_live_payload_development=false`。
 
