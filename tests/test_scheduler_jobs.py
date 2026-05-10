@@ -12,9 +12,9 @@ def test_scheduler_registry_has_no_ai_execution_prompts():
 
     assert result == {
         "ok": True,
-        "jobs": 42,
+        "jobs": 43,
         "enabled_jobs": 9,
-        "disabled_jobs": 33,
+        "disabled_jobs": 34,
         "violations": [],
     }
 
@@ -74,6 +74,10 @@ def test_scheduler_registry_includes_disabled_fixed_create_chain_jobs():
         "roibang-create-phase2-yzt-dry-chain": (
             "create_phase2_yzt_dry_chain",
             "scripts/run_create_phase2_yzt_dry_chain.py",
+        ),
+        "roibang-create-first-live-local-chain": (
+            "create_first_live_local_chain",
+            "scripts/run_create_first_live_local_chain.py",
         ),
         "roibang-create-phase2-project-naming-prep": (
             "create_phase2_project_naming_prep",
@@ -313,6 +317,21 @@ def test_scheduler_registry_phase1_contracts_pin_safe_execution_values():
     ]["result_contract"]["must_include"]
     assert jobs["roibang-create-phase2-yzt-dry-chain"]["result_contract"]["must_equal"]["phase"] == "phase2_preparation"
     assert jobs["roibang-create-phase2-yzt-dry-chain"]["result_contract"]["must_equal"][
+        "approved_for_execute"
+    ] is False
+    assert "first_live_scope" in jobs[
+        "roibang-create-first-live-local-chain"
+    ]["result_contract"]["must_include"]
+    assert "scope_guard" in jobs[
+        "roibang-create-first-live-local-chain"
+    ]["result_contract"]["must_include"]
+    assert "preparation_check" in jobs[
+        "roibang-create-first-live-local-chain"
+    ]["result_contract"]["must_include"]
+    assert "dry_chain" in jobs[
+        "roibang-create-first-live-local-chain"
+    ]["result_contract"]["must_include"]
+    assert jobs["roibang-create-first-live-local-chain"]["result_contract"]["must_equal"][
         "approved_for_execute"
     ] is False
     assert "phase2_preparation_contract" in jobs[

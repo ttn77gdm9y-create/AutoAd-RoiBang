@@ -417,3 +417,27 @@ PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_first_live_p
 - `human_review_checklist`：人工核对清单。
 
 在默认示例配置下，它应该是 `ready_for_human_live_enablement`：意思是本地边界已可交给人核对，但真实执行开关仍未打开，固定脚本不会调用真实接口。
+
+## first live local chain
+
+`create_first_live_local_chain` 是首单真实创建前的本地链路入口。它读取现有 `yzt_create_preview`（勇者突进创建预览配置），但不会修改本地配置文件；运行时会派生一个首单范围：
+
+- 只保留 1 个目标账户。
+- 项目数不超过 `first_live_run.max_project_count`（首单最大项目数）。
+- 单元数不超过 `first_live_run.max_unit_count`（首单最大单元数）。
+- 素材数不超过 `first_live_run.max_material_count`（首单最大素材数）。
+
+该入口会继续串起 preparation check（准备检查）和 dry chain（完整本地预演链路），产物状态为 `ready_for_approval_chain` 时，只表示可以进入 approve（批准记录）复核链路，不表示可以真实执行。
+
+固定脚本：
+
+```bash
+PYTHONPATH=src python3 scripts/run_create_first_live_local_chain.py --config configs/runtime.example.json --preview-config configs/create/yzt-wx-mini-game.preview.example.json --policy policies/strategy.example.json
+```
+
+安全边界保持不变：
+
+- `execution_enabled=false`，执行开关关闭。
+- `external_api_calls=0`，外部接口调用数为 0。
+- `approved_for_execute=false`，不批准执行。
+- `actions=[]`，不生成真实动作。

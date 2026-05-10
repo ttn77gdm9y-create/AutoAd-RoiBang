@@ -395,6 +395,21 @@
       "delivery": {"channel": "none"}
     },
     {
+      "id": "roibang-create-first-live-local-chain",
+      "name": "RoiBang-v2 首单本地链路",
+      "category": "create_first_live_local_chain",
+      "enabled": false,
+      "schedule": {"type": "cron", "expr": "33 12 * * *", "tz": "Asia/Shanghai"},
+      "script": {
+        "path": "scripts/run_create_first_live_local_chain.py",
+        "mode": "foreground",
+        "args": ["--config", "configs/runtime.example.json", "--preview-config", "configs/create/yzt-wx-mini-game.preview.example.json", "--policy", "policies/strategy.example.json"]
+      },
+      "policy": {"config": "configs/runtime.example.json", "preview_config": "configs/create/yzt-wx-mini-game.preview.example.json", "policy": "policies/strategy.example.json"},
+      "result_contract": {"workflow": "create_first_live_local_chain", "artifact_dir": "data/runs/create_first_live_local_chain", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "summary", "first_live_scope", "scope_guard", "chain_steps", "artifacts", "preparation_check", "dry_chain", "approved_for_execute", "human_next_steps", "violations", "actions"], "must_equal": {"phase": "phase2_preparation", "execution_enabled": false, "external_api_calls": 0, "approved_for_execute": false}, "must_be_empty": ["actions"]},
+      "delivery": {"channel": "none"}
+    },
+    {
       "id": "roibang-create-phase2-project-naming-prep",
       "name": "RoiBang-v2 Phase 2 创建项目命名准备",
       "category": "create_phase2_project_naming_prep",

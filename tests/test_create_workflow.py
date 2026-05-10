@@ -3228,6 +3228,226 @@ def test_create_phase2_yzt_dry_chain_cli_uses_manual_config_without_execute(tmp_
     assert artifact["actions"] == []
 
 
+def test_create_first_live_local_chain_derives_single_scope_without_execute(tmp_path: Path):
+    from roibang_v2.workflows.create_first_live_local_chain import run_create_first_live_local_chain_request
+
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    result = run_create_first_live_local_chain_request(
+        {
+            "create_first_live_local_chain": {
+                "preview_config": {
+                    "template_name": "微小每付7R男",
+                    "owner": "郭靖",
+                    "target_date": "2026-05-09",
+                    "batch_generated_at": "2026-05-09T14:45:00+08:00",
+                    "source_advertiser_id": "source-1",
+                    "organization_id": "org-1",
+                    "pool_key": "pool-yzt-wx-7r",
+                    "defaults": {"daily_budget": 300, "project_count": 3, "units_per_project": 3},
+                    "roi_coefficient": 0.41,
+                    "accounts": [
+                        {"advertiser_id": "target-1", "project_count": 3, "units_per_project": 3},
+                        {"advertiser_id": "target-2", "project_count": 3, "units_per_project": 3},
+                    ],
+                },
+                "policy": {
+                    "first_live_run": {
+                        "advertiser_id": "target-placeholder",
+                        "max_project_count": 1,
+                        "max_unit_count": 2,
+                        "max_material_count": 4,
+                    },
+                    "create_strategy_plan": {
+                        "max_target_accounts": 20,
+                        "max_projects_per_account": 10,
+                        "max_units_per_project": 20,
+                        "project_naming": {
+                            "template": "{target_date_mmdd}_{owner}_{product}_{project_template_name}_{batch_code}_{index}",
+                            "index_width": 2,
+                            "invalid_char_replacement": "_",
+                        },
+                        "candidate_filters": {"allowed_review_statuses": ["APPROVED"]},
+                    },
+                    "create_preflight": {
+                        "require_account_pool": True,
+                        "reject_existing_project_names": True,
+                        "min_daily_budget": 100,
+                        "max_daily_budget": 1000,
+                        "max_project_name_length": 80,
+                        "project_name_pattern": "^\\d{4}_.+_.+_.+_B[0-9A-F]{8}_\\d{2}$",
+                        "required_field_defaults": ["landing_type", "pricing", "inventory_type"],
+                    },
+                    "create_dry_run": {
+                        "max_projects_per_dry_run": 50,
+                        "max_units_per_dry_run": 500,
+                        "provider_field_map_path": "configs/provider-field-maps/oceanengine.create.phase1.example.json",
+                    },
+                    "create_phase2_template_slot_prep": {
+                        "product_template_catalog": {
+                            "product": "勇者突进",
+                            "platform": "WECHAT_GAME",
+                            "script_scope": "勇者突进微信小游戏专用",
+                            "templates": [
+                                {
+                                    "template_key": "wx_7r_male",
+                                    "project_template_name": "微小每付7R男",
+                                    "roi_goal": {"frontend_label": "ROI系数", "required": True},
+                                    "gender": {"value": "1", "label": "男"},
+                                    "age": {"value": [], "label": "不限"},
+                                }
+                            ],
+                        }
+                    },
+                },
+            }
+        },
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+    )
+
+    assert result["ok"] is True
+    assert result["workflow"] == "create_first_live_local_chain"
+    assert result["phase"] == "phase2_preparation"
+    assert result["execution_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert result["status"] == "ready_for_approval_chain"
+    assert result["summary"] == {
+        "selected_account_count": 1,
+        "project_count": 1,
+        "unit_count": 2,
+        "material_count": 4,
+        "ready_for_approval_chain": True,
+        "ready_for_live_execute": False,
+    }
+    assert result["scope_guard"] == {
+        "ok": True,
+        "project_count": 1,
+        "unit_count": 2,
+        "material_count": 4,
+        "max_project_count": 1,
+        "max_unit_count": 2,
+        "max_material_count": 4,
+        "violations": [],
+    }
+    assert result["first_live_scope"]["derived_preview_config"]["accounts"] == [
+        {"advertiser_id": "target-1", "project_count": 1, "units_per_project": 2}
+    ]
+    assert result["chain_steps"] == [
+        {
+            "step": "preparation_check",
+            "workflow": "create_phase2_yzt_preparation_check",
+            "ok": True,
+            "status": "passed",
+        },
+        {"step": "dry_chain", "workflow": "create_phase2_yzt_dry_chain", "ok": True, "status": "simulated"},
+    ]
+    assert result["approved_for_execute"] is False
+    assert result["actions"] == []
+
+
+def test_create_first_live_local_chain_cli_uses_manual_config_without_execute(tmp_path: Path, capsys):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    runtime_path = _runtime_config(tmp_path, db_path)
+    preview_path = tmp_path / "yzt-preview.json"
+    policy_path = tmp_path / "strategy.json"
+    preview_path.write_text(
+        json.dumps(
+            {
+                "yzt_create_preview": {
+                    "template_name": "微小每付7R男",
+                    "owner": "郭靖",
+                    "target_date": "2026-05-09",
+                    "batch_generated_at": "2026-05-09T14:45:00+08:00",
+                    "source_advertiser_id": "source-1",
+                    "organization_id": "org-1",
+                    "pool_key": "pool-yzt-wx-7r",
+                    "defaults": {"daily_budget": 300, "project_count": 2, "units_per_project": 2},
+                    "roi_coefficient": 0.41,
+                    "accounts": [{"advertiser_id": "target-1"}],
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    policy_path.write_text(
+        json.dumps(
+            {
+                "first_live_run": {"advertiser_id": "target-1", "max_project_count": 1, "max_unit_count": 2, "max_material_count": 4},
+                "create_strategy_plan": {
+                    "max_target_accounts": 20,
+                    "max_projects_per_account": 10,
+                    "max_units_per_project": 20,
+                    "project_naming": {
+                        "template": "{target_date_mmdd}_{owner}_{product}_{project_template_name}_{batch_code}_{index}",
+                        "index_width": 2,
+                        "invalid_char_replacement": "_",
+                    },
+                    "candidate_filters": {"allowed_review_statuses": ["APPROVED"]},
+                },
+                "create_preflight": {
+                    "require_account_pool": True,
+                    "reject_existing_project_names": True,
+                    "min_daily_budget": 100,
+                    "max_daily_budget": 1000,
+                    "max_project_name_length": 80,
+                    "project_name_pattern": "^\\d{4}_.+_.+_.+_B[0-9A-F]{8}_\\d{2}$",
+                    "required_field_defaults": ["landing_type", "pricing", "inventory_type"],
+                },
+                "create_dry_run": {
+                    "max_projects_per_dry_run": 50,
+                    "max_units_per_dry_run": 500,
+                    "provider_field_map_path": "configs/provider-field-maps/oceanengine.create.phase1.example.json",
+                },
+                "create_phase2_template_slot_prep": {
+                    "product_template_catalog": {
+                        "product": "勇者突进",
+                        "platform": "WECHAT_GAME",
+                        "script_scope": "勇者突进微信小游戏专用",
+                        "templates": [
+                            {
+                                "template_key": "wx_7r_male",
+                                "project_template_name": "微小每付7R男",
+                                "roi_goal": {"frontend_label": "ROI系数", "required": True},
+                                "gender": {"value": "1", "label": "男"},
+                                "age": {"value": [], "label": "不限"},
+                            }
+                        ],
+                    }
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    module = _load_script("run_create_first_live_local_chain")
+
+    exit_code = module.run_from_args(
+        [
+            "--config",
+            str(runtime_path),
+            "--preview-config",
+            str(preview_path),
+            "--policy",
+            str(policy_path),
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    artifact = json.loads(Path(output["artifact_path"]).read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert output["workflow"] == "create_first_live_local_chain"
+    assert output["status"] == "ready_for_approval_chain"
+    assert output["summary"]["project_count"] == 1
+    assert output["summary"]["unit_count"] == 2
+    assert output["execution_enabled"] is False
+    assert output["external_api_calls"] == 0
+    assert artifact["approved_for_execute"] is False
+    assert artifact["actions"] == []
+
+
 def test_create_phase2_yzt_dry_chain_summarizes_blocked_manual_config_in_chinese(tmp_path: Path):
     from roibang_v2.workflows.create_phase2_yzt_dry_chain import run_create_phase2_yzt_dry_chain_request
 
