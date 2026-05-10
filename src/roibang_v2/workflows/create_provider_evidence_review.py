@@ -631,6 +631,105 @@ def _field_gap_convergence_plan(gap_report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _manual_review_workbench(
+    *,
+    field_map: dict[str, Any],
+    catalog: dict[str, Any],
+) -> dict[str, Any]:
+    operations = field_map.get("operations") if isinstance(field_map.get("operations"), dict) else {}
+    candidate_fields: list[dict[str, Any]] = []
+    local_confirmations: list[dict[str, Any]] = []
+    for operation, entries in operations.items():
+        for entry in entries if isinstance(entries, list) else []:
+            if not isinstance(entry, dict):
+                continue
+            operation_text = str(operation)
+            internal_field = str(entry.get("internal_field") or "")
+            mapping_kind = str(entry.get("mapping_kind") or "")
+            provider_field = str(entry.get("provider_field") or "")
+            evidence_refs = _evidence_refs(entry)
+            if mapping_kind == "candidate_direct":
+                candidate_fields.append(
+                    {
+                        "operation": operation_text,
+                        "internal_field": internal_field,
+                        "provider_field": provider_field,
+                        "mapping_kind": mapping_kind,
+                        "evidence_refs": evidence_refs,
+                        "edit_file": "configs/provider-field-maps/oceanengine.create.phase2-prep.example.json",
+                        "after_review_set": {
+                            "mapping_kind": "direct",
+                            "verified": True,
+                        },
+                        "blocked_until": [
+                            "证据目录里的 evidence.reviewed=true",
+                            f"确认 provider_fields 包含 {provider_field}",
+                            "人工确认后才允许把 mapping_kind 改为 direct",
+                        ],
+                    }
+                )
+            if _is_local_only(entry) and not bool(entry.get("local_only_confirmed", False)):
+                local_confirmations.append(
+                    {
+                        "operation": operation_text,
+                        "internal_field": internal_field,
+                        "mapping_kind": mapping_kind,
+                        "edit_file": "configs/provider-field-maps/oceanengine.create.phase2-prep.example.json",
+                        "after_review_set": {
+                            "local_only_confirmed": True,
+                            "local_only_confirmation_note": "人工确认该字段只用于本地流程，不进入平台 payload。",
+                        },
+                        "blocked_until": [
+                            "确认 dry-run/provider payload 不包含该字段",
+                            "确认该字段只用于本地模板、查表、幂等或追溯",
+                        ],
+                    }
+                )
+    evidence = _catalog_evidence(catalog)
+    evidence_reviews = [
+        {
+            "evidence_ref": ref,
+            "operation": str(item.get("operation") or ""),
+            "provider_fields": [str(field) for field in item.get("provider_fields") or []],
+            "edit_file": "configs/provider-evidence/oceanengine.create.phase2-review.example.json",
+            "after_review_set": {
+                "reviewed": True,
+                "reviewed_by": "人工填写",
+                "reviewed_at": "人工填写 ISO 时间",
+            },
+            "blocked_until": [
+                "补 source_url 或 captured_request_ref",
+                "人工核对 provider_fields 与证据一致",
+            ],
+        }
+        for ref, item in evidence.items()
+        if not bool(item.get("reviewed", False))
+    ]
+    return {
+        "summary": {
+            "workbench_version": "phase2.manual_review_workbench.v1",
+            "candidate_field_count": len(candidate_fields),
+            "local_only_confirmation_count": len(local_confirmations),
+            "evidence_review_count": sum(
+                1
+                for rows in operations.values()
+                for entry in (rows if isinstance(rows, list) else [])
+                if isinstance(entry, dict)
+                and str(entry.get("provider_field") or "").strip()
+                and _evidence_refs(entry)
+                and not bool(entry.get("verified", False))
+            ),
+            "ready_to_edit_json": True,
+            "execution_enabled": False,
+            "external_api_calls": 0,
+        },
+        "candidate_fields": candidate_fields,
+        "local_only_confirmations": local_confirmations,
+        "evidence_reviews": evidence_reviews,
+        "actions": [],
+    }
+
+
 def build_create_provider_evidence_review(*, policy: dict[str, Any]) -> dict[str, Any]:
     field_map = load_provider_field_map(policy)
     field_contract = provider_field_map_contract(field_map, policy)
@@ -667,6 +766,7 @@ def build_create_provider_evidence_review(*, policy: dict[str, Any]) -> dict[str
         "provider_field_gap_resolution_plan": _provider_field_gap_resolution_plan(gap_report),
         "project_type_local_usage_review": _project_type_local_usage_review(),
         "field_gap_convergence_plan": _field_gap_convergence_plan(gap_report),
+        "manual_review_workbench": _manual_review_workbench(field_map=field_map, catalog=catalog),
         "operator_guide": _operator_guide(status=status),
         "violations": violations,
         "actions": [],

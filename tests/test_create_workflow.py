@@ -2069,6 +2069,68 @@ def test_create_provider_evidence_review_flags_unreviewed_phase2_evidence():
             "actions",
         ],
     }
+    assert result["manual_review_workbench"]["summary"] == {
+        "workbench_version": "phase2.manual_review_workbench.v1",
+        "candidate_field_count": 6,
+        "local_only_confirmation_count": 6,
+        "evidence_review_count": 16,
+        "ready_to_edit_json": True,
+        "execution_enabled": False,
+        "external_api_calls": 0,
+    }
+    assert result["manual_review_workbench"]["candidate_fields"][0] == {
+        "operation": "create_project",
+        "internal_field": "field_defaults.landing_type",
+        "provider_field": "landing_type",
+        "mapping_kind": "candidate_direct",
+        "evidence_refs": ["oceanengine_openapi_project_create_request"],
+        "edit_file": "configs/provider-field-maps/oceanengine.create.phase2-prep.example.json",
+        "after_review_set": {
+            "mapping_kind": "direct",
+            "verified": True,
+        },
+        "blocked_until": [
+            "证据目录里的 evidence.reviewed=true",
+            "确认 provider_fields 包含 landing_type",
+            "人工确认后才允许把 mapping_kind 改为 direct",
+        ],
+    }
+    assert result["manual_review_workbench"]["local_only_confirmations"][0] == {
+        "operation": "create_project",
+        "internal_field": "project_type",
+        "mapping_kind": "local_only",
+        "edit_file": "configs/provider-field-maps/oceanengine.create.phase2-prep.example.json",
+        "after_review_set": {
+            "local_only_confirmed": True,
+            "local_only_confirmation_note": "人工确认该字段只用于本地流程，不进入平台 payload。",
+        },
+        "blocked_until": [
+            "确认 dry-run/provider payload 不包含该字段",
+            "确认该字段只用于本地模板、查表、幂等或追溯",
+        ],
+    }
+    assert result["manual_review_workbench"]["evidence_reviews"][0] == {
+        "evidence_ref": "oceanengine_openapi_project_create_request",
+        "operation": "create_project",
+        "provider_fields": [
+            "advertiser_id",
+            "name",
+            "budget",
+            "landing_type",
+            "pricing",
+            "inventory_type",
+        ],
+        "edit_file": "configs/provider-evidence/oceanengine.create.phase2-review.example.json",
+        "after_review_set": {
+            "reviewed": True,
+            "reviewed_by": "人工填写",
+            "reviewed_at": "人工填写 ISO 时间",
+        },
+        "blocked_until": [
+            "补 source_url 或 captured_request_ref",
+            "人工核对 provider_fields 与证据一致",
+        ],
+    }
     local_only_row = [
         row
         for row in result["evidence_worksheet"]["rows"]
