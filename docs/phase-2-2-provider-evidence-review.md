@@ -263,3 +263,20 @@ create_project -> create_unit -> bind_material
 默认所有真实执行闸门都是关闭的。
 
 `create_first_live_runbook` 会生成首单受控创建评审包。当前示例 scope 固定为 1 个项目、2 个单元、4 个素材；它只说明首单需要哪些人工批准、运行步骤和失败停止策略，不会打开真实执行。
+
+`create_live_execute_runner` 是下一层真实执行器边界，但当前只开放 blocked review mode（阻断复核模式）和 injected test transport（测试注入发送层）：
+
+- 默认命令行入口不注入 transport，所以只会生成 blocked artifact（阻断产物）。
+- `approve` 仍只是 approval record（批准记录），不是 execute switch（执行开关）。
+- 只有 runtime、policy、phase gate、runbook、人工批准记录和测试 transport 全部满足时，单元测试才会进入 `test_transport_completed`。
+- 单元测试里的 transport 是假的本地函数，不是 HTTP 请求；因此 `external_api_calls` 仍必须是 0。
+- 执行顺序固定为 `create_project -> create_unit -> bind_material`。
+- 任一步失败立即停止，`auto_retry_enabled=false`，不自动重试。
+
+当前 runner 的 CLI（命令行入口）用途：
+
+```bash
+PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_live_execute_runner.py --config configs/runtime.example.json --policy policies/strategy.example.json
+```
+
+它会读取最新的 `create_execute`、`create_first_live_runbook` 和 `create_live_payload_adapter_scaffold` artifacts（运行产物），输出一个默认 blocked 的复核 artifact；不会调用真实创建接口。

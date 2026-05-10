@@ -279,10 +279,30 @@
       "allow_live_execute": false,
       "required_next_phase": "phase2"
     },
+    "live_api": {
+      "enabled": false,
+      "transport": "disabled",
+      "endpoints": {
+        "create_project": "/open_api/2/project/create/",
+        "create_unit": "/open_api/2/promotion/create/",
+        "bind_material": "/open_api/2/file/material/bind/"
+      }
+    },
+    "execution": {
+      "execution_enabled": false,
+      "external_api_enabled": false
+    },
     "payload_schema": {
       "version": "phase1.create_payload.v1",
       "mode": "schema_only",
       "live_payload_generation_enabled": false
+    }
+  },
+  "create_live_execute_runner": {
+    "human_approval": {
+      "approved": false,
+      "approval_id": "",
+      "approved_by": ""
     }
   },
   "first_live_run": {
