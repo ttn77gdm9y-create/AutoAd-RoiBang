@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
@@ -168,6 +170,79 @@ def _provider_payload_draft_digest(approval: dict[str, Any]) -> dict[str, Any]:
 def _provider_payload_drafts(approval: dict[str, Any]) -> list[dict[str, Any]]:
     drafts = approval.get("provider_payload_drafts")
     return [draft for draft in drafts if isinstance(draft, dict)] if isinstance(drafts, list) else []
+
+
+def _actual_provider_payload_draft_digest(drafts: list[dict[str, Any]]) -> dict[str, Any]:
+    canonical = json.dumps(drafts, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return {
+        "algorithm": "sha256",
+        "value": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+        "provider_payload_draft_count": len(drafts),
+    }
+
+
+def _provider_payload_review_summary(approval: dict[str, Any]) -> dict[str, Any]:
+    summary = approval.get("provider_payload_review_summary")
+    if isinstance(summary, dict):
+        return summary
+    drafts = _provider_payload_drafts(approval)
+    candidate_unverified_count = sum(int(draft.get("candidate_unverified_field_count") or 0) for draft in drafts)
+    candidate_draft_count = sum(1 for draft in drafts if str(draft.get("field_mapping_mode") or "") == "candidate")
+    executable_count = sum(1 for draft in drafts if bool(draft.get("executable", False)))
+    live_payload_count = sum(1 for draft in drafts if bool(draft.get("live_api_payload", False)))
+    unmapped_count = sum(len(draft.get("unmapped_payload_fields") or []) for draft in drafts)
+    blocking_reasons: list[str] = []
+    if candidate_draft_count or candidate_unverified_count:
+        blocking_reasons.append("candidate provider fields require evidence review")
+    if executable_count:
+        blocking_reasons.append("provider payload drafts must not be executable")
+    if live_payload_count:
+        blocking_reasons.append("provider payload drafts must not contain live payloads")
+    if unmapped_count:
+        blocking_reasons.append("provider payload drafts contain unmapped internal fields")
+    return {
+        "draft_count": len(drafts),
+        "candidate_draft_count": candidate_draft_count,
+        "verified_draft_count": sum(1 for draft in drafts if str(draft.get("field_mapping_mode") or "") == "verified"),
+        "executable_draft_count": executable_count,
+        "live_payload_count": live_payload_count,
+        "candidate_unverified_field_count": candidate_unverified_count,
+        "unmapped_payload_field_count": unmapped_count,
+        "ready_for_execute": False,
+        "blocking_reasons": blocking_reasons,
+    }
+
+
+def _approval_boundary_contract(approval: dict[str, Any]) -> dict[str, Any]:
+    drafts = _provider_payload_drafts(approval)
+    expected_digest = _provider_payload_draft_digest(approval)
+    actual_digest = _actual_provider_payload_draft_digest(drafts)
+    executable_count = sum(1 for draft in drafts if bool(draft.get("executable", False)))
+    live_payload_count = sum(1 for draft in drafts if bool(draft.get("live_api_payload", False)))
+    candidate_summary = _provider_payload_review_summary(approval)
+    return {
+        "status": "passed"
+        if (
+            str(approval.get("status") or "") == "recorded"
+            and not bool(approval.get("execute_allowed", False))
+            and not bool(approval.get("approved_for_execute", False))
+            and expected_digest == actual_digest
+            and executable_count == 0
+            and live_payload_count == 0
+        )
+        else "blocked",
+        "approval_recorded": str(approval.get("status") or "") == "recorded",
+        "execute_allowed": bool(approval.get("execute_allowed", False)),
+        "approved_for_execute": bool(approval.get("approved_for_execute", False)),
+        "provider_payload_digest_consistent": expected_digest == actual_digest,
+        "provider_payloads_non_executable": executable_count == 0,
+        "provider_payloads_without_live_payloads": live_payload_count == 0,
+        "candidate_payloads_require_review": int(candidate_summary.get("candidate_unverified_field_count") or 0) > 0
+        or int(candidate_summary.get("candidate_draft_count") or 0) > 0,
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "actions": [],
+    }
 
 
 def _provider_payload_resolution(
@@ -373,6 +448,9 @@ def _violations(approval: dict[str, Any], policy: dict[str, Any]) -> list[str]:
         violations.append("create approval approved_for_execute must be false in phase1")
     if approval.get("actions"):
         violations.append("create approval actions must be empty in phase1")
+    approval_boundary = _approval_boundary_contract(approval)
+    if str(approval_boundary.get("status") or "") != "passed":
+        violations.append("create approval boundary contract must pass before execute review")
     violations.extend(str(item) for item in approval.get("violations") or [])
     return violations
 
@@ -403,6 +481,7 @@ def build_create_execute(
         provider_payload_resolution=payload_resolution,
         resolved_payload_contract=resolved_payload_contract,
     )
+    approval_boundary = _approval_boundary_contract(create_approval_artifact)
     return {
         "ok": not violations,
         "workflow": "create_execute",
@@ -427,6 +506,8 @@ def build_create_execute(
         "execution_plan": execution_plan,
         "provider_field_map_digest": _provider_field_map_digest(create_approval_artifact),
         "provider_payload_draft_digest": _provider_payload_draft_digest(create_approval_artifact),
+        "approval_boundary_contract": approval_boundary,
+        "provider_payload_review_summary": _provider_payload_review_summary(create_approval_artifact),
         "provider_payload_resolution": {
             key: value
             for key, value in payload_resolution.items()

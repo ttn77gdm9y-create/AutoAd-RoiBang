@@ -7072,6 +7072,104 @@ def test_create_approval_records_automatic_policy_review_but_disallows_execute_i
     assert result["provider_field_map_digest"] == dry_run["provider_field_map_digest"]
     assert result["provider_payload_draft_digest"] == dry_run["provider_payload_draft_digest"]
     assert result["provider_readiness_contract"] == dry_run["provider_readiness_contract"]
+    assert result["provider_payload_review_summary"] == {
+        "draft_count": 7,
+        "candidate_draft_count": 0,
+        "verified_draft_count": 0,
+        "executable_draft_count": 0,
+        "live_payload_count": 0,
+        "candidate_unverified_field_count": 0,
+        "unmapped_payload_field_count": 0,
+        "ready_for_execute": False,
+        "blocking_reasons": [
+            "provider adapter mapping is not verified",
+            "provider field map is not verified",
+        ],
+    }
+
+
+def test_create_approval_and_execute_preserve_candidate_payload_boundaries(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    plan = build_create_strategy_plan(request=_create_request()["create_request"], db_path=db_path, policy={})
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+    dry_run = build_create_dry_run(
+        create_strategy_plan_artifact=plan,
+        create_preflight_artifact=preflight,
+        policy={
+            "provider_adapter": {
+                "provider": "oceanengine",
+                "field_mapping_version": "phase2.oceanengine.create_payload.prep.v1",
+                "mapping_verified": False,
+            },
+            "provider_field_map_path": "configs/provider-field-maps/oceanengine.create.phase2-prep.example.json",
+        },
+    )
+
+    approval = build_create_approval(create_dry_run_artifact=dry_run, policy={"auto_approve_phase1": True})
+    execute = build_create_execute(create_approval_artifact=approval, policy={})
+
+    assert approval["status"] == "recorded"
+    assert approval["execute_allowed"] is False
+    assert approval["provider_payload_review_summary"] == {
+        "draft_count": 7,
+        "candidate_draft_count": 7,
+        "verified_draft_count": 0,
+        "executable_draft_count": 0,
+        "live_payload_count": 0,
+        "candidate_unverified_field_count": 34,
+        "unmapped_payload_field_count": 0,
+        "ready_for_execute": False,
+        "blocking_reasons": [
+            "candidate provider fields require evidence review",
+            "provider adapter mapping is not verified",
+            "provider field map is not verified",
+        ],
+    }
+    assert approval["payload_digest_contract"] == {
+        "status": "passed",
+        "expected_digest": dry_run["provider_payload_draft_digest"],
+        "actual_digest": dry_run["provider_payload_draft_digest"],
+        "draft_count": 7,
+    }
+    assert execute["status"] == "blocked"
+    assert execute["approval_boundary_contract"] == {
+        "status": "passed",
+        "approval_recorded": True,
+        "execute_allowed": False,
+        "approved_for_execute": False,
+        "provider_payload_digest_consistent": True,
+        "provider_payloads_non_executable": True,
+        "provider_payloads_without_live_payloads": True,
+        "candidate_payloads_require_review": True,
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "actions": [],
+    }
+    assert execute["provider_payload_review_summary"] == approval["provider_payload_review_summary"]
+    assert execute["execution_enabled"] is False
+    assert execute["external_api_calls"] == 0
+    assert execute["actions"] == []
+
+
+def test_create_approval_blocks_tampered_provider_payload_digest(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    plan = build_create_strategy_plan(request=_create_request()["create_request"], db_path=db_path, policy={})
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+    dry_run = build_create_dry_run(create_strategy_plan_artifact=plan, create_preflight_artifact=preflight, policy={})
+    dry_run["provider_payload_draft_digest"] = {
+        "algorithm": "sha256",
+        "value": "0" * 64,
+        "provider_payload_draft_count": 7,
+    }
+
+    approval = build_create_approval(create_dry_run_artifact=dry_run, policy={"auto_approve_phase1": True})
+
+    assert approval["ok"] is False
+    assert approval["status"] == "blocked"
+    assert approval["payload_digest_contract"]["status"] == "failed"
+    assert "provider payload draft digest must match approval payload drafts" in approval["violations"]
 
 
 def test_create_approval_blocks_failed_dry_run_and_policy_limit(tmp_path: Path):

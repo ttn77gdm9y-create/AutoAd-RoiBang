@@ -105,6 +105,62 @@ def _provider_payload_drafts(dry_run: dict[str, Any]) -> list[dict[str, Any]]:
     return [draft for draft in drafts if isinstance(draft, dict)] if isinstance(drafts, list) else []
 
 
+def _actual_provider_payload_draft_digest(drafts: list[dict[str, Any]]) -> dict[str, Any]:
+    canonical = json.dumps(drafts, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return {
+        "algorithm": "sha256",
+        "value": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+        "provider_payload_draft_count": len(drafts),
+    }
+
+
+def _payload_digest_contract(dry_run: dict[str, Any]) -> dict[str, Any]:
+    drafts = _provider_payload_drafts(dry_run)
+    expected = _provider_payload_draft_digest(dry_run)
+    actual = _actual_provider_payload_draft_digest(drafts)
+    status = "passed" if expected == actual else "failed"
+    return {
+        "status": status,
+        "expected_digest": expected,
+        "actual_digest": actual,
+        "draft_count": len(drafts),
+    }
+
+
+def _provider_payload_review_summary(dry_run: dict[str, Any]) -> dict[str, Any]:
+    drafts = _provider_payload_drafts(dry_run)
+    readiness = _provider_readiness(dry_run)
+    candidate_unverified_count = sum(int(draft.get("candidate_unverified_field_count") or 0) for draft in drafts)
+    candidate_draft_count = sum(1 for draft in drafts if str(draft.get("field_mapping_mode") or "") == "candidate")
+    executable_count = sum(1 for draft in drafts if bool(draft.get("executable", False)))
+    live_payload_count = sum(1 for draft in drafts if bool(draft.get("live_api_payload", False)))
+    unmapped_count = sum(len(draft.get("unmapped_payload_fields") or []) for draft in drafts)
+    blocking_reasons: list[str] = []
+    if candidate_draft_count or candidate_unverified_count:
+        blocking_reasons.append("candidate provider fields require evidence review")
+    if executable_count:
+        blocking_reasons.append("provider payload drafts must not be executable")
+    if live_payload_count:
+        blocking_reasons.append("provider payload drafts must not contain live payloads")
+    if unmapped_count:
+        blocking_reasons.append("provider payload drafts contain unmapped internal fields")
+    for reason in readiness.get("blocking_reasons") if isinstance(readiness.get("blocking_reasons"), list) else []:
+        reason_text = str(reason)
+        if reason_text and reason_text not in blocking_reasons:
+            blocking_reasons.append(reason_text)
+    return {
+        "draft_count": len(drafts),
+        "candidate_draft_count": candidate_draft_count,
+        "verified_draft_count": sum(1 for draft in drafts if str(draft.get("field_mapping_mode") or "") == "verified"),
+        "executable_draft_count": executable_count,
+        "live_payload_count": live_payload_count,
+        "candidate_unverified_field_count": candidate_unverified_count,
+        "unmapped_payload_field_count": unmapped_count,
+        "ready_for_execute": False,
+        "blocking_reasons": blocking_reasons,
+    }
+
+
 def _violations(dry_run: dict[str, Any], policy: dict[str, Any]) -> list[str]:
     violations: list[str] = []
     dry_run_ref = create_ref(workflow="create_dry_run", artifact=dry_run)
@@ -153,6 +209,14 @@ def _violations(dry_run: dict[str, Any], policy: dict[str, Any]) -> list[str]:
             violations.append("approval candidate tasks must not be executable in phase1")
         if task.get("live_api_payloads"):
             violations.append("approval candidate tasks must not contain live_api_payloads in phase1")
+    payload_digest_contract = _payload_digest_contract(dry_run)
+    if str(payload_digest_contract.get("status") or "") != "passed":
+        violations.append("provider payload draft digest must match approval payload drafts")
+    payload_summary = _provider_payload_review_summary(dry_run)
+    if int(payload_summary.get("executable_draft_count") or 0):
+        violations.append("provider payload drafts must not be executable before approval")
+    if int(payload_summary.get("live_payload_count") or 0):
+        violations.append("provider payload drafts must not contain live payloads before approval")
     violations.extend(str(item) for item in dry_run.get("violations") or [])
     return violations
 
@@ -198,6 +262,8 @@ def build_create_approval(
         "candidate_task_digest": _candidate_task_digest(create_dry_run_artifact),
         "provider_field_map_digest": _provider_field_map_digest(create_dry_run_artifact),
         "provider_payload_draft_digest": _provider_payload_draft_digest(create_dry_run_artifact),
+        "payload_digest_contract": _payload_digest_contract(create_dry_run_artifact),
+        "provider_payload_review_summary": _provider_payload_review_summary(create_dry_run_artifact),
         "provider_payload_drafts": _provider_payload_drafts(create_dry_run_artifact),
         "provider_readiness_contract": _provider_readiness(create_dry_run_artifact),
         "provider_id_ledger_requirements": _provider_id_ledger_requirements(create_dry_run_artifact),
