@@ -26,3 +26,5 @@ data/sources/**/*.csv
 data/secrets/
 
 configs/create/*.local.json
+configs/*.local.json
+policies/*.local.json

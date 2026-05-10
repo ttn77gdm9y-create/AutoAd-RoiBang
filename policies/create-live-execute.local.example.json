@@ -1,0 +1,38 @@
+{
+  "_comment": "真实执行前复制为 policies/create-live-execute.local.json。本地文件不要提交 Git。",
+  "create_execute": {
+    "live_api": {
+      "enabled": true,
+      "transport": "openapi_http",
+      "endpoints": {
+        "create_project": "/open_api/2/project/create/",
+        "bind_material": "/open_api/2/file/material/bind/",
+        "lookup_target_material": "/open_api/2/file/video/get/",
+        "create_unit": "/open_api/2/promotion/create/"
+      }
+    },
+    "payload_schema": {
+      "version": "phase2.create_payload.v1",
+      "mode": "live_create",
+      "live_payload_generation_enabled": true
+    },
+    "execution": {
+      "execution_enabled": true,
+      "external_api_enabled": true
+    }
+  },
+  "create_live_execute_runner": {
+    "allow_create_http_transport": true,
+    "create_http_transport": {
+      "enabled": true,
+      "allow_mutation": true,
+      "approval_id": "manual-live-create-YYYYMMDD-001",
+      "approved_by": "operator",
+      "base_url": "https://api.oceanengine.com",
+      "timeout_seconds": 20,
+      "max_retries": 0,
+      "token_env": "OCEANENGINE_ACCESS_TOKEN",
+      "response_audit_dir": "data/runs/create_live_execute_once/audit"
+    }
+  }
+}

@@ -41,6 +41,23 @@ request -> strategy -> preflight -> dry-run -> approve -> execute
 
 `create_live_execution_pack`、`create_first_live_prepare_pack` 这类产物只作为辅助复核包，不是主执行路径的必需步骤。真实执行以固定脚本、JSON 配置和 SQLite 台账为准。
 
+最小真实执行配置模板：
+
+- runtime（运行时配置）：`configs/runtime.create-live.local.example.json`
+- policy（策略配置）：`policies/create-live-execute.local.example.json`
+- 本地正式文件名建议：`configs/runtime.create-live.local.json` 和 `policies/create-live-execute.local.json`，这两个文件已被 `.gitignore` 忽略。
+
+真实执行时仍只走一个固定入口：
+
+```bash
+PYTHONPATH=src python3 scripts/run_create_live_execute_once.py \
+  --config configs/runtime.create-live.local.json \
+  --policy policies/create-live-execute.local.json \
+  --create-execute-artifact data/runs/create_execute/<artifact>.json
+```
+
+这里的 `approval_id` 只是 HTTP transport（HTTP 请求发送层）的本地审计留痕字段，不要求走 `create_live_execution_pack` 或 `create_first_live_prepare_pack`。真正的业务参数仍必须来自本地 JSON 配置、policy 策略文件和 SQLite 台账。
+
 ## 核心原则
 
 业务动作必须由固定脚本确定性执行。脚本只能读取 JSON 配置、JSON 策略和 SQLite 状态。
