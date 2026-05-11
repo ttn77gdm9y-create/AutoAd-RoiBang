@@ -193,6 +193,14 @@ def _approval_artifact() -> dict:
 
 def _policy() -> dict:
     return {
+        "create_plan": {
+            "max_target_accounts": 2,
+            "max_projects_per_account": 2,
+            "max_units_per_project": 2,
+            "max_materials": 2,
+            "min_daily_budget": 100,
+            "max_daily_budget": 1000,
+        },
         "create_execute": {
             "live_api": {
                 "enabled": True,
@@ -221,6 +229,46 @@ def _policy() -> dict:
             },
         },
     }
+
+
+def _create_plan(*, plan_id: str = "plan-1") -> dict:
+    return {
+        "plan_id": plan_id,
+        "product": "yzt",
+        "platform": "wx-mini-game",
+        "source_advertiser_id": "source-1",
+        "target_accounts": [
+            {
+                "advertiser_id": "target-1",
+                "project_count": 1,
+                "unit_count_per_project": 1,
+                "daily_budget": 1000,
+            }
+        ],
+        "materials": [{"source_material_id": "material-1", "source_video_id": "video-1"}],
+        "reason": "首单链路验证",
+    }
+
+
+def _seed_plan_sources(db_path: Path) -> None:
+    bootstrap_database(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO account_pool (
+              advertiser_id, account_name, product, platform, historical_spend, source, synced_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("target-1", "Target Account", "yzt", "wx-mini-game", 1000, "test", "2026-05-11T00:00:00Z"),
+        )
+        conn.execute(
+            """
+            INSERT INTO product_source_materials (
+              product, source_advertiser_id, material_id, video_id, name, source, synced_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("yzt", "source-1", "material-1", "video-1", "Material 1", "test", "2026-05-11T00:00:00Z"),
+        )
 
 
 def _execution_pack_artifact(*, ready: bool) -> dict:
@@ -799,8 +847,11 @@ def test_run_create_live_execute_once_request_writes_blocked_artifact(tmp_path: 
 
 def test_create_live_execute_once_fixed_script_keeps_default_runtime_blocked(tmp_path: Path, capsys):
     runtime_path = _runtime_config(tmp_path)
+    _seed_plan_sources(tmp_path / "roibang.sqlite3")
     policy_path = tmp_path / "policy.json"
+    plan_path = tmp_path / "create-plan.json"
     policy_path.write_text(json.dumps(_policy(), ensure_ascii=False), encoding="utf-8")
+    plan_path.write_text(json.dumps(_create_plan(), ensure_ascii=False), encoding="utf-8")
     runs_dir = tmp_path / "runs"
     artifacts = {
         "create_execute": _execute_artifact(),
@@ -812,7 +863,7 @@ def test_create_live_execute_once_fixed_script_keeps_default_runtime_blocked(tmp
         path.write_text(json.dumps(artifact, ensure_ascii=False), encoding="utf-8")
     module = _load_script("run_create_live_execute_once")
 
-    exit_code = module.run_from_args(["--config", str(runtime_path), "--policy", str(policy_path)])
+    exit_code = module.run_from_args(["--config", str(runtime_path), "--policy", str(policy_path), "--plan", str(plan_path)])
 
     output = json.loads(capsys.readouterr().out)
     artifact = json.loads(Path(output["artifact_path"]).read_text(encoding="utf-8"))
@@ -824,6 +875,34 @@ def test_create_live_execute_once_fixed_script_keeps_default_runtime_blocked(tmp
     assert output["external_api_calls"] == 0
     assert output["transport_call_count"] == 0
     assert output["source_execution_pack_status"] == "not_required_direct_create_execute"
+    assert artifact["actions"] == []
+
+
+def test_create_live_execute_once_fixed_script_blocks_plan_mismatch(tmp_path: Path, capsys):
+    runtime_path = _runtime_config(tmp_path)
+    _seed_plan_sources(tmp_path / "roibang.sqlite3")
+    policy_path = tmp_path / "policy.json"
+    plan_path = tmp_path / "create-plan.json"
+    policy_path.write_text(json.dumps(_policy(), ensure_ascii=False), encoding="utf-8")
+    plan_path.write_text(json.dumps(_create_plan(plan_id="different-plan"), ensure_ascii=False), encoding="utf-8")
+    runs_dir = tmp_path / "runs"
+    path = runs_dir / "create_execute" / "20260510T000000Z.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(_execute_artifact(), ensure_ascii=False), encoding="utf-8")
+    module = _load_script("run_create_live_execute_once")
+
+    exit_code = module.run_from_args(["--config", str(runtime_path), "--policy", str(policy_path), "--plan", str(plan_path)])
+
+    output = json.loads(capsys.readouterr().out)
+    artifact = json.loads(Path(output["artifact_path"]).read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert output["workflow"] == "create_live_execute_once"
+    assert output["status"] == "blocked"
+    assert output["execution_enabled"] is False
+    assert output["external_api_calls"] == 0
+    assert output["transport_call_count"] == 0
+    assert "create_plan.plan_id must match create_execute.summary.plan_id" in output["blocking_reasons"]
+    assert artifact["create_plan_validation"]["ok"] is True
     assert artifact["actions"] == []
 
 

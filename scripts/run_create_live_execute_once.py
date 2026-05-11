@@ -9,6 +9,7 @@ from roibang_v2.config import load_json, load_runtime_config
 from roibang_v2.runs import write_run_artifact
 from roibang_v2.workflows.create_http_transport import build_create_http_transport
 from roibang_v2.workflows.create_live_execute_once import run_create_live_execute_once_request
+from roibang_v2.workflows.create_plan_contract import validate_create_plan
 
 
 def _latest_artifact(runs_dir: Path, workflow: str) -> Path:
@@ -101,6 +102,48 @@ def _blocked_missing_artifact(*, runs_dir: Path, message: str) -> dict:
     return payload
 
 
+def _blocked_plan_result(*, runs_dir: Path, blocking_reasons: list[str], create_plan_validation: dict | None = None) -> dict:
+    payload = {
+        "ok": False,
+        "workflow": "create_live_execute_once",
+        "phase": "phase2_preparation",
+        "execution_enabled": False,
+        "live_execute_enabled": False,
+        "external_api_calls": 0,
+        "status": "blocked",
+        "blocking_reasons": blocking_reasons,
+        "source_execution_pack_status": "not_required_direct_create_execute",
+        "transport_call_count": 0,
+        "idempotency": {
+            "status": "not_checked",
+            "skipped_existing_provider_id_count": 0,
+            "skipped_provider_id_records": [],
+            "skipped_existing_material_bind_count": 0,
+            "skipped_material_bind_records": [],
+        },
+        "material_bind_records": [],
+        "create_plan_validation": create_plan_validation or {},
+        "actions": [],
+    }
+    payload["artifact_path"] = str(write_run_artifact(runs_dir, "create_live_execute_once", payload))
+    return payload
+
+
+def _create_execute_summary(create_execute: dict) -> dict:
+    value = create_execute.get("summary")
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _plan_blocking_reasons(*, create_plan: dict, create_execute: dict, policy: dict, db_path: Path) -> tuple[list[str], dict]:
+    validation = validate_create_plan(create_plan, policy=policy, db_path=db_path)
+    reasons = [str(item) for item in validation.get("violations") or []]
+    plan_id = str(create_plan.get("plan_id") or "")
+    execute_plan_id = str(_create_execute_summary(create_execute).get("plan_id") or "")
+    if plan_id and execute_plan_id and plan_id != execute_plan_id:
+        reasons.append("create_plan.plan_id must match create_execute.summary.plan_id")
+    return reasons, validation
+
+
 def _print_result(result: dict) -> None:
     print(
         json.dumps(
@@ -129,6 +172,7 @@ def run_from_args(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run one-shot live create from create_execute artifact and local config.")
     parser.add_argument("--config", default="configs/runtime.example.json")
     parser.add_argument("--policy", default="policies/strategy.example.json")
+    parser.add_argument("--plan", default="")
     parser.add_argument("--create-live-execution-pack-artifact", default="")
     parser.add_argument("--create-execute-artifact", default="")
     parser.add_argument("--create-first-live-runbook-artifact", default="")
@@ -138,12 +182,35 @@ def run_from_args(argv: list[str] | None = None) -> int:
 
     config = load_runtime_config(args.config)
     policy = load_json(args.policy)
+    create_plan = None
+    if str(args.plan or "").strip():
+        try:
+            create_plan = load_json(args.plan)
+        except FileNotFoundError as exc:
+            result = _blocked_plan_result(runs_dir=config.runs_dir, blocking_reasons=[str(exc)])
+            _print_result(result)
+            return 0
     try:
         create_execute = _load_artifact(_artifact_path(args.create_execute_artifact, config.runs_dir, "create_execute"))
     except FileNotFoundError as exc:
         result = _blocked_missing_artifact(runs_dir=config.runs_dir, message=str(exc))
         _print_result(result)
         return 0
+    if isinstance(create_plan, dict):
+        reasons, validation = _plan_blocking_reasons(
+            create_plan=create_plan,
+            create_execute=create_execute,
+            policy=policy,
+            db_path=config.database_path,
+        )
+        if reasons:
+            result = _blocked_plan_result(
+                runs_dir=config.runs_dir,
+                blocking_reasons=reasons,
+                create_plan_validation=validation,
+            )
+            _print_result(result)
+            return 0
     execution_pack_path = _explicit_artifact_path(args.create_live_execution_pack_artifact)
     runbook_path = _explicit_artifact_path(args.create_first_live_runbook_artifact)
     scaffold_path = _explicit_artifact_path(args.create_live_payload_adapter_scaffold_artifact)

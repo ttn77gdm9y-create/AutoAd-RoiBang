@@ -673,12 +673,12 @@
       "enabled": false,
       "schedule": {"type": "cron", "expr": "12 11 * * *", "tz": "Asia/Shanghai"},
       "script": {
-        "command": ["python3", "scripts/run_create_live_execute_once.py", "--config", "configs/runtime.example.json", "--policy", "policies/strategy.example.json"],
+        "command": ["python3", "scripts/run_create_live_execute_once.py", "--config", "configs/runtime.example.json", "--plan", "configs/create-plans/first-live.local.json", "--policy", "policies/strategy.example.json"],
         "path": "scripts/run_create_live_execute_once.py",
         "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--policy", "policies/strategy.example.json"]
+        "args": ["--config", "configs/runtime.example.json", "--plan", "configs/create-plans/first-live.local.json", "--policy", "policies/strategy.example.json"]
       },
-      "policy": {"config": "configs/runtime.example.json", "policy": "policies/strategy.example.json"},
+      "policy": {"config": "configs/runtime.example.json", "plan": "configs/create-plans/first-live.local.json", "policy": "policies/strategy.example.json"},
       "result_contract": {"workflow": "create_live_execute_once", "artifact_dir": "data/runs/create_live_execute_once", "must_include": ["ok", "workflow", "phase", "execution_enabled", "live_execute_enabled", "external_api_calls", "status", "blocking_reasons", "transport_call_count", "idempotency", "material_bind_records", "actions"], "must_equal": {"phase": "phase2_preparation", "execution_enabled": false, "live_execute_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
       "delivery": {"channel": "none"}
     },
