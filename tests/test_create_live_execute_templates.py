@@ -29,8 +29,8 @@ def test_live_create_policy_template_is_minimal_direct_execute_contract():
     policy = _load_json(LIVE_POLICY_TEMPLATE)
     live_api = policy["create_execute"]["live_api"]
     payload_schema = policy["create_execute"]["payload_schema"]
-    runner = policy["create_live_execute_runner"]
-    transport = runner["create_http_transport"]
+    execute_once = policy["create_live_execute_once"]
+    transport = execute_once["create_http_transport"]
 
     assert live_api == {
         "enabled": True,
@@ -43,11 +43,11 @@ def test_live_create_policy_template_is_minimal_direct_execute_contract():
         },
     }
     assert payload_schema["live_payload_generation_enabled"] is True
-    assert runner["allow_create_http_transport"] is True
-    assert runner["require_provider_field_mapping"] is True
+    assert execute_once["allow_create_http_transport"] is True
+    assert execute_once["require_provider_field_mapping"] is True
     assert transport["enabled"] is True
     assert transport["allow_mutation"] is True
-    assert transport["approval_id"]
+    assert transport["run_id"]
     assert transport["token_env"] == "OCEANENGINE_ACCESS_TOKEN"
     assert "token" not in json.dumps(policy).replace("token_env", "")
 

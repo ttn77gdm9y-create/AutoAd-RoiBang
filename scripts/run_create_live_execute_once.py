@@ -24,12 +24,6 @@ def _artifact_path(value: str, runs_dir: Path, workflow: str) -> Path:
     return Path(value) if str(value or "").strip() else _latest_artifact(runs_dir, workflow)
 
 
-def _explicit_artifact_path(value: str) -> Path | None:
-    if str(value or "").strip():
-        return Path(value)
-    return None
-
-
 def _load_artifact(path: Path) -> dict:
     artifact = load_json(path)
     artifact["artifact_path"] = str(path)
@@ -37,34 +31,14 @@ def _load_artifact(path: Path) -> dict:
 
 
 def _runner_policy(policy: dict) -> dict:
-    value = policy.get("create_live_execute_runner")
+    value = policy.get("create_live_execute_once")
     return dict(value) if isinstance(value, dict) else {}
 
 
-def _transport_config(policy: dict, approval_artifact: dict) -> dict:
+def _transport_config(policy: dict) -> dict:
     runner_policy = _runner_policy(policy)
     cfg = runner_policy.get("create_http_transport")
-    result = dict(cfg) if isinstance(cfg, dict) else {}
-    approval = approval_artifact.get("approval") if isinstance(approval_artifact.get("approval"), dict) else {}
-    if str(approval.get("approval_id") or "").strip():
-        result["approval_id"] = str(approval.get("approval_id") or "")
-    if str(approval.get("approved_by") or "").strip():
-        result["approved_by"] = str(approval.get("approved_by") or "")
-    return result
-
-
-def _execution_pack_ready(execution_pack: dict) -> bool:
-    final_preflight = execution_pack.get("final_preflight")
-    return (
-        bool(execution_pack.get("ok", False))
-        and str(execution_pack.get("status") or "") == "ready_for_live_execute"
-        and isinstance(final_preflight, dict)
-        and bool(final_preflight.get("ready_for_live_execute", False))
-    )
-
-
-def _should_construct_transport(*, execution_pack: dict, runtime_execution: bool, runtime_external_api: bool) -> bool:
-    return _execution_pack_ready(execution_pack) and runtime_execution and runtime_external_api
+    return dict(cfg) if isinstance(cfg, dict) else {}
 
 
 def _should_construct_direct_transport(*, policy: dict, runtime_execution: bool, runtime_external_api: bool) -> bool:
@@ -169,15 +143,12 @@ def _print_result(result: dict) -> None:
 
 
 def run_from_args(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Run one-shot live create from create_execute artifact and local config.")
+    parser = argparse.ArgumentParser(description="Run one-shot live create from create_plan JSON and create_execute artifact.")
     parser.add_argument("--config", default="configs/runtime.example.json")
     parser.add_argument("--policy", default="policies/strategy.example.json")
     parser.add_argument("--plan", default="")
-    parser.add_argument("--create-live-execution-pack-artifact", default="")
     parser.add_argument("--create-execute-artifact", default="")
-    parser.add_argument("--create-first-live-runbook-artifact", default="")
     parser.add_argument("--create-live-payload-adapter-scaffold-artifact", default="")
-    parser.add_argument("--create-live-approval-artifact", default="")
     args = parser.parse_args(argv)
 
     config = load_runtime_config(args.config)
@@ -211,29 +182,18 @@ def run_from_args(argv: list[str] | None = None) -> int:
             )
             _print_result(result)
             return 0
-    execution_pack_path = _explicit_artifact_path(args.create_live_execution_pack_artifact)
-    runbook_path = _explicit_artifact_path(args.create_first_live_runbook_artifact)
-    scaffold_path = _explicit_artifact_path(args.create_live_payload_adapter_scaffold_artifact)
-    approval_path = _explicit_artifact_path(args.create_live_approval_artifact)
-    execution_pack = _load_artifact(execution_pack_path) if execution_pack_path is not None else None
-    runbook = _load_artifact(runbook_path) if runbook_path is not None else None
-    scaffold = _load_artifact(scaffold_path) if scaffold_path is not None else {}
-    approval = _load_artifact(approval_path) if approval_path is not None else {}
+    scaffold = (
+        _load_artifact(Path(args.create_live_payload_adapter_scaffold_artifact))
+        if str(args.create_live_payload_adapter_scaffold_artifact or "").strip()
+        else {}
+    )
     transport = None
-    if isinstance(execution_pack, dict) and _should_construct_transport(
-            execution_pack=execution_pack,
-            runtime_execution=config.execution_enabled,
-            runtime_external_api=config.external_api_enabled,
-        ):
-        transport_cfg = _transport_config(policy, approval)
-        response_dir = transport_cfg.get("response_audit_dir") or Path(config.runs_dir) / "create_live_execute_once" / "audit"
-        transport = build_create_http_transport(transport_cfg, response_dir=response_dir)
-    elif _should_construct_direct_transport(
+    if _should_construct_direct_transport(
         policy=policy,
         runtime_execution=config.execution_enabled,
         runtime_external_api=config.external_api_enabled,
     ):
-        transport_cfg = _transport_config(policy, approval)
+        transport_cfg = _transport_config(policy)
         response_dir = transport_cfg.get("response_audit_dir") or Path(config.runs_dir) / "create_live_execute_once" / "audit"
         transport = build_create_http_transport(transport_cfg, response_dir=response_dir)
 
@@ -246,14 +206,6 @@ def run_from_args(argv: list[str] | None = None) -> int:
             "external_api_enabled": config.external_api_enabled,
         },
     }
-    if isinstance(execution_pack, dict) and isinstance(runbook, dict) and isinstance(approval, dict):
-        request_payload.update(
-            {
-                "create_live_execution_pack_artifact": execution_pack,
-                "create_first_live_runbook_artifact": runbook,
-                "create_live_approval_artifact": approval,
-            }
-        )
     result = run_create_live_execute_once_request(
         {"create_live_execute_once": request_payload},
         runs_dir=config.runs_dir,

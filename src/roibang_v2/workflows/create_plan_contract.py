@@ -130,6 +130,9 @@ def _field_violations(plan: dict[str, Any], policy: dict[str, Any]) -> list[str]
             violations.append(f"{field} is required")
         elif _contains_placeholder(plan.get(field)):
             violations.append(f"{field} contains placeholder id")
+    launch_mode = _text(plan.get("launch_mode"))
+    if launch_mode != "create_only":
+        violations.append("launch_mode must be create_only")
 
     accounts = _rows(plan.get("target_accounts"))
     materials = _rows(plan.get("materials"))
@@ -198,6 +201,7 @@ def _summary(plan: dict[str, Any]) -> dict[str, Any]:
     )
     return {
         "plan_id": _text(plan.get("plan_id")),
+        "launch_mode": _text(plan.get("launch_mode")),
         "target_account_count": len(accounts),
         "project_count": project_count,
         "unit_count": unit_count,

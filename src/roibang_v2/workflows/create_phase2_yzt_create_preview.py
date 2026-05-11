@@ -271,6 +271,7 @@ def _summary(
     return {
         "product": product,
         "platform": platform,
+        "launch_mode": "create_only",
         "template_name": template_name,
         "target_account_count": len(accounts),
         "preview_project_count": len(preview_projects),

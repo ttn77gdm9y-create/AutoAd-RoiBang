@@ -87,8 +87,8 @@ def _validate_config(config: dict[str, Any]) -> None:
         raise RuntimeError("create HTTP transport is disabled")
     if not bool(config.get("allow_mutation", False)):
         raise RuntimeError("create HTTP transport requires allow_mutation=true")
-    if not str(config.get("approval_id") or "").strip():
-        raise RuntimeError("create HTTP transport requires approval_id")
+    if not str(config.get("run_id") or "").strip():
+        raise RuntimeError("create HTTP transport requires run_id")
 
 
 def _validate_request(request: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
@@ -147,8 +147,8 @@ def _audit_record(
     headers: dict[str, str],
     status_code: int,
     response_json: dict[str, Any],
-    approval_id: str,
-    approved_by: str,
+    run_id: str,
+    operator: str,
 ) -> dict[str, Any]:
     method = str(request.get("method") or _request_method(str(request.get("operation") or "")))
     return {
@@ -163,9 +163,9 @@ def _audit_record(
             },
             "payload": request.get("payload") if isinstance(request.get("payload"), dict) else {},
         },
-        "approval": {
-            "approval_id": approval_id,
-            "approved_by": approved_by,
+        "run": {
+            "run_id": run_id,
+            "operator": operator,
         },
         "status_code": status_code,
         "response_json": response_json,
@@ -191,8 +191,8 @@ def build_create_http_transport(
     timeout_seconds = float(config.get("timeout_seconds") or 20)
     base_url = _normalize_base_url(config)
     audit_path = Path(response_dir) / "create_http_responses.jsonl"
-    approval_id = str(config.get("approval_id") or "").strip()
-    approved_by = str(config.get("approved_by") or "").strip()
+    run_id = str(config.get("run_id") or "").strip()
+    operator = str(config.get("operator") or "").strip()
 
     def transport(request: dict[str, Any]) -> dict[str, Any]:
         operation, endpoint, payload = _validate_request(request)
@@ -217,8 +217,8 @@ def build_create_http_transport(
                     headers=headers,
                     status_code=0,
                     response_json=response_json,
-                    approval_id=approval_id,
-                    approved_by=approved_by,
+                    run_id=run_id,
+                    operator=operator,
                 ),
             )
             raise RuntimeError(f"create HTTP request failed with transient network error: {exc}") from exc
@@ -230,8 +230,8 @@ def build_create_http_transport(
                 headers=headers,
                 status_code=response.status_code,
                 response_json=response.json_body,
-                approval_id=approval_id,
-                approved_by=approved_by,
+                run_id=run_id,
+                operator=operator,
             ),
         )
         if response.status_code >= 400:

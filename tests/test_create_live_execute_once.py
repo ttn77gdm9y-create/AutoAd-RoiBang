@@ -6,10 +6,7 @@ from pathlib import Path
 from roibang_v2.db.bootstrap import bootstrap_database
 from roibang_v2.workflows.create_material_bind_ledger import record_create_material_bind_result
 from roibang_v2.workflows.create_provider_id_ledger import record_create_provider_id
-from roibang_v2.workflows.create_live_execute_once import (
-    build_create_live_execute_once,
-    run_create_live_execute_once_request,
-)
+from roibang_v2.workflows.create_live_execute_once import run_create_live_execute_once_request
 
 
 def _load_script(name: str):
@@ -134,25 +131,6 @@ def _execute_artifact() -> dict:
     }
 
 
-def _runbook_artifact() -> dict:
-    return {
-        "workflow": "create_first_live_runbook",
-        "ok": True,
-        "status": "ready_for_human_approval",
-        "execution_enabled": False,
-        "external_api_calls": 0,
-        "scope": {
-            "advertiser_id": "target-1",
-            "project_count": 1,
-            "unit_count": 1,
-            "material_count": 1,
-            "max_project_count": 1,
-            "max_unit_count": 2,
-            "max_material_count": 4,
-        },
-    }
-
-
 def _scaffold_artifact() -> dict:
     return {
         "workflow": "create_live_payload_adapter_scaffold",
@@ -167,26 +145,6 @@ def _scaffold_artifact() -> dict:
                 "lookup_target_material": "/open_api/2/file/video/get/",
                 "bind_material": "/open_api/2/file/material/bind/",
             },
-        },
-    }
-
-
-def _approval_artifact() -> dict:
-    return {
-        "workflow": "create_live_approval",
-        "ok": True,
-        "status": "approved",
-        "execution_enabled": False,
-        "external_api_calls": 0,
-        "scope": _runbook_artifact()["scope"],
-        "approval": {
-            "approved": True,
-            "approval_id": "live-approval-001",
-            "approved_by": "operator",
-            "approved_at": "2026-05-10T11:00:00+00:00",
-            "expires_at": "2026-05-10T12:00:00+00:00",
-            "target_workflow": "create_live_execute_runner",
-            "allow_create_http_transport": True,
         },
     }
 
@@ -213,19 +171,14 @@ def _policy() -> dict:
             },
             "payload_schema": {"live_payload_generation_enabled": True},
         },
-        "create_live_execute_runner": {
+        "create_live_execute_once": {
             "allow_create_http_transport": True,
             "create_http_transport": {
                 "enabled": True,
                 "allow_mutation": True,
-                "approval_id": "live-approval-001",
-                "approved_by": "operator",
+                "run_id": "manual-live-create-001",
+                "operator": "operator",
                 "token_env": "ROIBANG_TEST_ACCESS_TOKEN",
-            },
-            "human_approval": {
-                "approved": True,
-                "approval_id": "live-approval-001",
-                "approved_by": "operator",
             },
         },
     }
@@ -236,6 +189,7 @@ def _create_plan(*, plan_id: str = "plan-1") -> dict:
         "plan_id": plan_id,
         "product": "yzt",
         "platform": "wx-mini-game",
+        "launch_mode": "create_only",
         "source_advertiser_id": "source-1",
         "target_accounts": [
             {
@@ -269,80 +223,6 @@ def _seed_plan_sources(db_path: Path) -> None:
             """,
             ("yzt", "source-1", "material-1", "video-1", "Material 1", "test", "2026-05-11T00:00:00Z"),
         )
-
-
-def _execution_pack_artifact(*, ready: bool) -> dict:
-    return {
-        "workflow": "create_live_execution_pack",
-        "ok": ready,
-        "phase": "phase2_preparation",
-        "execution_enabled": False,
-        "live_execute_enabled": False,
-        "external_api_calls": 0,
-        "status": "ready_for_live_execute" if ready else "blocked",
-        "final_preflight": {
-            "ready_for_live_execute": ready,
-            "blocking_reasons": [] if ready else ["runtime.execution_enabled is false"],
-        },
-        "execution_pack": {
-            "transport": {
-                "mode": "create_http",
-                "create_http_transport_allowed": ready,
-                "external_api_calls_in_pack": 0,
-            }
-        },
-        "actions": [],
-    }
-
-
-def test_create_live_execute_once_blocks_before_execution_pack_is_ready(tmp_path: Path):
-    db_path = tmp_path / "roibang.sqlite3"
-    bootstrap_database(db_path)
-
-    result = build_create_live_execute_once(
-        create_live_execution_pack_artifact=_execution_pack_artifact(ready=False),
-        create_execute_artifact=_execute_artifact(),
-        create_first_live_runbook_artifact=_runbook_artifact(),
-        create_live_payload_adapter_scaffold_artifact=_scaffold_artifact(),
-        create_live_approval_artifact=_approval_artifact(),
-        policy=_policy(),
-        runtime={"execution_enabled": True, "external_api_enabled": True},
-        db_path=db_path,
-    )
-
-    assert result["ok"] is False
-    assert result["workflow"] == "create_live_execute_once"
-    assert result["status"] == "blocked"
-    assert result["execution_enabled"] is False
-    assert result["live_execute_enabled"] is False
-    assert result["external_api_calls"] == 0
-    assert result["transport_call_count"] == 0
-    assert "execution pack is not ready_for_live_execute" in result["blocking_reasons"]
-    assert result["actions"] == []
-
-
-def test_create_live_execute_once_requires_transport_after_pack_is_ready(tmp_path: Path):
-    db_path = tmp_path / "roibang.sqlite3"
-    bootstrap_database(db_path)
-
-    result = build_create_live_execute_once(
-        create_live_execution_pack_artifact=_execution_pack_artifact(ready=True),
-        create_execute_artifact=_execute_artifact(),
-        create_first_live_runbook_artifact=_runbook_artifact(),
-        create_live_payload_adapter_scaffold_artifact=_scaffold_artifact(),
-        create_live_approval_artifact=_approval_artifact(),
-        policy=_policy(),
-        runtime={"execution_enabled": True, "external_api_enabled": True},
-        db_path=db_path,
-    )
-
-    assert result["ok"] is False
-    assert result["status"] == "blocked"
-    assert result["execution_enabled"] is False
-    assert result["live_execute_enabled"] is False
-    assert result["external_api_calls"] == 0
-    assert result["transport_call_count"] == 0
-    assert "create_http transport is not constructed" in result["blocking_reasons"]
 
 
 def test_create_live_execute_once_direct_mode_blocks_without_runtime_or_pack(tmp_path: Path):
@@ -382,7 +262,7 @@ def test_create_live_execute_once_direct_mode_requires_verified_field_mapping_wh
     db_path = tmp_path / "roibang.sqlite3"
     bootstrap_database(db_path)
     policy = _policy()
-    policy["create_live_execute_runner"]["require_provider_field_mapping"] = True
+    policy["create_live_execute_once"]["require_provider_field_mapping"] = True
 
     result = run_create_live_execute_once_request(
         {
@@ -526,6 +406,31 @@ def test_create_live_execute_once_direct_mode_blocks_unproducible_lookup(tmp_pat
     )
 
 
+def test_create_live_execute_once_direct_mode_blocks_active_create_payload(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+    create_execute = json.loads(json.dumps(_execute_artifact(), ensure_ascii=False))
+    create_execute["resolved_provider_payload_drafts"][0]["payload"]["status"] = "ACTIVE"
+
+    result = run_create_live_execute_once_request(
+        {
+            "create_live_execute_once": {
+                "create_execute_artifact": create_execute,
+                "create_live_payload_adapter_scaffold_artifact": _scaffold_artifact(),
+                "policy": _policy(),
+                "runtime": {"execution_enabled": True, "external_api_enabled": True},
+            }
+        },
+        runs_dir=tmp_path / "runs",
+        db_path=db_path,
+        transport=lambda _call: {"code": 0},
+    )
+
+    assert result["ok"] is False
+    assert result["external_api_calls"] == 0
+    assert "create_project.status must not be ACTIVE during create" in result["blocking_reasons"]
+
+
 def test_create_live_execute_once_runs_create_http_transport_in_order(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     bootstrap_database(db_path)
@@ -544,14 +449,16 @@ def test_create_live_execute_once_runs_create_http_transport_in_order(tmp_path: 
             return {"code": 0, "data": {"target_video_id": "target-video-001", "target_video_cover_id": "target-cover-001"}}
         raise AssertionError(call["operation"])
 
-    result = build_create_live_execute_once(
-        create_live_execution_pack_artifact=_execution_pack_artifact(ready=True),
-        create_execute_artifact=_execute_artifact(),
-        create_first_live_runbook_artifact=_runbook_artifact(),
-        create_live_payload_adapter_scaffold_artifact=_scaffold_artifact(),
-        create_live_approval_artifact=_approval_artifact(),
-        policy=_policy(),
-        runtime={"execution_enabled": True, "external_api_enabled": True},
+    result = run_create_live_execute_once_request(
+        {
+            "create_live_execute_once": {
+                "create_execute_artifact": _execute_artifact(),
+                "create_live_payload_adapter_scaffold_artifact": _scaffold_artifact(),
+                "policy": _policy(),
+                "runtime": {"execution_enabled": True, "external_api_enabled": True},
+            }
+        },
+        runs_dir=tmp_path / "runs",
         db_path=db_path,
         transport=fake_transport,
     )
@@ -640,14 +547,16 @@ def test_create_live_execute_once_skips_existing_project_and_resumes_unit(tmp_pa
             return {"code": 0, "data": {"target_video_id": "target-video-001", "target_video_cover_id": "target-cover-001"}}
         raise AssertionError(call["operation"])
 
-    result = build_create_live_execute_once(
-        create_live_execution_pack_artifact=_execution_pack_artifact(ready=True),
-        create_execute_artifact=_execute_artifact(),
-        create_first_live_runbook_artifact=_runbook_artifact(),
-        create_live_payload_adapter_scaffold_artifact=_scaffold_artifact(),
-        create_live_approval_artifact=_approval_artifact(),
-        policy=_policy(),
-        runtime={"execution_enabled": True, "external_api_enabled": True},
+    result = run_create_live_execute_once_request(
+        {
+            "create_live_execute_once": {
+                "create_execute_artifact": _execute_artifact(),
+                "create_live_payload_adapter_scaffold_artifact": _scaffold_artifact(),
+                "policy": _policy(),
+                "runtime": {"execution_enabled": True, "external_api_enabled": True},
+            }
+        },
+        runs_dir=tmp_path / "runs",
         db_path=db_path,
         transport=fake_transport,
     )
@@ -716,14 +625,16 @@ def test_create_live_execute_once_skips_existing_project_and_unit_then_binds_mat
             return {"code": 0, "data": {"target_video_id": "target-video-001", "target_video_cover_id": "target-cover-001"}}
         raise AssertionError(call["operation"])
 
-    result = build_create_live_execute_once(
-        create_live_execution_pack_artifact=_execution_pack_artifact(ready=True),
-        create_execute_artifact=_execute_artifact(),
-        create_first_live_runbook_artifact=_runbook_artifact(),
-        create_live_payload_adapter_scaffold_artifact=_scaffold_artifact(),
-        create_live_approval_artifact=_approval_artifact(),
-        policy=_policy(),
-        runtime={"execution_enabled": True, "external_api_enabled": True},
+    result = run_create_live_execute_once_request(
+        {
+            "create_live_execute_once": {
+                "create_execute_artifact": _execute_artifact(),
+                "create_live_payload_adapter_scaffold_artifact": _scaffold_artifact(),
+                "policy": _policy(),
+                "runtime": {"execution_enabled": True, "external_api_enabled": True},
+            }
+        },
+        runs_dir=tmp_path / "runs",
         db_path=db_path,
         transport=fake_transport,
     )
@@ -795,14 +706,16 @@ def test_create_live_execute_once_skips_existing_material_bind(tmp_path: Path):
         calls.append(call)
         raise AssertionError(f"{call['operation']} must not be called")
 
-    result = build_create_live_execute_once(
-        create_live_execution_pack_artifact=_execution_pack_artifact(ready=True),
-        create_execute_artifact=_execute_artifact(),
-        create_first_live_runbook_artifact=_runbook_artifact(),
-        create_live_payload_adapter_scaffold_artifact=_scaffold_artifact(),
-        create_live_approval_artifact=_approval_artifact(),
-        policy=_policy(),
-        runtime={"execution_enabled": True, "external_api_enabled": True},
+    result = run_create_live_execute_once_request(
+        {
+            "create_live_execute_once": {
+                "create_execute_artifact": _execute_artifact(),
+                "create_live_payload_adapter_scaffold_artifact": _scaffold_artifact(),
+                "policy": _policy(),
+                "runtime": {"execution_enabled": True, "external_api_enabled": True},
+            }
+        },
+        runs_dir=tmp_path / "runs",
         db_path=db_path,
         transport=fake_transport,
     )
@@ -825,11 +738,8 @@ def test_run_create_live_execute_once_request_writes_blocked_artifact(tmp_path: 
     result = run_create_live_execute_once_request(
         {
             "create_live_execute_once": {
-                "create_live_execution_pack_artifact": _execution_pack_artifact(ready=False),
                 "create_execute_artifact": _execute_artifact(),
-                "create_first_live_runbook_artifact": _runbook_artifact(),
                 "create_live_payload_adapter_scaffold_artifact": _scaffold_artifact(),
-                "create_live_approval_artifact": _approval_artifact(),
                 "policy": _policy(),
                 "runtime": {"execution_enabled": True, "external_api_enabled": True},
             }
@@ -904,35 +814,6 @@ def test_create_live_execute_once_fixed_script_blocks_plan_mismatch(tmp_path: Pa
     assert "create_plan.plan_id must match create_execute.summary.plan_id" in output["blocking_reasons"]
     assert artifact["create_plan_validation"]["ok"] is True
     assert artifact["actions"] == []
-
-
-def test_create_live_execute_once_fixed_script_ignores_legacy_packs_by_default(tmp_path: Path, capsys):
-    runtime_path = _runtime_config(tmp_path)
-    policy_path = tmp_path / "policy.json"
-    policy_path.write_text(json.dumps(_policy(), ensure_ascii=False), encoding="utf-8")
-    runs_dir = tmp_path / "runs"
-    artifacts = {
-        "create_execute": _execute_artifact(),
-        "create_live_payload_adapter_scaffold": _scaffold_artifact(),
-        "create_live_execution_pack": _execution_pack_artifact(ready=False),
-        "create_first_live_runbook": _runbook_artifact(),
-        "create_live_approval": _approval_artifact(),
-    }
-    for workflow, artifact in artifacts.items():
-        path = runs_dir / workflow / "20260510T000000Z.json"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(artifact, ensure_ascii=False), encoding="utf-8")
-    module = _load_script("run_create_live_execute_once")
-
-    exit_code = module.run_from_args(["--config", str(runtime_path), "--policy", str(policy_path)])
-
-    output = json.loads(capsys.readouterr().out)
-    assert exit_code == 0
-    assert output["workflow"] == "create_live_execute_once"
-    assert output["status"] == "blocked"
-    assert output["source_execution_pack_status"] == "not_required_direct_create_execute"
-    assert "execution pack is not ready_for_live_execute" not in output["blocking_reasons"]
-    assert "runtime.execution_enabled is false" in output["blocking_reasons"]
 
 
 def test_create_live_execute_once_fixed_script_reports_missing_artifacts_as_blocked(tmp_path: Path, capsys):

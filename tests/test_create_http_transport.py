@@ -15,7 +15,7 @@ def test_create_http_transport_is_disabled_by_default(tmp_path):
         )
 
 
-def test_create_http_transport_requires_mutation_approval_and_token(monkeypatch, tmp_path):
+def test_create_http_transport_requires_mutation_run_id_and_token(monkeypatch, tmp_path):
     monkeypatch.setenv("ROIBANG_TEST_ACCESS_TOKEN", "secret-token")
 
     with pytest.raises(RuntimeError, match="allow_mutation"):
@@ -23,13 +23,13 @@ def test_create_http_transport_requires_mutation_approval_and_token(monkeypatch,
             {
                 "enabled": True,
                 "token_env": "ROIBANG_TEST_ACCESS_TOKEN",
-                "approval_id": "approval-001",
+                "run_id": "run-001",
             },
             response_dir=tmp_path,
             opener=lambda *_args, **_kwargs: HttpResponse(200, {}),
         )
 
-    with pytest.raises(RuntimeError, match="approval_id"):
+    with pytest.raises(RuntimeError, match="run_id"):
         build_create_http_transport(
             {
                 "enabled": True,
@@ -61,8 +61,8 @@ def test_create_http_transport_posts_allowed_endpoint_and_redacts_audit(monkeypa
         {
             "enabled": True,
             "allow_mutation": True,
-            "approval_id": "approval-001",
-            "approved_by": "tester",
+            "run_id": "run-001",
+            "operator": "tester",
             "token_env": "ROIBANG_TEST_ACCESS_TOKEN",
             "timeout_seconds": 7,
             "base_url": "https://api.oceanengine.com",
@@ -97,7 +97,7 @@ def test_create_http_transport_posts_allowed_endpoint_and_redacts_audit(monkeypa
         "Access-Token": "<redacted>",
         "Content-Type": "application/json",
     }
-    assert audit["approval"] == {"approval_id": "approval-001", "approved_by": "tester"}
+    assert audit["run"] == {"run_id": "run-001", "operator": "tester"}
     assert "secret-token" not in json.dumps(audit, ensure_ascii=False)
 
 
@@ -135,8 +135,8 @@ def test_create_http_transport_gets_target_material_lookup_and_redacts_audit(mon
         {
             "enabled": True,
             "allow_mutation": True,
-            "approval_id": "approval-001",
-            "approved_by": "tester",
+            "run_id": "run-001",
+            "operator": "tester",
             "token_env": "ROIBANG_TEST_ACCESS_TOKEN",
             "base_url": "https://api.oceanengine.com",
         },
@@ -189,7 +189,7 @@ def test_create_http_transport_rejects_unknown_or_mismatched_endpoint(monkeypatc
         {
             "enabled": True,
             "allow_mutation": True,
-            "approval_id": "approval-001",
+            "run_id": "run-001",
             "token_env": "ROIBANG_TEST_ACCESS_TOKEN",
         },
         response_dir=tmp_path,
@@ -215,7 +215,7 @@ def test_create_http_transport_does_not_retry_mutating_requests(monkeypatch, tmp
         {
             "enabled": True,
             "allow_mutation": True,
-            "approval_id": "approval-001",
+            "run_id": "run-001",
             "token_env": "ROIBANG_TEST_ACCESS_TOKEN",
             "max_retries": 3,
         },

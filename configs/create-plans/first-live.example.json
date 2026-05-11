@@ -7,6 +7,7 @@
   "owner": "operator",
   "target_date": "YYYY-MM-DD",
   "batch_generated_at": "YYYY-MM-DDTHH:MM:SS+08:00",
+  "launch_mode": "create_only",
   "roi_coefficient": 0.41,
   "organization_id": "organization-id",
   "pool_key": "material-pool-key",

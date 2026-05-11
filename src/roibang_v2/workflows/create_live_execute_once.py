@@ -16,31 +16,34 @@ from roibang_v2.workflows.create_provider_id_ledger import (
 
 Transport = Callable[[dict[str, Any]], dict[str, Any]]
 OPERATION_ORDER = ["create_project", "bind_material", "lookup_target_material", "create_unit"]
+ACTIVE_STATUS_VALUES = {
+    "ACTIVE",
+    "ENABLE",
+    "ENABLED",
+    "ON",
+    "RUNNING",
+    "START",
+    "STARTED",
+    "CAMPAIGN_STATUS_ENABLE",
+    "PROJECT_STATUS_ENABLE",
+    "PROMOTION_STATUS_ENABLE",
+}
+LAUNCH_FIELD_NAMES = {
+    "status",
+    "delivery_status",
+    "marketing_status",
+    "project_status",
+    "promotion_status",
+    "operation",
+    "enable",
+    "enabled",
+    "is_enabled",
+}
 
 
 def _once_config(request: dict[str, Any]) -> dict[str, Any]:
     value = request.get("create_live_execute_once")
     return dict(value) if isinstance(value, dict) else dict(request)
-
-
-def _execution_pack_ready(execution_pack: dict[str, Any]) -> bool:
-    final_preflight = execution_pack.get("final_preflight")
-    return (
-        bool(execution_pack.get("ok", False))
-        and str(execution_pack.get("status") or "") == "ready_for_live_execute"
-        and not bool(execution_pack.get("execution_enabled", False))
-        and int(execution_pack.get("external_api_calls") or 0) == 0
-        and isinstance(final_preflight, dict)
-        and bool(final_preflight.get("ready_for_live_execute", False))
-    )
-
-
-def _pack_blocking_reasons(execution_pack: dict[str, Any]) -> list[str]:
-    final_preflight = execution_pack.get("final_preflight")
-    reasons = []
-    if isinstance(final_preflight, dict):
-        reasons.extend(str(item) for item in final_preflight.get("blocking_reasons") or [])
-    return reasons
 
 
 def _pre_transport_blocking_reasons(runtime: dict[str, Any], transport: Transport | None) -> list[str]:
@@ -58,7 +61,6 @@ def _blocked_result(
     *,
     reason: str,
     blocking_reasons: list[str],
-    create_live_execution_pack_artifact: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "ok": False,
@@ -69,7 +71,7 @@ def _blocked_result(
         "external_api_calls": 0,
         "status": "blocked",
         "reason": reason,
-        "source_execution_pack_status": str(create_live_execution_pack_artifact.get("status") or ""),
+        "source_execution_pack_status": "not_required_direct_create_execute",
         "blocking_reasons": blocking_reasons,
         "ordered_steps": [],
         "provider_id_records": [],
@@ -108,7 +110,7 @@ def _payload_schema_policy(policy: dict[str, Any]) -> dict[str, Any]:
 
 
 def _runner_policy(policy: dict[str, Any]) -> dict[str, Any]:
-    value = policy.get("create_live_execute_runner")
+    value = policy.get("create_live_execute_once")
     return dict(value) if isinstance(value, dict) else {}
 
 
@@ -213,6 +215,37 @@ def _provider_payload_mapping_contract(create_execute: dict[str, Any]) -> dict[s
         "unverified_draft_count": unverified_count,
         "unmapped_draft_count": unmapped_count,
     }
+
+
+def _payload_launch_fields(value: Any, path: str = "") -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            key_text = str(key)
+            next_path = f"{path}.{key_text}" if path else key_text
+            if key_text.lower() in LAUNCH_FIELD_NAMES:
+                rows.append({"path": next_path, "value": item})
+            rows.extend(_payload_launch_fields(item, next_path))
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            rows.extend(_payload_launch_fields(item, f"{path}[{index}]"))
+    return rows
+
+
+def _active_launch_violations(create_execute: dict[str, Any]) -> list[str]:
+    violations: list[str] = []
+    for draft in _provider_payload_drafts(create_execute):
+        operation = str(draft.get("operation") or "")
+        payload = draft.get("payload") if isinstance(draft.get("payload"), dict) else {}
+        for field in _payload_launch_fields(payload):
+            value = field.get("value")
+            path = str(field.get("path") or "")
+            if isinstance(value, bool) and value:
+                violations.append(f"{operation}.{path} must not enable live delivery during create")
+                continue
+            if isinstance(value, str) and value.strip().upper() in ACTIVE_STATUS_VALUES:
+                violations.append(f"{operation}.{path} must not be {value.strip()} during create")
+    return violations
 
 
 def _drafts_for_operation(create_execute: dict[str, Any], operation: str) -> list[dict[str, Any]]:
@@ -765,76 +798,6 @@ def _resumable_create_http_run(
     }
 
 
-def build_create_live_execute_once(
-    *,
-    create_live_execution_pack_artifact: dict[str, Any],
-    create_execute_artifact: dict[str, Any],
-    create_first_live_runbook_artifact: dict[str, Any],
-    create_live_payload_adapter_scaffold_artifact: dict[str, Any],
-    create_live_approval_artifact: dict[str, Any],
-    policy: dict[str, Any],
-    runtime: dict[str, Any],
-    db_path: str | Path,
-    transport: Transport | None = None,
-) -> dict[str, Any]:
-    if not _execution_pack_ready(create_live_execution_pack_artifact):
-        return _blocked_result(
-            reason="execution_pack_not_ready",
-            blocking_reasons=[
-                "execution pack is not ready_for_live_execute",
-                *_pack_blocking_reasons(create_live_execution_pack_artifact),
-            ],
-            create_live_execution_pack_artifact=create_live_execution_pack_artifact,
-        )
-    pre_transport_reasons = _pre_transport_blocking_reasons(runtime, transport)
-    if pre_transport_reasons:
-        return _blocked_result(
-            reason="transport_not_ready",
-            blocking_reasons=pre_transport_reasons,
-            create_live_execution_pack_artifact=create_live_execution_pack_artifact,
-        )
-
-    runner_result = _resumable_create_http_run(
-        create_execute_artifact=create_execute_artifact,
-        create_live_payload_adapter_scaffold_artifact=create_live_payload_adapter_scaffold_artifact,
-        policy=policy,
-        db_path=db_path,
-        transport=transport,
-    )
-    external_api_calls = int(runner_result.get("external_api_calls") or 0)
-    execution_attempted = external_api_calls > 0
-    ok = bool(runner_result.get("ok", False)) and str(runner_result.get("status") or "") == "create_http_completed"
-    return {
-        "ok": ok,
-        "workflow": "create_live_execute_once",
-        "phase": "phase2_preparation",
-        "execution_enabled": execution_attempted,
-        "live_execute_enabled": execution_attempted,
-        "external_api_calls": external_api_calls,
-        "status": str(runner_result.get("status") or "blocked"),
-        "reason": "",
-        "create_execute_summary": _summary(create_execute_artifact),
-        "source_execution_pack_status": str(create_live_execution_pack_artifact.get("status") or ""),
-        "blocking_reasons": list(runner_result.get("blocking_reasons") or []),
-        "ordered_steps": list(runner_result.get("ordered_steps") or []),
-        "provider_id_records": list(runner_result.get("provider_id_records") or []),
-        "material_bind_records": list(runner_result.get("material_bind_records") or []),
-        "transport_call_count": int(runner_result.get("transport_call_count") or 0),
-        "idempotency": runner_result.get("idempotency")
-        if isinstance(runner_result.get("idempotency"), dict)
-        else {
-            "status": "not_checked",
-            "skipped_existing_provider_id_count": 0,
-            "skipped_provider_id_records": [],
-            "skipped_existing_material_bind_count": 0,
-            "skipped_material_bind_records": [],
-        },
-        "runner_result": runner_result,
-        "failure": runner_result.get("failure"),
-        "actions": [],
-    }
-
-
 def _direct_blocking_reasons(
     *,
     create_execute_artifact: dict[str, Any],
@@ -848,7 +811,7 @@ def _direct_blocking_reasons(
     if not bool(_payload_schema_policy(policy).get("live_payload_generation_enabled", False)):
         reasons.append("policy.create_execute.payload_schema.live_payload_generation_enabled is false")
     if not bool(_runner_policy(policy).get("allow_create_http_transport", False)):
-        reasons.append("policy.create_live_execute_runner.allow_create_http_transport is false")
+        reasons.append("policy.create_live_execute_once.allow_create_http_transport is false")
     if bool(_runner_policy(policy).get("require_provider_field_mapping", False)):
         mapping_contract = _provider_payload_mapping_contract(create_execute_artifact)
         if str(mapping_contract.get("status") or "") != "passed":
@@ -866,6 +829,7 @@ def _direct_blocking_reasons(
         reasons.append("create_execute payload drafts must not contain live payload flags")
     if not bool(payload_safety["lookup_placeholders_chain_resolvable"]):
         reasons.append("create_execute payloads contain lookup placeholders that cannot be produced by this fixed chain")
+    reasons.extend(_active_launch_violations(create_execute_artifact))
     return reasons
 
 
@@ -888,7 +852,6 @@ def build_create_live_execute_once_direct(
         return _blocked_result(
             reason="direct_execute_not_ready",
             blocking_reasons=blocking_reasons,
-            create_live_execution_pack_artifact={"status": "not_required_direct_create_execute"},
         )
 
     runner_result = _resumable_create_http_run(
@@ -940,42 +903,15 @@ def run_create_live_execute_once_request(
     transport: Transport | None = None,
 ) -> dict[str, Any]:
     cfg = _once_config(request)
-    execution_pack = cfg.get("create_live_execution_pack_artifact")
     create_execute = cfg.get("create_execute_artifact")
-    runbook = cfg.get("create_first_live_runbook_artifact")
     scaffold = cfg.get("create_live_payload_adapter_scaffold_artifact")
-    approval = cfg.get("create_live_approval_artifact")
-    if not isinstance(execution_pack, dict):
-        if not isinstance(create_execute, dict):
-            raise ValueError("create live execute once requires create_execute_artifact")
-        policy = cfg.get("policy") if isinstance(cfg.get("policy"), dict) else {}
-        runtime = cfg.get("runtime") if isinstance(cfg.get("runtime"), dict) else {}
-        payload = build_create_live_execute_once_direct(
-            create_execute_artifact=create_execute,
-            create_live_payload_adapter_scaffold_artifact=scaffold if isinstance(scaffold, dict) else {},
-            policy=policy,
-            runtime=runtime,
-            db_path=db_path,
-            transport=transport,
-        )
-        artifact_path = write_run_artifact(runs_dir, "create_live_execute_once", payload)
-        return {**payload, "artifact_path": str(artifact_path)}
     if not isinstance(create_execute, dict):
         raise ValueError("create live execute once requires create_execute_artifact")
-    if not isinstance(runbook, dict):
-        raise ValueError("create live execute once requires create_first_live_runbook_artifact")
-    if not isinstance(scaffold, dict):
-        raise ValueError("create live execute once requires create_live_payload_adapter_scaffold_artifact")
-    if not isinstance(approval, dict):
-        raise ValueError("create live execute once requires create_live_approval_artifact")
     policy = cfg.get("policy") if isinstance(cfg.get("policy"), dict) else {}
     runtime = cfg.get("runtime") if isinstance(cfg.get("runtime"), dict) else {}
-    payload = build_create_live_execute_once(
-        create_live_execution_pack_artifact=execution_pack,
+    payload = build_create_live_execute_once_direct(
         create_execute_artifact=create_execute,
-        create_first_live_runbook_artifact=runbook,
-        create_live_payload_adapter_scaffold_artifact=scaffold,
-        create_live_approval_artifact=approval,
+        create_live_payload_adapter_scaffold_artifact=scaffold if isinstance(scaffold, dict) else {},
         policy=policy,
         runtime=runtime,
         db_path=db_path,

@@ -83,6 +83,7 @@ def _plan_summary(create_plan: dict[str, Any] | None) -> dict[str, Any]:
         "plan_id": str(create_plan.get("plan_id") or ""),
         "product": str(create_plan.get("product") or ""),
         "platform": str(create_plan.get("platform") or ""),
+        "launch_mode": str(create_plan.get("launch_mode") or ""),
         "source_advertiser_id": str(create_plan.get("source_advertiser_id") or ""),
         "target_account_count": len(accounts),
         "target_accounts": [

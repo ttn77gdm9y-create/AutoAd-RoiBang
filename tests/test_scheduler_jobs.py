@@ -12,9 +12,9 @@ def test_scheduler_registry_has_no_ai_execution_prompts():
 
     assert result == {
         "ok": True,
-        "jobs": 51,
+        "jobs": 47,
         "enabled_jobs": 9,
-        "disabled_jobs": 42,
+        "disabled_jobs": 38,
         "violations": [],
     }
 
@@ -84,22 +84,6 @@ def test_scheduler_registry_includes_disabled_fixed_create_chain_jobs():
             "scripts/run_create_plan_validate.py",
         ),
         "roibang-create-mock-execute": ("create_mock_execute", "scripts/run_create_mock_execute.py"),
-        "roibang-create-first-live-runbook": (
-            "create_first_live_runbook",
-            "scripts/run_create_first_live_runbook.py",
-        ),
-        "roibang-create-live-execute-runner": (
-            "create_live_execute_runner",
-            "scripts/run_create_live_execute_runner.py",
-        ),
-        "roibang-create-live-execution-pack": (
-            "create_live_execution_pack",
-            "scripts/run_create_live_execution_pack.py",
-        ),
-        "roibang-create-first-live-prepare-pack": (
-            "create_first_live_prepare_pack",
-            "scripts/run_create_first_live_prepare_pack.py",
-        ),
         "roibang-create-live-execute-once": (
             "create_live_execute_once",
             "scripts/run_create_live_execute_once.py",
@@ -407,32 +391,6 @@ def test_scheduler_registry_phase1_contracts_pin_safe_execution_values():
         "plan"
     ] == "configs/create-plans/first-live.local.json"
     assert "summary" in jobs["roibang-create-mock-execute"]["result_contract"]["must_include"]
-    assert "scope" in jobs["roibang-create-first-live-runbook"]["result_contract"]["must_include"]
-    assert "approval_requirements" in jobs[
-        "roibang-create-first-live-runbook"
-    ]["result_contract"]["must_include"]
-    assert "runner_gate" in jobs["roibang-create-live-execute-runner"]["result_contract"]["must_include"]
-    assert "blocking_reasons" in jobs[
-        "roibang-create-live-execute-runner"
-    ]["result_contract"]["must_include"]
-    assert "final_preflight" in jobs["roibang-create-live-execution-pack"]["result_contract"]["must_include"]
-    assert "execution_pack" in jobs["roibang-create-live-execution-pack"]["result_contract"]["must_include"]
-    assert jobs["roibang-create-live-execution-pack"]["result_contract"]["must_equal"][
-        "live_execute_enabled"
-    ] is False
-    assert "readiness" in jobs["roibang-create-first-live-prepare-pack"]["result_contract"]["must_include"]
-    assert "payload_review" in jobs[
-        "roibang-create-first-live-prepare-pack"
-    ]["result_contract"]["must_include"]
-    assert "required_enablement" in jobs[
-        "roibang-create-first-live-prepare-pack"
-    ]["result_contract"]["must_include"]
-    assert "approval_request_template" not in jobs[
-        "roibang-create-first-live-prepare-pack"
-    ]["result_contract"]["must_include"]
-    assert "approval_file_contract" not in jobs[
-        "roibang-create-first-live-prepare-pack"
-    ]["result_contract"]["must_include"]
     assert "blocking_reasons" in jobs[
         "roibang-create-live-execute-once"
     ]["result_contract"]["must_include"]

@@ -21,14 +21,14 @@
       "external_api_enabled": true
     }
   },
-  "create_live_execute_runner": {
+  "create_live_execute_once": {
     "allow_create_http_transport": true,
     "require_provider_field_mapping": true,
     "create_http_transport": {
       "enabled": true,
       "allow_mutation": true,
-      "approval_id": "manual-live-create-YYYYMMDD-001",
-      "approved_by": "operator",
+      "run_id": "manual-live-create-YYYYMMDD-001",
+      "operator": "operator",
       "base_url": "https://api.oceanengine.com",
       "timeout_seconds": 20,
       "max_retries": 0,

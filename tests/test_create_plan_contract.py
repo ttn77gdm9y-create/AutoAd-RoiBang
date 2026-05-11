@@ -54,6 +54,7 @@ def _plan() -> dict:
         "plan_id": "first-live-20260511-001",
         "product": "yzt",
         "platform": "wx-mini-game",
+        "launch_mode": "create_only",
         "source_advertiser_id": "source-1",
         "target_accounts": [
             {
@@ -101,6 +102,7 @@ def test_validate_create_plan_accepts_plan_from_sqlite_sources(tmp_path: Path):
     assert result["external_api_calls"] == 0
     assert result["summary"] == {
         "plan_id": "first-live-20260511-001",
+        "launch_mode": "create_only",
         "target_account_count": 1,
         "project_count": 1,
         "unit_count": 1,
@@ -118,6 +120,7 @@ def test_validate_create_plan_blocks_placeholders_and_policy_limits():
     plan["target_accounts"][0]["advertiser_id"] = "target-advertiser-id"
     plan["target_accounts"][0]["project_count"] = 3
     plan["target_accounts"][0]["daily_budget"] = 2000
+    plan["launch_mode"] = "activate_after_create"
     plan["materials"] = []
 
     result = validate_create_plan(plan, policy=_policy())
@@ -128,6 +131,7 @@ def test_validate_create_plan_blocks_placeholders_and_policy_limits():
     assert "target_accounts[0].advertiser_id contains placeholder id" in result["violations"]
     assert "target_accounts[0].project_count exceeds max_projects_per_account" in result["violations"]
     assert "target_accounts[0].daily_budget exceeds max_daily_budget" in result["violations"]
+    assert "launch_mode must be create_only" in result["violations"]
     assert "materials requires at least one item" in result["violations"]
 
 

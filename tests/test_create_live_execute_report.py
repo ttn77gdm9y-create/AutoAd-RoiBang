@@ -84,6 +84,7 @@ def _create_plan() -> dict:
         "plan_id": "plan-1",
         "product": "yzt",
         "platform": "wx-mini-game",
+        "launch_mode": "create_only",
         "source_advertiser_id": "source-1",
         "target_accounts": [
             {
@@ -149,6 +150,7 @@ def test_create_live_execute_report_summarizes_completed_execution_without_api_c
     assert result["summary"]["created_unit_count"] == 1
     assert result["summary"]["material_bind_count"] == 1
     assert result["create_plan_summary"]["plan_id"] == "plan-1"
+    assert result["create_plan_summary"]["launch_mode"] == "create_only"
     assert result["create_plan_summary"]["target_account_count"] == 1
     assert result["create_plan_summary"]["project_count"] == 1
     assert result["create_plan_summary"]["unit_count"] == 1
