@@ -9,6 +9,8 @@ from roibang_v2.config import load_json, load_runtime_config
 from roibang_v2.db.bootstrap import bootstrap_database
 from roibang_v2.runs import write_run_artifact
 from roibang_v2.workflows.create_first_live_local_chain import run_create_first_live_local_chain_request
+from roibang_v2.workflows.create_first_live_local_chain import create_plan_to_preview_config
+from roibang_v2.workflows.create_plan_contract import validate_create_plan
 
 
 PLACEHOLDER_IDS = {
@@ -93,6 +95,7 @@ def _blocked_preview_config_result(*, config, violations: list[str]) -> dict:
         "artifacts": {"dry_chain": ""},
         "preparation_check": {},
         "dry_chain": {},
+        "create_plan_validation": {},
         "approved_for_execute": False,
         "human_next_steps": violations,
         "violations": violations,
@@ -129,6 +132,7 @@ def _print_result(result: dict) -> None:
 def run_from_args(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run first-live local-only create chain.")
     parser.add_argument("--config", default="configs/runtime.example.json")
+    parser.add_argument("--plan", default="")
     parser.add_argument("--preview-config", default=DEFAULT_PREVIEW_CONFIG)
     parser.add_argument("--policy", default="policies/strategy.example.json")
     args = parser.parse_args(argv)
@@ -137,30 +141,57 @@ def run_from_args(argv: list[str] | None = None) -> int:
     if config.external_api_enabled or config.execution_enabled:
         raise RuntimeError("首单本地链路要求 external_api_enabled=false 且 execution_enabled=false")
 
-    try:
-        preview_config = load_json(args.preview_config).get("yzt_create_preview") or {}
-    except FileNotFoundError:
-        result = _blocked_preview_config_result(
-            config=config,
-            violations=[
-                f"缺少首单本地真实配置：{args.preview_config}；请先创建本地配置，不能使用 .example.json 示例配置。"
-            ],
-        )
-        _print_result(result)
-        return 1
-    violations = _preview_config_violations(preview_config_path=args.preview_config, preview_config=preview_config)
-    if violations:
-        result = _blocked_preview_config_result(config=config, violations=violations)
-        _print_result(result)
-        return 1
-
     bootstrap_database(config.database_path)
     policy = load_json(args.policy)
+    create_plan = None
+    preview_config_path = args.preview_config
+    if str(args.plan or "").strip():
+        try:
+            create_plan = load_json(args.plan)
+        except FileNotFoundError:
+            result = _blocked_preview_config_result(
+                config=config,
+                violations=[f"缺少创建计划文件：{args.plan}；请先生成或填写 create_plan local JSON。"],
+            )
+            _print_result(result)
+            return 1
+        validation = validate_create_plan(create_plan, policy=policy, db_path=config.database_path)
+        violations = []
+        if _is_example_config(args.plan):
+            violations.append("首单本地链路不能使用示例 create_plan .example.json；请使用 configs/create-plans/*.local.json。")
+        violations.extend(str(item) for item in validation.get("violations") or [])
+        if violations:
+            result = _blocked_preview_config_result(config=config, violations=violations)
+            result["create_plan_validation"] = validation
+            result["first_live_scope"]["derived_preview_config"] = create_plan_to_preview_config(create_plan)
+            _print_result(result)
+            return 1
+        preview_config = create_plan_to_preview_config(create_plan)
+        preview_config_path = args.plan
+    else:
+        try:
+            preview_config = load_json(args.preview_config).get("yzt_create_preview") or {}
+        except FileNotFoundError:
+            result = _blocked_preview_config_result(
+                config=config,
+                violations=[
+                    f"缺少首单本地真实配置：{args.preview_config}；请先创建本地配置，不能使用 .example.json 示例配置。"
+                ],
+            )
+            _print_result(result)
+            return 1
+        violations = _preview_config_violations(preview_config_path=args.preview_config, preview_config=preview_config)
+        if violations:
+            result = _blocked_preview_config_result(config=config, violations=violations)
+            _print_result(result)
+            return 1
+
     result = run_create_first_live_local_chain_request(
         {
             "create_first_live_local_chain": {
                 "preview_config": preview_config,
-                "preview_config_path": args.preview_config,
+                "create_plan": create_plan if isinstance(create_plan, dict) else None,
+                "preview_config_path": preview_config_path,
                 "policy": policy,
             }
         },

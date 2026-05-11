@@ -10,6 +10,7 @@ from roibang_v2.workflows.create_approval import run_create_approval_request
 from roibang_v2.workflows.create_execute import run_create_execute_request
 from roibang_v2.workflows.create_phase2_yzt_dry_chain import run_create_phase2_yzt_dry_chain_request
 from roibang_v2.workflows.create_phase2_yzt_preparation_check import build_create_phase2_yzt_preparation_check
+from roibang_v2.workflows.create_plan_contract import validate_create_plan
 
 
 def _chain_config(request: dict[str, Any]) -> dict[str, Any]:
@@ -83,6 +84,63 @@ def derive_first_live_preview_config(
     return config
 
 
+def create_plan_to_preview_config(create_plan: dict[str, Any]) -> dict[str, Any]:
+    accounts = []
+    plan_accounts = _accounts({"accounts": create_plan.get("target_accounts")})
+    for row in plan_accounts:
+        accounts.append(
+            {
+                "advertiser_id": str(row.get("advertiser_id") or ""),
+                "project_count": _positive_int(row.get("project_count"), 1) or 1,
+                "units_per_project": _positive_int(
+                    row.get("unit_count_per_project", row.get("units_per_project")),
+                    1,
+                )
+                or 1,
+                "daily_budget": _positive_int(row.get("daily_budget"), 0),
+            }
+        )
+    first_account = accounts[0] if accounts else {}
+    materials = _accounts({"accounts": create_plan.get("materials")})
+    material_requirements = create_plan.get("material_requirements")
+    if not isinstance(material_requirements, dict):
+        material_requirements = {
+            "material_type": "video",
+            "materials_per_unit": max(len(materials), 1),
+            "dedupe_scope": "request",
+        }
+    field_defaults = create_plan.get("field_defaults")
+    if not isinstance(field_defaults, dict) or not field_defaults:
+        field_defaults = {
+            "landing_type": "MICRO_GAME",
+            "pricing": "PRICING_OCPM",
+            "inventory_type": "INVENTORY_FEED",
+        }
+    return {
+        "template_name": str(create_plan.get("template_name") or "微小每付7R男"),
+        "owner": str(create_plan.get("owner") or ""),
+        "target_date": str(create_plan.get("target_date") or ""),
+        "batch_generated_at": str(create_plan.get("batch_generated_at") or ""),
+        "source_advertiser_id": str(create_plan.get("source_advertiser_id") or ""),
+        "organization_id": str(create_plan.get("organization_id") or ""),
+        "pool_key": str(create_plan.get("pool_key") or ""),
+        "defaults": {
+            "daily_budget": _positive_int(first_account.get("daily_budget"), 0),
+            "project_count": _positive_int(first_account.get("project_count"), 1) or 1,
+            "units_per_project": _positive_int(first_account.get("units_per_project"), 1) or 1,
+        },
+        "roi_coefficient": create_plan.get("roi_coefficient"),
+        "accounts": accounts,
+        "material_requirements": dict(material_requirements),
+        "field_defaults": dict(field_defaults),
+        "create_plan": {
+            "plan_id": str(create_plan.get("plan_id") or ""),
+            "reason": str(create_plan.get("reason") or ""),
+            "materials": materials,
+        },
+    }
+
+
 def _step(step: str, artifact: dict[str, Any]) -> dict[str, Any]:
     return {
         "step": step,
@@ -142,14 +200,75 @@ def _human_next_steps(*, ok: bool, preparation: dict[str, Any], dry_chain: dict[
     return rows or ["修复首单本地链路失败项后重新运行固定脚本。"]
 
 
+def _blocked_chain_payload(
+    *,
+    violations: list[str],
+    preview_config: dict[str, Any] | None = None,
+    create_plan_validation: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "workflow": "create_first_live_local_chain",
+        "phase": "phase2_preparation",
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "status": "blocked",
+        "summary": {
+            "selected_account_count": 0,
+            "project_count": 0,
+            "unit_count": 0,
+            "material_count": 0,
+            "ready_for_approval_chain": False,
+            "ready_for_live_execute": False,
+        },
+        "first_live_scope": {
+            "max_project_count": 0,
+            "max_unit_count": 0,
+            "max_material_count": 0,
+            "derived_preview_config": preview_config or {},
+        },
+        "scope_guard": {
+            "ok": False,
+            "project_count": 0,
+            "unit_count": 0,
+            "material_count": 0,
+            "max_project_count": 0,
+            "max_unit_count": 0,
+            "max_material_count": 0,
+            "violations": violations,
+        },
+        "chain_steps": [],
+        "artifacts": {"dry_chain": "", "dry_run": "", "create_approval": "", "create_execute": ""},
+        "preparation_check": {},
+        "dry_chain": {},
+        "create_plan_validation": create_plan_validation or {},
+        "approved_for_execute": False,
+        "human_next_steps": violations,
+        "violations": violations,
+        "actions": [],
+    }
+
+
 def build_create_first_live_local_chain(
     *,
     preview_config: dict[str, Any],
+    create_plan: dict[str, Any] | None = None,
     policy: dict[str, Any],
     db_path: str | Path,
     runs_dir: str | Path,
     preview_config_path: str,
 ) -> dict[str, Any]:
+    create_plan_validation: dict[str, Any] | None = None
+    if isinstance(create_plan, dict) and create_plan:
+        create_plan_validation = validate_create_plan(create_plan, policy=policy, db_path=db_path)
+        plan_preview_config = create_plan_to_preview_config(create_plan)
+        if not bool(create_plan_validation.get("ok")):
+            return _blocked_chain_payload(
+                violations=[str(item) for item in create_plan_validation.get("violations") or []],
+                preview_config=plan_preview_config,
+                create_plan_validation=create_plan_validation,
+            )
+        preview_config = plan_preview_config
     first_live_preview_config = derive_first_live_preview_config(preview_config=preview_config, policy=policy)
     preparation = build_create_phase2_yzt_preparation_check(
         preview_config=first_live_preview_config,
@@ -239,6 +358,7 @@ def build_create_first_live_local_chain(
         },
         "preparation_check": preparation,
         "dry_chain": dry_chain,
+        "create_plan_validation": create_plan_validation or {},
         "approved_for_execute": False,
         "human_next_steps": _human_next_steps(ok=ok, preparation=preparation, dry_chain=dry_chain, scope_guard=scope_guard),
         "violations": _human_next_steps(ok=False, preparation=preparation, dry_chain=dry_chain, scope_guard=scope_guard) if not ok else [],
@@ -256,6 +376,7 @@ def run_create_first_live_local_chain_request(
     cfg = _chain_config(request)
     payload = build_create_first_live_local_chain(
         preview_config=cfg.get("preview_config") if isinstance(cfg.get("preview_config"), dict) else {},
+        create_plan=cfg.get("create_plan") if isinstance(cfg.get("create_plan"), dict) else None,
         policy=cfg.get("policy") if isinstance(cfg.get("policy"), dict) else {},
         db_path=db_path,
         runs_dir=runs_dir,

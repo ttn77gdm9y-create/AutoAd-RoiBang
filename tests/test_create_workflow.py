@@ -3383,6 +3383,125 @@ def test_create_first_live_local_chain_derives_single_scope_without_execute(tmp_
     assert result["actions"] == []
 
 
+def test_create_first_live_local_chain_accepts_create_plan_without_execute(tmp_path: Path):
+    from roibang_v2.workflows.create_first_live_local_chain import run_create_first_live_local_chain_request
+
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    create_plan = {
+        "plan_id": "first-live-20260511-001",
+        "product": "勇者突进",
+        "platform": "WECHAT_GAME",
+        "template_name": "微小每付7R男",
+        "owner": "郭靖",
+        "target_date": "2026-05-09",
+        "batch_generated_at": "2026-05-09T14:45:00+08:00",
+        "roi_coefficient": 0.41,
+        "source_advertiser_id": "source-1",
+        "organization_id": "org-1",
+        "pool_key": "pool-yzt-wx-7r",
+        "target_accounts": [
+            {
+                "advertiser_id": "target-1",
+                "project_count": 2,
+                "unit_count_per_project": 3,
+                "daily_budget": 300,
+            }
+        ],
+        "materials": [
+            {"source_material_id": "m-high", "source_video_id": "source-video-1"},
+            {"source_material_id": "m-mid", "source_video_id": "source-video-2"},
+        ],
+        "reason": "首单链路验证",
+    }
+    policy = {
+        "first_live_run": {
+            "advertiser_id": "target-1",
+            "max_project_count": 1,
+            "max_unit_count": 2,
+            "max_material_count": 4,
+        },
+        "create_plan": {
+            "max_target_accounts": 2,
+            "max_projects_per_account": 3,
+            "max_units_per_project": 3,
+            "max_materials": 4,
+            "min_daily_budget": 100,
+            "max_daily_budget": 1000,
+        },
+        "create_strategy_plan": {
+            "max_target_accounts": 20,
+            "max_projects_per_account": 10,
+            "max_units_per_project": 20,
+            "project_naming": {
+                "template": "{target_date_mmdd}_{owner}_{product}_{project_template_name}_{batch_code}_{index}",
+                "index_width": 2,
+                "invalid_char_replacement": "_",
+            },
+            "candidate_filters": {"allowed_review_statuses": ["APPROVED"]},
+        },
+        "create_preflight": {
+            "require_account_pool": True,
+            "reject_existing_project_names": True,
+            "min_daily_budget": 100,
+            "max_daily_budget": 1000,
+            "max_project_name_length": 80,
+            "project_name_pattern": "^\\d{4}_.+_.+_.+_B[0-9A-F]{8}_\\d{2}$",
+            "required_field_defaults": ["landing_type", "pricing", "inventory_type"],
+        },
+        "create_dry_run": {
+            "max_projects_per_dry_run": 50,
+            "max_units_per_dry_run": 500,
+            "provider_field_map_path": "configs/provider-field-maps/oceanengine.create.phase1.example.json",
+        },
+        "create_phase2_template_slot_prep": {
+            "product_template_catalog": {
+                "product": "勇者突进",
+                "platform": "WECHAT_GAME",
+                "script_scope": "勇者突进微信小游戏专用",
+                "templates": [
+                    {
+                        "template_key": "wx_7r_male",
+                        "project_template_name": "微小每付7R男",
+                        "roi_goal": {"frontend_label": "ROI系数", "required": True},
+                        "gender": {"value": "1", "label": "男"},
+                        "age": {"value": [], "label": "不限"},
+                    }
+                ],
+            }
+        },
+    }
+
+    result = run_create_first_live_local_chain_request(
+        {
+            "create_first_live_local_chain": {
+                "create_plan": create_plan,
+                "preview_config_path": "configs/create-plans/first-live.local.json",
+                "policy": policy,
+            }
+        },
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+    )
+
+    assert result["ok"] is True
+    assert result["status"] == "ready_for_execute_script"
+    assert result["execution_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert result["create_plan_validation"]["ok"] is True
+    assert result["summary"]["project_count"] == 1
+    assert result["summary"]["unit_count"] == 2
+    assert result["summary"]["material_count"] == 4
+    derived = result["first_live_scope"]["derived_preview_config"]
+    assert derived["create_plan"]["plan_id"] == "first-live-20260511-001"
+    assert derived["accounts"] == [
+        {"advertiser_id": "target-1", "project_count": 1, "units_per_project": 2, "daily_budget": 300}
+    ]
+    assert derived["material_requirements"]["materials_per_unit"] == 2
+    assert result["artifacts"]["create_execute"]
+    assert result["actions"] == []
+
+
 def test_create_first_live_local_chain_cli_uses_manual_config_without_execute(tmp_path: Path, capsys):
     db_path = tmp_path / "roibang.sqlite3"
     _seed_create_db(db_path)
@@ -3484,6 +3603,130 @@ def test_create_first_live_local_chain_cli_uses_manual_config_without_execute(tm
     assert output["artifacts"]["create_execute"]
     assert Path(output["artifacts"]["create_execute"]).exists()
     assert artifact["approved_for_execute"] is False
+    assert artifact["actions"] == []
+
+
+def test_create_first_live_local_chain_cli_accepts_create_plan_without_execute(tmp_path: Path, capsys):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    runtime_path = _runtime_config(tmp_path, db_path)
+    plan_path = tmp_path / "first-live.local.json"
+    policy_path = tmp_path / "strategy.json"
+    plan_path.write_text(
+        json.dumps(
+            {
+                "plan_id": "first-live-20260511-001",
+                "product": "勇者突进",
+                "platform": "WECHAT_GAME",
+                "template_name": "微小每付7R男",
+                "owner": "郭靖",
+                "target_date": "2026-05-09",
+                "batch_generated_at": "2026-05-09T14:45:00+08:00",
+                "roi_coefficient": 0.41,
+                "source_advertiser_id": "source-1",
+                "organization_id": "org-1",
+                "pool_key": "pool-yzt-wx-7r",
+                "target_accounts": [
+                    {
+                        "advertiser_id": "target-1",
+                        "project_count": 1,
+                        "unit_count_per_project": 2,
+                        "daily_budget": 300,
+                    }
+                ],
+                "materials": [
+                    {"source_material_id": "m-high", "source_video_id": "source-video-1"},
+                    {"source_material_id": "m-mid", "source_video_id": "source-video-2"},
+                ],
+                "reason": "首单链路验证",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    policy_path.write_text(
+        json.dumps(
+            {
+                "first_live_run": {"advertiser_id": "target-1", "max_project_count": 1, "max_unit_count": 2, "max_material_count": 4},
+                "create_plan": {
+                    "max_target_accounts": 2,
+                    "max_projects_per_account": 2,
+                    "max_units_per_project": 2,
+                    "max_materials": 4,
+                    "min_daily_budget": 100,
+                    "max_daily_budget": 1000,
+                },
+                "create_strategy_plan": {
+                    "max_target_accounts": 20,
+                    "max_projects_per_account": 10,
+                    "max_units_per_project": 20,
+                    "project_naming": {
+                        "template": "{target_date_mmdd}_{owner}_{product}_{project_template_name}_{batch_code}_{index}",
+                        "index_width": 2,
+                        "invalid_char_replacement": "_",
+                    },
+                    "candidate_filters": {"allowed_review_statuses": ["APPROVED"]},
+                },
+                "create_preflight": {
+                    "require_account_pool": True,
+                    "reject_existing_project_names": True,
+                    "min_daily_budget": 100,
+                    "max_daily_budget": 1000,
+                    "max_project_name_length": 80,
+                    "project_name_pattern": "^\\d{4}_.+_.+_.+_B[0-9A-F]{8}_\\d{2}$",
+                    "required_field_defaults": ["landing_type", "pricing", "inventory_type"],
+                },
+                "create_dry_run": {
+                    "max_projects_per_dry_run": 50,
+                    "max_units_per_dry_run": 500,
+                    "provider_field_map_path": "configs/provider-field-maps/oceanengine.create.phase1.example.json",
+                },
+                "create_phase2_template_slot_prep": {
+                    "product_template_catalog": {
+                        "product": "勇者突进",
+                        "platform": "WECHAT_GAME",
+                        "script_scope": "勇者突进微信小游戏专用",
+                        "templates": [
+                            {
+                                "template_key": "wx_7r_male",
+                                "project_template_name": "微小每付7R男",
+                                "roi_goal": {"frontend_label": "ROI系数", "required": True},
+                                "gender": {"value": "1", "label": "男"},
+                                "age": {"value": [], "label": "不限"},
+                            }
+                        ],
+                    }
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    module = _load_script("run_create_first_live_local_chain")
+
+    exit_code = module.run_from_args(
+        [
+            "--config",
+            str(runtime_path),
+            "--plan",
+            str(plan_path),
+            "--policy",
+            str(policy_path),
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    artifact = json.loads(Path(output["artifact_path"]).read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert output["workflow"] == "create_first_live_local_chain"
+    assert output["status"] == "ready_for_execute_script"
+    assert output["summary"]["project_count"] == 1
+    assert output["summary"]["unit_count"] == 2
+    assert output["execution_enabled"] is False
+    assert output["external_api_calls"] == 0
+    assert output["artifacts"]["create_execute"]
+    assert artifact["create_plan_validation"]["ok"] is True
+    assert artifact["first_live_scope"]["derived_preview_config"]["create_plan"]["plan_id"] == "first-live-20260511-001"
     assert artifact["actions"] == []
 
 

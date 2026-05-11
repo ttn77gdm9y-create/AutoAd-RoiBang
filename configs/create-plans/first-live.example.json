@@ -3,6 +3,13 @@
   "plan_id": "first-live-YYYYMMDD-001",
   "product": "yzt",
   "platform": "wx-mini-game",
+  "template_name": "微小每付7R男",
+  "owner": "operator",
+  "target_date": "YYYY-MM-DD",
+  "batch_generated_at": "YYYY-MM-DDTHH:MM:SS+08:00",
+  "roi_coefficient": 0.41,
+  "organization_id": "organization-id",
+  "pool_key": "material-pool-key",
   "source_advertiser_id": "source-advertiser-id",
   "target_accounts": [
     {
@@ -18,5 +25,10 @@
       "source_video_id": "video-id"
     }
   ],
+  "field_defaults": {
+    "landing_type": "MICRO_GAME",
+    "pricing": "PRICING_OCPM",
+    "inventory_type": "INVENTORY_FEED"
+  },
   "reason": "首单链路验证"
 }

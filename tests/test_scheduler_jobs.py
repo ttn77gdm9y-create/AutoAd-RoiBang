@@ -161,8 +161,8 @@ def test_scheduler_registry_includes_disabled_fixed_create_chain_jobs():
         "scripts/run_create_first_live_local_chain.py",
         "--config",
         "configs/runtime.example.json",
-        "--preview-config",
-        "configs/create/yzt-wx-mini-game.preview.local.json",
+        "--plan",
+        "configs/create-plans/first-live.local.json",
         "--policy",
         "policies/strategy.example.json",
     ]
@@ -400,8 +400,8 @@ def test_scheduler_registry_phase1_contracts_pin_safe_execution_values():
         "approved_for_execute"
     ] is False
     assert jobs["roibang-create-first-live-local-chain"]["policy"][
-        "preview_config"
-    ] == "configs/create/yzt-wx-mini-game.preview.local.json"
+        "plan"
+    ] == "configs/create-plans/first-live.local.json"
     assert "summary" in jobs["roibang-create-mock-execute"]["result_contract"]["must_include"]
     assert "scope" in jobs["roibang-create-first-live-runbook"]["result_contract"]["must_include"]
     assert "approval_requirements" in jobs[
