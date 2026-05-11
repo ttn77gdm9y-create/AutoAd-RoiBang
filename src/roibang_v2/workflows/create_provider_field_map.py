@@ -48,7 +48,7 @@ _FIELD_DEFAULT_SUBFIELDS = [
 ]
 
 _REQUIRED_FIELDS_BY_OPERATION = {
-    "create_project": ["advertiser_id", "project_name", "project_type", "daily_budget", *_FIELD_DEFAULT_SUBFIELDS],
+    "create_project": ["advertiser_id", "project_name", "project_type", "daily_budget", "operation", *_FIELD_DEFAULT_SUBFIELDS],
     "create_unit": [
         "advertiser_id",
         "project_key",

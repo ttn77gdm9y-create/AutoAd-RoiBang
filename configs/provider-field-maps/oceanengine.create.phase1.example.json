@@ -38,6 +38,14 @@
         "source": "internal_phase1_schema"
       },
       {
+        "internal_field": "operation",
+        "provider_field": "",
+        "purpose": "project initial status",
+        "verified": false,
+        "required": true,
+        "source": "internal_phase1_schema"
+      },
+      {
         "internal_field": "field_defaults.landing_type",
         "provider_field": "",
         "purpose": "default landing type",

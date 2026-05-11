@@ -26,6 +26,7 @@ def disabled_create_payload_schema(policy: dict[str, Any] | None = None) -> dict
                 "advertiser_id",
                 "project_name",
                 "daily_budget",
+                "operation",
                 "field_defaults.landing_type",
                 "field_defaults.pricing",
                 "field_defaults.inventory_type",

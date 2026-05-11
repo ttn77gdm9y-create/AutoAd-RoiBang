@@ -736,13 +736,14 @@ def test_create_dry_run_outputs_non_executable_project_unit_material_combination
         "executable": False,
         "idempotency_key": task["idempotency_key"]["value"],
         "endpoint": "",
-        "payload": {
-            "advertiser_id": "target-1",
-            "project_name": "0508_郭靖_勇者突进_微小每付7R通投_B80C4C430_01",
-            "daily_budget": 300.0,
-            "field_defaults": {
-                "landing_type": "MICRO_GAME",
-                "pricing": "PRICING_CPA",
+            "payload": {
+                "advertiser_id": "target-1",
+                "project_name": "0508_郭靖_勇者突进_微小每付7R通投_B80C4C430_01",
+                "daily_budget": 300.0,
+                "operation": "DISABLE",
+                "field_defaults": {
+                    "landing_type": "MICRO_GAME",
+                    "pricing": "PRICING_CPA",
                 "inventory_type": "UNION",
             },
         },
@@ -779,6 +780,7 @@ def test_create_dry_run_outputs_non_executable_project_unit_material_combination
         "advertiser_id",
         "project_name",
         "daily_budget",
+        "operation",
         "field_defaults.landing_type",
         "field_defaults.pricing",
         "field_defaults.inventory_type",
@@ -876,10 +878,10 @@ def test_create_dry_run_outputs_non_executable_project_unit_material_combination
         "provider": "oceanengine",
         "mapping_verified": False,
         "operation_count": 4,
-        "field_count": 37,
-        "verified_field_count": 0,
-        "unverified_field_count": 37,
-        "missing_provider_field_count": 37,
+            "field_count": 38,
+            "verified_field_count": 0,
+            "unverified_field_count": 38,
+            "missing_provider_field_count": 38,
         "missing_required_field_count": 0,
         "missing_required_fields": [],
         "duplicate_internal_field_count": 0,
@@ -963,6 +965,7 @@ def test_create_dry_run_emits_non_executable_candidate_provider_payloads_for_pha
         "advertiser_id": "target-1",
         "name": "0508_郭靖_勇者突进_微小每付7R通投_B80C4C430_01",
         "budget": 300.0,
+        "operation": "DISABLE",
         "landing_type": "MICRO_GAME",
         "pricing": "PRICING_CPA",
         "delivery_range": {"inventory_type": "UNION"},
@@ -1044,17 +1047,25 @@ def test_create_dry_run_can_load_provider_field_map_from_json_config(tmp_path: P
                             "required": True,
                             "source": "unit_test",
                         },
-                        {
-                            "internal_field": "daily_budget",
-                            "provider_field": "budget",
-                            "purpose": "planned project daily budget",
-                            "verified": True,
-                            "required": True,
-                            "source": "unit_test",
-                        },
-                        {
-                            "internal_field": "field_defaults.landing_type",
-                            "provider_field": "landing_type",
+                            {
+                                "internal_field": "daily_budget",
+                                "provider_field": "budget",
+                                "purpose": "planned project daily budget",
+                                "verified": True,
+                                "required": True,
+                                "source": "unit_test",
+                            },
+                            {
+                                "internal_field": "operation",
+                                "provider_field": "operation",
+                                "purpose": "project initial status",
+                                "verified": True,
+                                "required": True,
+                                "source": "unit_test",
+                            },
+                            {
+                                "internal_field": "field_defaults.landing_type",
+                                "provider_field": "landing_type",
                             "purpose": "default landing type",
                             "verified": True,
                             "required": True,
@@ -1231,8 +1242,8 @@ def test_create_dry_run_can_load_provider_field_map_from_json_config(tmp_path: P
         "provider": "oceanengine",
         "mapping_verified": True,
         "operation_count": 3,
-        "field_count": 22,
-        "verified_field_count": 22,
+            "field_count": 23,
+            "verified_field_count": 23,
         "unverified_field_count": 0,
         "missing_provider_field_count": 0,
         "missing_required_field_count": 15,
@@ -1284,6 +1295,7 @@ def test_create_dry_run_can_load_provider_field_map_from_json_config(tmp_path: P
     assert result["provider_payload_drafts"][0]["payload"]["advertiser_id"] == "target-1"
     assert result["provider_payload_drafts"][0]["payload"]["name"] == "0508_郭靖_勇者突进_微小每付7R通投_B80C4C430_01"
     assert result["provider_payload_drafts"][0]["payload"]["budget"] == 300.0
+    assert result["provider_payload_drafts"][0]["payload"]["operation"] == "DISABLE"
     unit_draft = next(draft for draft in result["provider_payload_drafts"] if draft["operation"] == "create_unit")
     assert unit_draft["field_mapping_applied"] is False
     assert unit_draft["payload"]["project_key"] == "target-1-p001"
@@ -1450,9 +1462,9 @@ def test_create_provider_field_map_check_reports_unverified_example_config():
         "provider": "oceanengine",
         "field_map_path": "configs/provider-field-maps/oceanengine.create.phase1.example.json",
         "operation_count": 4,
-        "field_count": 37,
+        "field_count": 38,
         "verified_field_count": 0,
-        "missing_provider_field_count": 37,
+        "missing_provider_field_count": 38,
         "missing_required_field_count": 0,
         "duplicate_internal_field_count": 0,
         "duplicate_provider_field_count": 0,
@@ -1755,7 +1767,7 @@ def test_run_create_provider_field_map_check_request_writes_artifact(tmp_path: P
 
     assert Path(result["artifact_path"]).exists()
     assert result["workflow"] == "create_provider_field_map_check"
-    assert result["summary"]["field_count"] == 37
+    assert result["summary"]["field_count"] == 38
 
 
 def test_create_provider_field_map_check_cli_uses_policy_config(tmp_path: Path, capsys):
@@ -1799,16 +1811,16 @@ def test_create_field_mapping_review_pack_lists_fields_without_requiring_user_in
         "field_mapping_version": "phase1.oceanengine.create_payload.draft.v1",
         "field_map_path": "configs/provider-field-maps/oceanengine.create.phase1.example.json",
         "operation_count": 4,
-        "field_count": 37,
-        "needs_provider_field_count": 37,
-        "needs_verification_count": 37,
+        "field_count": 38,
+        "needs_provider_field_count": 38,
+        "needs_verification_count": 38,
         "ready_for_live_execute": False,
     }
     assert result["review_contract"] == {
         "status": "needs_review",
-            "field_count": 37,
-            "needs_provider_field_count": 37,
-            "needs_verification_count": 37,
+            "field_count": 38,
+            "needs_provider_field_count": 38,
+            "needs_verification_count": 38,
         "verified_field_count": 0,
         "missing_required_field_count": 0,
         "duplicate_internal_field_count": 0,
@@ -1847,7 +1859,7 @@ def test_run_create_field_mapping_review_pack_request_writes_artifact(tmp_path: 
 
     artifact = json.loads(Path(result["artifact_path"]).read_text(encoding="utf-8"))
     assert result["workflow"] == "create_field_mapping_review_pack"
-    assert result["summary"]["field_count"] == 37
+    assert result["summary"]["field_count"] == 38
     assert artifact["workflow"] == "create_field_mapping_review_pack"
     assert artifact["actions"] == []
 
@@ -1900,9 +1912,9 @@ def test_create_phase2_provider_mapping_prep_builds_review_matrix_without_execut
         "field_mapping_version": "phase2.oceanengine.create_payload.prep.v1",
         "field_map_path": "configs/provider-field-maps/oceanengine.create.phase2-prep.example.json",
         "operation_count": 4,
-        "field_count": 37,
-        "candidate_provider_field_count": 21,
-        "verified_field_count": 21,
+        "field_count": 38,
+        "candidate_provider_field_count": 22,
+        "verified_field_count": 22,
         "unresolved_field_count": 0,
         "open_question_count": 6,
         "ready_for_live_payload_development": False,
@@ -1962,7 +1974,7 @@ def test_run_create_phase2_provider_mapping_prep_request_writes_artifact(tmp_pat
 
     artifact = json.loads(Path(result["artifact_path"]).read_text(encoding="utf-8"))
     assert result["workflow"] == "create_phase2_provider_mapping_prep"
-    assert result["summary"]["field_count"] == 37
+    assert result["summary"]["field_count"] == 38
     assert artifact["phase"] == "phase2_preparation"
     assert artifact["execution_enabled"] is False
     assert artifact["external_api_calls"] == 0
@@ -2011,14 +2023,14 @@ def test_create_provider_evidence_review_flags_unreviewed_phase2_evidence():
         "field_mapping_version": "phase2.oceanengine.create_payload.prep.v1",
         "field_map_path": "configs/provider-field-maps/oceanengine.create.phase2-prep.example.json",
         "evidence_catalog_path": "configs/provider-evidence/oceanengine.create.phase2-review.example.json",
-        "field_count": 37,
+        "field_count": 38,
         "catalog_evidence_count": 3,
         "reviewed_evidence_count": 3,
-        "ready_field_count": 21,
+        "ready_field_count": 22,
         "unresolved_field_count": 0,
         "evidence_status_counts": {
             "local_only_confirmed": 16,
-            "verified": 21,
+            "verified": 22,
         },
         "ready_for_live_payload_development": False,
         "ready_for_live_execute": False,
@@ -2065,11 +2077,11 @@ def test_create_provider_evidence_review_flags_unreviewed_phase2_evidence():
     }
     assert result["evidence_worksheet"]["summary"] == {
         "worksheet_version": "phase2.provider_evidence_worksheet.v1",
-        "row_count": 37,
+        "row_count": 38,
         "requires_evidence_review_count": 0,
         "requires_local_confirmation_count": 0,
         "requires_provider_field_count": 0,
-        "ready_row_count": 37,
+        "ready_row_count": 38,
     }
     assert result["evidence_worksheet"]["rows"][0] == {
         "operation": "create_project",
@@ -2202,7 +2214,7 @@ def test_create_provider_evidence_review_accepts_explicit_local_only_confirmatio
 
     assert result["summary"]["evidence_status_counts"] == {
         "local_only_confirmed": 16,
-        "verified": 21,
+        "verified": 22,
     }
     assert result["summary"]["unresolved_field_count"] == 0
     assert result["evidence_worksheet"]["summary"]["requires_local_confirmation_count"] == 0
@@ -2233,7 +2245,7 @@ def test_run_create_provider_evidence_review_request_writes_artifact(tmp_path: P
 
     artifact = json.loads(Path(result["artifact_path"]).read_text(encoding="utf-8"))
     assert result["workflow"] == "create_provider_evidence_review"
-    assert result["summary"]["field_count"] == 37
+    assert result["summary"]["field_count"] == 38
     assert artifact["workflow"] == "create_provider_evidence_review"
     assert artifact["execution_enabled"] is False
     assert artifact["external_api_calls"] == 0
@@ -2255,7 +2267,7 @@ def test_create_provider_evidence_review_cli_uses_policy_config(tmp_path: Path, 
     assert artifact["phase"] == "phase2_preparation"
     assert artifact["summary"]["evidence_catalog_path"] == "configs/provider-evidence/oceanengine.create.phase2-review.example.json"
     assert output["operator_guide"]["status"] == "needs_review"
-    assert output["evidence_worksheet_summary"]["row_count"] == 37
+    assert output["evidence_worksheet_summary"]["row_count"] == 38
     assert output["provider_field_gap_summary"]["gap_count"] == 0
     assert output["provider_field_gap_resolution_summary"]["gap_count"] == 0
     assert output["project_type_local_usage_summary"]["ready_to_mark_local_only"] is True
@@ -3381,6 +3393,8 @@ def test_create_first_live_local_chain_accepts_create_plan_without_execute(tmp_p
 
     db_path = tmp_path / "roibang.sqlite3"
     _seed_create_db(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DELETE FROM product_source_material_candidates")
     create_plan = {
         "plan_id": "first-live-20260511-001",
         "product": "勇者突进",
@@ -3405,6 +3419,8 @@ def test_create_first_live_local_chain_accepts_create_plan_without_execute(tmp_p
         "materials": [
             {"source_material_id": "m-high", "source_video_id": "source-video-1"},
             {"source_material_id": "m-mid", "source_video_id": "source-video-2"},
+            {"source_material_id": "m-low", "source_video_id": "source-video-3"},
+            {"source_material_id": "m-extra", "source_video_id": "source-video-4"},
         ],
         "reason": "首单链路验证",
     }
@@ -3484,14 +3500,17 @@ def test_create_first_live_local_chain_accepts_create_plan_without_execute(tmp_p
     assert result["external_api_calls"] == 0
     assert result["create_plan_validation"]["ok"] is True
     assert result["summary"]["project_count"] == 1
-    assert result["summary"]["unit_count"] == 2
+    assert result["summary"]["unit_count"] == 1
     assert result["summary"]["material_count"] == 4
     derived = result["first_live_scope"]["derived_preview_config"]
     assert derived["create_plan"]["plan_id"] == "first-live-20260511-001"
     assert derived["accounts"] == [
-        {"advertiser_id": "target-1", "project_count": 1, "units_per_project": 2, "daily_budget": 300}
+        {"advertiser_id": "target-1", "project_count": 1, "units_per_project": 1, "daily_budget": 300}
     ]
-    assert derived["material_requirements"]["materials_per_unit"] == 2
+    assert derived["material_requirements"]["materials_per_unit"] == 4
+    assert result["dry_chain"]["dry_run_summary"]["material_count"] == 4
+    create_execute = json.loads(Path(result["artifacts"]["create_execute"]).read_text(encoding="utf-8"))
+    assert create_execute["summary"]["plan_id"] == "first-live-20260511-001"
     assert result["artifacts"]["create_execute"]
     assert result["actions"] == []
 
@@ -3622,12 +3641,12 @@ def test_create_first_live_local_chain_cli_accepts_create_plan_without_execute(t
                 "organization_id": "org-1",
                 "pool_key": "pool-yzt-wx-7r",
                 "target_accounts": [
-                    {
-                        "advertiser_id": "target-1",
-                        "project_count": 1,
-                        "unit_count_per_project": 2,
-                        "daily_budget": 300,
-                    }
+                        {
+                            "advertiser_id": "target-1",
+                            "project_count": 1,
+                            "unit_count_per_project": 1,
+                            "daily_budget": 300,
+                        }
                 ],
                 "materials": [
                     {"source_material_id": "m-high", "source_video_id": "source-video-1"},
@@ -3716,12 +3735,14 @@ def test_create_first_live_local_chain_cli_accepts_create_plan_without_execute(t
     assert output["workflow"] == "create_first_live_local_chain"
     assert output["status"] == "ready_for_execute_script"
     assert output["summary"]["project_count"] == 1
-    assert output["summary"]["unit_count"] == 2
+    assert output["summary"]["unit_count"] == 1
     assert output["execution_enabled"] is False
     assert output["external_api_calls"] == 0
     assert output["artifacts"]["create_execute"]
     assert artifact["create_plan_validation"]["ok"] is True
     assert artifact["first_live_scope"]["derived_preview_config"]["create_plan"]["plan_id"] == "first-live-20260511-001"
+    create_execute = json.loads(Path(output["artifacts"]["create_execute"]).read_text(encoding="utf-8"))
+    assert create_execute["summary"]["plan_id"] == "first-live-20260511-001"
     assert artifact["actions"] == []
 
 
@@ -8401,6 +8422,7 @@ def test_create_execute_is_hard_blocked_in_phase1_even_after_recorded_approval(t
                     "advertiser_id",
                     "project_name",
                     "daily_budget",
+                    "operation",
                     "field_defaults.landing_type",
                     "field_defaults.pricing",
                     "field_defaults.inventory_type",

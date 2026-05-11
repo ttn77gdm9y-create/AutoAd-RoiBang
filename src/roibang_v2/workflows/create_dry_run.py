@@ -186,7 +186,7 @@ def _with_idempotency(plan: dict[str, Any], project: dict[str, Any]) -> dict[str
                 "budget_mode": "BUDGET_MODE_DAY",
                 "roi_goal": template_parameters.get("roi_coefficient"),
                 "source": _unit_source(),
-                "operation": "ENABLE",
+                "operation": "DISABLE",
                 "promotion_materials": promotion_materials,
                 "materials": materials,
                 "idempotency_key": _idempotency_key("create_unit", unit_fields),
@@ -194,6 +194,7 @@ def _with_idempotency(plan: dict[str, Any], project: dict[str, Any]) -> dict[str
         )
     return {
         **project,
+        "operation": "DISABLE",
         "units": units,
         "idempotency_key": _idempotency_key("create_project", plan_fields),
     }
@@ -208,6 +209,7 @@ def _project_task(plan: dict[str, Any], project: dict[str, Any], payload_schema:
         "project_name": str(prepared.get("project_name") or ""),
         "project_type": str(prepared.get("project_type") or ""),
         "daily_budget": float(prepared.get("daily_budget") or 0),
+        "operation": str(prepared.get("operation") or ""),
         "field_defaults": prepared.get("field_defaults") if isinstance(prepared.get("field_defaults"), dict) else {},
         "units": prepared.get("units") if isinstance(prepared.get("units"), list) else [],
         "executable": False,
@@ -232,6 +234,7 @@ def _task_payload_drafts(project: dict[str, Any], *, payload_schema: dict[str, A
                 "advertiser_id": str(project.get("advertiser_id") or ""),
                 "project_name": str(project.get("project_name") or ""),
                 "daily_budget": float(project.get("daily_budget") or 0),
+                "operation": str(project.get("operation") or ""),
                 "field_defaults": project.get("field_defaults") if isinstance(project.get("field_defaults"), dict) else {},
             },
         }

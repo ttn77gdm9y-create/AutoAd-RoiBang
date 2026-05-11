@@ -115,6 +115,10 @@ def _target_existing_material_ids_by_account(
 
 
 def _candidate_rows(*, db_path: str | Path, request: dict[str, Any], policy: dict[str, Any]) -> list[dict[str, Any]]:
+    selected_materials = request.get("selected_materials")
+    if isinstance(selected_materials, list) and selected_materials:
+        rows = [dict(row) for row in selected_materials if isinstance(row, dict)]
+        return _filter_candidate_rows(rows, policy=policy)
     requirements = _material_requirements(request)
     material_type = str(requirements.get("material_type") or "video")
     with sqlite3.connect(db_path) as conn:
@@ -448,7 +452,7 @@ def build_create_strategy_plan(
     )
     projects = _build_projects(request=cfg, policy=policy, candidates=candidates, existing_by_account=existing_by_account)
     violations = _violations(cfg, policy, candidate_count=candidate_pool_size)
-    plan_id = f"create_plan_{request_id}"
+    plan_id = str(cfg.get("plan_id") or "").strip() or f"create_plan_{request_id}"
     return {
         "ok": not violations,
         "workflow": "create_strategy_plan",

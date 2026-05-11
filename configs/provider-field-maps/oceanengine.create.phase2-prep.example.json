@@ -60,6 +60,19 @@
         "open_questions": []
       },
       {
+        "internal_field": "operation",
+        "provider_field": "operation",
+        "provider_object": "project_create_request",
+        "mapping_kind": "direct",
+        "value_source": "create_dry_run.candidate_tasks[].operation",
+        "purpose": "project initial status, DISABLE means create only without starting delivery",
+        "verified": true,
+        "required": true,
+        "source": "local_api_doc_review",
+        "evidence_refs": ["oceanengine_openapi_project_create_request"],
+        "open_questions": []
+      },
+      {
         "internal_field": "field_defaults.landing_type",
         "provider_field": "landing_type",
         "provider_object": "project_create_request",

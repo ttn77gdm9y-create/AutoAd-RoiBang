@@ -105,6 +105,13 @@ def _request_id(config: dict[str, Any]) -> str:
     return f"create_req_{compact}_yzt_preview" if compact else "create_req_yzt_preview"
 
 
+def _plan_id(config: dict[str, Any]) -> str:
+    create_plan = config.get("create_plan")
+    if not isinstance(create_plan, dict):
+        return ""
+    return str(create_plan.get("plan_id") or "").strip()
+
+
 def _batch_code(source_fields: dict[str, Any]) -> str:
     canonical = json.dumps(source_fields, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return "B" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:8].upper()
@@ -192,6 +199,36 @@ def _field_defaults(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _selected_materials(config: dict[str, Any]) -> list[dict[str, Any]]:
+    create_plan = config.get("create_plan")
+    if not isinstance(create_plan, dict):
+        return []
+    materials = create_plan.get("materials")
+    if not isinstance(materials, list):
+        return []
+    rows: list[dict[str, Any]] = []
+    for index, material in enumerate(materials, start=1):
+        if not isinstance(material, dict):
+            continue
+        material_id = str(material.get("source_material_id") or material.get("material_id") or "").strip()
+        source_video_id = str(material.get("source_video_id") or material.get("video_id") or "").strip()
+        if not material_id:
+            continue
+        rows.append(
+            {
+                "rank": index,
+                "material_id": material_id,
+                "material_type": str(material.get("material_type") or "video"),
+                "source_video_id": source_video_id,
+                "name": str(material.get("name") or ""),
+                "review_status": str(material.get("review_status") or "APPROVED"),
+                "stat_cost": _float_or_none(material.get("stat_cost") or material.get("cost_lookback")) or 0,
+                "score": _float_or_none(material.get("score")) or 0,
+            }
+        )
+    return rows
+
+
 def _project_name_template(policy: dict[str, Any]) -> str:
     naming = _project_naming_policy(policy)
     return str(naming.get("template") or "{target_date_mmdd}_{owner}_{product}_{project_template_name}_{batch_code}_{index}")
@@ -225,7 +262,7 @@ def _standard_create_request(
     selected_template: dict[str, Any],
     batch_code: str,
 ) -> dict[str, Any]:
-    return {
+    request = {
         "request_id": _request_id(config),
         "target_date": str(config.get("target_date") or ""),
         "product": product,
@@ -255,6 +292,13 @@ def _standard_create_request(
             "effective_touch_url": "<fixed-in-yzt-script>",
         },
     }
+    selected_materials = _selected_materials(config)
+    if selected_materials:
+        request["selected_materials"] = selected_materials
+    plan_id = _plan_id(config)
+    if plan_id:
+        request["plan_id"] = plan_id
+    return request
 
 
 def _summary(

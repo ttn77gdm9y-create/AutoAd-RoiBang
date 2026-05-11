@@ -13,6 +13,7 @@
         "advertiser_id",
         "name",
         "budget",
+        "operation",
         "landing_type",
         "pricing",
         "delivery_range.inventory_type"

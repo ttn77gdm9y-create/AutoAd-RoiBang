@@ -94,6 +94,10 @@ def _required_field_defaults(policy: dict[str, Any]) -> list[str]:
 
 
 def _candidate_rows(*, db_path: str | Path, request: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    selected_materials = request.get("selected_materials")
+    if isinstance(selected_materials, list) and selected_materials:
+        rows = [dict(row) for row in selected_materials if isinstance(row, dict)]
+        return {str(row.get("material_id") or ""): row for row in rows if str(row.get("material_id") or "").strip()}
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
