@@ -181,6 +181,8 @@ def test_scheduler_registry_includes_disabled_fixed_create_chain_jobs():
         "scripts/run_create_live_execute_report.py",
         "--config",
         "configs/runtime.example.json",
+        "--plan",
+        "configs/create-plans/first-live.local.json",
     ]
     assert jobs["roibang-create-plan-validate"]["script"]["command"] == [
         "python3",
@@ -441,6 +443,11 @@ def test_scheduler_registry_phase1_contracts_pin_safe_execution_values():
         "live_execute_enabled"
     ] is False
     assert jobs["roibang-create-live-execute-once"]["policy"][
+        "plan"
+    ] == "configs/create-plans/first-live.local.json"
+    assert "create_plan_summary" in jobs["roibang-create-live-execute-report"]["result_contract"]["must_include"]
+    assert "create_plan_contract" in jobs["roibang-create-live-execute-report"]["result_contract"]["must_include"]
+    assert jobs["roibang-create-live-execute-report"]["policy"][
         "plan"
     ] == "configs/create-plans/first-live.local.json"
     assert "phase2_preparation_contract" in jobs[

@@ -79,6 +79,25 @@ def _completed_execute_once_artifact() -> dict:
     }
 
 
+def _create_plan() -> dict:
+    return {
+        "plan_id": "plan-1",
+        "product": "yzt",
+        "platform": "wx-mini-game",
+        "source_advertiser_id": "source-1",
+        "target_accounts": [
+            {
+                "advertiser_id": "target-1",
+                "project_count": 1,
+                "unit_count_per_project": 1,
+                "daily_budget": 1000,
+            }
+        ],
+        "materials": [{"source_material_id": "material-1", "source_video_id": "video-1"}],
+        "reason": "首单链路验证",
+    }
+
+
 def test_create_live_execute_report_summarizes_completed_execution_without_api_calls(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     bootstrap_database(db_path)
@@ -111,7 +130,9 @@ def test_create_live_execute_report_summarizes_completed_execution_without_api_c
         {
             "create_live_execute_report": {
                 "create_live_execute_once_artifact": _completed_execute_once_artifact(),
+                "create_plan_artifact": _create_plan(),
                 "source_artifact_path": "/runs/create_live_execute_once/a.json",
+                "plan_artifact_path": "/configs/create-plans/first-live.local.json",
             }
         },
         runs_dir=tmp_path / "runs",
@@ -127,6 +148,13 @@ def test_create_live_execute_report_summarizes_completed_execution_without_api_c
     assert result["summary"]["created_project_count"] == 1
     assert result["summary"]["created_unit_count"] == 1
     assert result["summary"]["material_bind_count"] == 1
+    assert result["create_plan_summary"]["plan_id"] == "plan-1"
+    assert result["create_plan_summary"]["target_account_count"] == 1
+    assert result["create_plan_summary"]["project_count"] == 1
+    assert result["create_plan_summary"]["unit_count"] == 1
+    assert result["create_plan_summary"]["material_count"] == 1
+    assert result["create_plan_contract"]["plan_id_matches_source"] is True
+    assert result["plan_artifact_path"] == "/configs/create-plans/first-live.local.json"
     assert result["db_ledger_summary"]["provider_id_counts"] == {"project": 1, "promotion": 1}
     assert result["db_ledger_summary"]["material_bind_count"] == 1
     assert "完成项目1个、单元1个、素材推送1组" in result["message"]
@@ -135,18 +163,23 @@ def test_create_live_execute_report_summarizes_completed_execution_without_api_c
 
 def test_create_live_execute_report_script_reads_latest_execute_once_artifact(tmp_path: Path, capsys):
     runtime_path = _runtime_config(tmp_path)
+    plan_path = tmp_path / "first-live.local.json"
+    plan_path.write_text(json.dumps(_create_plan(), ensure_ascii=False), encoding="utf-8")
     source_path = tmp_path / "runs" / "create_live_execute_once" / "20260510T000000Z.json"
     source_path.parent.mkdir(parents=True, exist_ok=True)
     source_path.write_text(json.dumps(_completed_execute_once_artifact(), ensure_ascii=False), encoding="utf-8")
     module = _load_script("run_create_live_execute_report")
 
-    exit_code = module.run_from_args(["--config", str(runtime_path)])
+    exit_code = module.run_from_args(["--config", str(runtime_path), "--plan", str(plan_path)])
 
     output = json.loads(capsys.readouterr().out)
     assert exit_code == 0
     assert output["workflow"] == "create_live_execute_report"
     assert output["status"] == "reported_completed"
     assert output["external_api_calls"] == 0
+    assert output["create_plan_summary"]["plan_id"] == "plan-1"
+    assert output["create_plan_contract"]["plan_id_matches_source"] is True
+    assert output["plan_artifact_path"] == str(plan_path)
     assert output["source_artifact_path"] == str(source_path)
     assert Path(output["artifact_path"]).exists()
 
@@ -165,4 +198,6 @@ def test_create_live_execute_report_script_reports_missing_execute_once_as_not_f
     assert output["execution_enabled"] is False
     assert output["external_api_calls"] == 0
     assert output["summary"]["source_status"] == "not_found"
+    assert output["create_plan_summary"] == {}
+    assert output["plan_artifact_path"] == ""
     assert artifact["actions"] == []

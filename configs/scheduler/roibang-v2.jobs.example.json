@@ -689,13 +689,13 @@
       "enabled": false,
       "schedule": {"type": "cron", "expr": "15 11 * * *", "tz": "Asia/Shanghai"},
       "script": {
-        "command": ["python3", "scripts/run_create_live_execute_report.py", "--config", "configs/runtime.example.json"],
+        "command": ["python3", "scripts/run_create_live_execute_report.py", "--config", "configs/runtime.example.json", "--plan", "configs/create-plans/first-live.local.json"],
         "path": "scripts/run_create_live_execute_report.py",
         "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json"]
+        "args": ["--config", "configs/runtime.example.json", "--plan", "configs/create-plans/first-live.local.json"]
       },
-      "policy": {"config": "configs/runtime.example.json"},
-      "result_contract": {"workflow": "create_live_execute_report", "artifact_dir": "data/runs/create_live_execute_report", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "message", "summary", "db_ledger_summary", "source_artifact_path", "actions"], "must_equal": {"phase": "phase2_preparation", "execution_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
+      "policy": {"config": "configs/runtime.example.json", "plan": "configs/create-plans/first-live.local.json"},
+      "result_contract": {"workflow": "create_live_execute_report", "artifact_dir": "data/runs/create_live_execute_report", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "message", "summary", "create_plan_summary", "create_plan_contract", "db_ledger_summary", "source_artifact_path", "plan_artifact_path", "actions"], "must_equal": {"phase": "phase2_preparation", "execution_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
       "delivery": {"channel": "none"}
     },
     {

@@ -62,6 +62,64 @@ def _source_summary(source: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _plan_summary(create_plan: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(create_plan, dict) or not create_plan:
+        return {}
+    accounts = _rows(create_plan.get("target_accounts"))
+    materials = _rows(create_plan.get("materials"))
+
+    def int_value(value: Any) -> int:
+        try:
+            return max(int(value), 0)
+        except (TypeError, ValueError):
+            return 0
+
+    project_count = sum(int_value(row.get("project_count")) for row in accounts)
+    unit_count = sum(
+        int_value(row.get("project_count")) * int_value(row.get("unit_count_per_project", row.get("units_per_project")))
+        for row in accounts
+    )
+    return {
+        "plan_id": str(create_plan.get("plan_id") or ""),
+        "product": str(create_plan.get("product") or ""),
+        "platform": str(create_plan.get("platform") or ""),
+        "source_advertiser_id": str(create_plan.get("source_advertiser_id") or ""),
+        "target_account_count": len(accounts),
+        "target_accounts": [
+            {
+                "advertiser_id": str(row.get("advertiser_id") or ""),
+                "project_count": int_value(row.get("project_count")),
+                "unit_count_per_project": int_value(row.get("unit_count_per_project", row.get("units_per_project"))),
+                "daily_budget": float(row.get("daily_budget") or 0),
+            }
+            for row in accounts
+        ],
+        "project_count": project_count,
+        "unit_count": unit_count,
+        "material_count": len(materials),
+        "materials": [
+            {
+                "source_material_id": str(row.get("source_material_id") or row.get("material_id") or ""),
+                "source_video_id": str(row.get("source_video_id") or row.get("video_id") or ""),
+            }
+            for row in materials
+        ],
+        "reason": str(create_plan.get("reason") or ""),
+    }
+
+
+def _plan_contract(*, plan_summary: dict[str, Any], source_plan_id: str) -> dict[str, Any]:
+    plan_id = str(plan_summary.get("plan_id") or "")
+    if not plan_id:
+        return {"available": False, "plan_id_matches_source": False}
+    return {
+        "available": True,
+        "plan_id": plan_id,
+        "source_plan_id": source_plan_id,
+        "plan_id_matches_source": not source_plan_id or plan_id == source_plan_id,
+    }
+
+
 def _message(summary: dict[str, Any]) -> str:
     status = str(summary.get("source_status") or "")
     failure = summary.get("failure") if isinstance(summary.get("failure"), dict) else None
@@ -134,7 +192,9 @@ def _db_ledger_summary(*, db_path: str | Path, plan_id: str) -> dict[str, Any]:
 def build_create_live_execute_report(
     *,
     create_live_execute_once_artifact: dict[str, Any],
+    create_plan_artifact: dict[str, Any] | None = None,
     source_artifact_path: str = "",
+    plan_artifact_path: str = "",
     db_path: str | Path | None = None,
 ) -> dict[str, Any]:
     source = dict(create_live_execute_once_artifact)
@@ -144,6 +204,7 @@ def build_create_live_execute_report(
     if not source_summary:
         source_summary = source.get("summary") if isinstance(source.get("summary"), dict) else {}
     plan_id = str(source_summary.get("plan_id") or "")
+    create_plan_summary = _plan_summary(create_plan_artifact)
     payload = {
         "ok": True,
         "workflow": "create_live_execute_report",
@@ -155,8 +216,11 @@ def build_create_live_execute_report(
         else "reported_not_completed",
         "message": _message(summary),
         "summary": summary,
+        "create_plan_summary": create_plan_summary,
+        "create_plan_contract": _plan_contract(plan_summary=create_plan_summary, source_plan_id=plan_id),
         "db_ledger_summary": _db_ledger_summary(db_path=db_path, plan_id=plan_id) if db_path is not None else {},
         "source_artifact_path": source_path,
+        "plan_artifact_path": str(plan_artifact_path or ""),
         "actions": [],
     }
     return payload
@@ -175,7 +239,9 @@ def run_create_live_execute_report_request(
         raise ValueError("create live execute report requires create_live_execute_once_artifact")
     payload = build_create_live_execute_report(
         create_live_execute_once_artifact=source,
+        create_plan_artifact=cfg.get("create_plan_artifact") if isinstance(cfg.get("create_plan_artifact"), dict) else None,
         source_artifact_path=str(cfg.get("source_artifact_path") or source.get("artifact_path") or ""),
+        plan_artifact_path=str(cfg.get("plan_artifact_path") or ""),
         db_path=db_path,
     )
     artifact_path = write_run_artifact(runs_dir, "create_live_execute_report", payload)
