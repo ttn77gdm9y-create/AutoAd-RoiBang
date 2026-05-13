@@ -14,7 +14,7 @@ def run_from_args(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run Phase 2 preparation template slot review pack.")
     parser.add_argument("--config", default="configs/runtime.example.json")
     parser.add_argument("--request", default="configs/requests/example.create-request.json")
-    parser.add_argument("--policy", default="policies/strategy.example.json")
+    parser.add_argument("--policy", default="policies/create-policy.example.json")
     args = parser.parse_args(argv)
 
     config = load_runtime_config(args.config)

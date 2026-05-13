@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import sqlite3
 from datetime import datetime, timezone
@@ -87,6 +88,43 @@ def _filter_candidate_rows(rows: list[dict[str, Any]], *, policy: dict[str, Any]
     return filtered
 
 
+def _selection_policy(request: dict[str, Any]) -> dict[str, Any]:
+    value = request.get("material_selection")
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _candidate_min_stat_cost(request: dict[str, Any], policy: dict[str, Any]) -> float:
+    selection = _selection_policy(request)
+    return max(_float_value(policy.get("min_candidate_stat_cost"), 0), _float_value(selection.get("min_stat_cost"), 0))
+
+
+def _filter_candidate_rows_for_request(rows: list[dict[str, Any]], *, request: dict[str, Any], policy: dict[str, Any]) -> list[dict[str, Any]]:
+    filtered = _filter_candidate_rows(rows, policy=policy)
+    min_stat_cost = _candidate_min_stat_cost(request, _candidate_filters(policy))
+    return [row for row in filtered if float(row.get("stat_cost") or 0) >= min_stat_cost]
+
+
+def _candidate_sort_key(row: dict[str, Any], *, selection: dict[str, Any]) -> tuple[Any, ...]:
+    sort_by = str(selection.get("sort_by") or "")
+    selection_type = str(selection.get("selection_type") or "")
+    if sort_by == "create_time_desc" or selection_type == "test_new":
+        created_at = str(row.get("create_time") or row.get("first_seen_at") or "")
+        return (created_at, -float(row.get("stat_cost") or 0), str(row.get("material_id") or ""))
+    return (float(row.get("stat_cost") or 0), float(row.get("score") or 0), str(row.get("material_id") or ""))
+
+
+def _sort_candidate_rows(rows: list[dict[str, Any]], *, request: dict[str, Any]) -> list[dict[str, Any]]:
+    selection = _selection_policy(request)
+    if bool(selection.get("random_shuffle", False)):
+        seed = str(request.get("request_id") or request.get("plan_id") or "")
+        return sorted(
+            rows,
+            key=lambda row: hashlib.sha256(f"{seed}:{row.get('material_id')}".encode("utf-8")).hexdigest(),
+        )
+    reverse = str(selection.get("sort_by") or "") != "create_time_desc" and str(selection.get("selection_type") or "") != "test_new"
+    return sorted(rows, key=lambda row: _candidate_sort_key(row, selection=selection), reverse=reverse)
+
+
 def _target_existing_material_ids_by_account(
     *,
     db_path: str | Path,
@@ -118,31 +156,49 @@ def _candidate_rows(*, db_path: str | Path, request: dict[str, Any], policy: dic
     selected_materials = request.get("selected_materials")
     if isinstance(selected_materials, list) and selected_materials:
         rows = [dict(row) for row in selected_materials if isinstance(row, dict)]
-        return _filter_candidate_rows(rows, policy=policy)
+        return _sort_candidate_rows(_filter_candidate_rows_for_request(rows, request=request, policy=policy), request=request)
     requirements = _material_requirements(request)
+    selection = _selection_policy(request)
+    lookback_days = _int_value(selection.get("lookback_days"), 0)
     material_type = str(requirements.get("material_type") or "video")
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """
             SELECT
-              rank, material_id, material_type, source_video_id, name,
-              review_status, stat_cost, score
-            FROM product_source_material_candidates
-            WHERE pool_key = ?
-              AND product = ?
-              AND source_advertiser_id = ?
-              AND material_type = ?
-            ORDER BY rank ASC, score DESC, stat_cost DESC
+              psm.material_id,
+              psm.material_type,
+              psm.video_id AS source_video_id,
+              psm.name,
+              psm.review_status,
+              COALESCE(MAX(CASE WHEN psmr.window_days = ? THEN psmr.stat_cost END), MAX(psmr.stat_cost), psm.cost_lookback, 0) AS stat_cost,
+              psm.score,
+              psm.create_time,
+              psm.first_seen_at
+            FROM product_source_materials psm
+            LEFT JOIN product_source_material_metric_rollups psmr
+              ON psmr.product = psm.product
+             AND psmr.source_advertiser_id = psm.source_advertiser_id
+             AND psmr.material_id = psm.material_id
+            WHERE psm.product = ?
+              AND psm.source_advertiser_id = ?
+              AND psm.material_type = ?
+              AND psm.is_active = 1
+            GROUP BY
+              psm.material_id, psm.material_type, psm.video_id, psm.name,
+              psm.review_status, psm.cost_lookback, psm.score, psm.create_time, psm.first_seen_at
             """,
             (
-                str(request.get("pool_key") or ""),
+                lookback_days,
                 str(request.get("product") or ""),
                 str(request.get("source_advertiser_id") or ""),
                 material_type,
             ),
         ).fetchall()
-    return _filter_candidate_rows([dict(row) for row in rows], policy=policy)
+    normalized = []
+    for index, row in enumerate(rows, start=1):
+        normalized.append({"rank": index, **dict(row)})
+    return _sort_candidate_rows(_filter_candidate_rows_for_request(normalized, request=request, policy=policy), request=request)
 
 
 def _project_naming_policy(policy: dict[str, Any]) -> dict[str, Any]:
@@ -251,7 +307,7 @@ def _project_name_entry(
                 "algorithm": "sha256_first_8_uppercase",
                 "generated_at": generated_at,
                 "source_fields": batch_source,
-                "freeze_rule": "generate once in plan, then reuse through preflight, dry-run, approval, and execute",
+                "freeze_rule": "generate once in plan, then reuse through preflight, dry-run, and execute",
             },
         },
     }
@@ -269,7 +325,7 @@ def _material_entry(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _candidate_pool_size(
+def _usable_source_material_count(
     *,
     request: dict[str, Any],
     candidates: list[dict[str, Any]],
@@ -292,18 +348,48 @@ def _next_candidate(
     advertiser_id: str,
     candidates: list[dict[str, Any]],
     used_request_material_ids: set[str],
+    material_accounts_used: dict[str, set[str]],
     existing_by_account: dict[str, set[str]],
     dedupe_scope: str,
+    max_accounts_per_material: int,
+    allow_reuse_on_shortage: bool,
 ) -> dict[str, Any] | None:
     existing_material_ids = existing_by_account.get(advertiser_id, set())
-    for row in candidates:
-        material_id = str(row.get("material_id") or "")
-        if material_id in existing_material_ids:
-            continue
-        if dedupe_scope == "request" and material_id in used_request_material_ids:
-            continue
-        return row
+    for enforce_overlap in ([True, False] if allow_reuse_on_shortage else [True]):
+        for row in candidates:
+            material_id = str(row.get("material_id") or "")
+            if material_id in existing_material_ids:
+                continue
+            if dedupe_scope == "request" and material_id in used_request_material_ids and enforce_overlap:
+                continue
+            if dedupe_scope == "max_account_overlap" and enforce_overlap:
+                accounts = material_accounts_used.get(material_id, set())
+                if advertiser_id in accounts:
+                    continue
+                if max_accounts_per_material > 0 and len(accounts) >= max_accounts_per_material:
+                    continue
+            return row
     return None
+
+
+def _max_accounts_per_material(request: dict[str, Any], dedupe_scope: str) -> int:
+    if dedupe_scope != "max_account_overlap":
+        return 0
+    requirements = _material_requirements(request)
+    ratio = _float_value(requirements.get("max_cross_account_overlap_ratio"), 0.3)
+    account_count = len(_target_accounts(request))
+    return max(1, math.ceil(account_count * ratio))
+
+
+def _allow_reuse_on_shortage(request: dict[str, Any]) -> bool:
+    requirements = _material_requirements(request)
+    return bool(requirements.get("allow_reuse_across_accounts", False)) or str(requirements.get("on_insufficient") or "") == "allow_reuse"
+
+
+def _initial_operation(request: dict[str, Any], key: str) -> str:
+    value = request.get("initial_status") if isinstance(request.get("initial_status"), dict) else {}
+    default = "DISABLE"
+    return str(value.get(f"{key}_operation") or value.get("operation") or default)
 
 
 def _build_projects(
@@ -317,15 +403,23 @@ def _build_projects(
     materials_per_unit = max(_int_value(requirements.get("materials_per_unit"), 1), 0)
     dedupe_scope = str(requirements.get("dedupe_scope") or "request")
     used_request_material_ids: set[str] = set()
+    material_accounts_used: dict[str, set[str]] = {}
+    max_accounts_per_material = _max_accounts_per_material(request, dedupe_scope)
+    allow_reuse_on_shortage = _allow_reuse_on_shortage(request)
     projects: list[dict[str, Any]] = []
     global_project_index = 0
+    local_key_namespace = str(request.get("local_key_namespace") or "").strip()
     for account in _target_accounts(request):
         advertiser_id = str(account.get("advertiser_id") or "")
         project_count = max(_int_value(account.get("project_count"), 1), 0)
         units_per_project = max(_int_value(account.get("units_per_project"), 1), 0)
         for account_project_index in range(1, project_count + 1):
             global_project_index += 1
-            project_key = f"{advertiser_id}-p{account_project_index:03d}"
+            project_key = (
+                f"{advertiser_id}-{local_key_namespace}-p{account_project_index:03d}"
+                if local_key_namespace
+                else f"{advertiser_id}-p{account_project_index:03d}"
+            )
             name_entry = _project_name_entry(request, policy, advertiser_id=advertiser_id, index=global_project_index)
             project_name = name_entry["project_name"]
             units: list[dict[str, Any]] = []
@@ -338,20 +432,26 @@ def _build_projects(
                         advertiser_id=advertiser_id,
                         candidates=candidates,
                         used_request_material_ids=used_request_material_ids,
+                        material_accounts_used=material_accounts_used,
                         existing_by_account=existing_by_account,
                         dedupe_scope=dedupe_scope,
+                        max_accounts_per_material=max_accounts_per_material,
+                        allow_reuse_on_shortage=allow_reuse_on_shortage,
                     )
                     if row is None:
                         break
                     material_id = str(row.get("material_id") or "")
                     if dedupe_scope == "request":
                         used_request_material_ids.add(material_id)
+                    if dedupe_scope == "max_account_overlap":
+                        material_accounts_used.setdefault(material_id, set()).add(advertiser_id)
                     materials.append(_material_entry(row))
                 units.append(
                     {
                         "unit_key": unit_key,
                         "unit_index": unit_index,
                         "promotion_name": promotion_name,
+                        "operation": _initial_operation(request, "unit"),
                         "materials": materials,
                     }
                 )
@@ -364,6 +464,7 @@ def _build_projects(
                     "naming": name_entry["naming"],
                     "project_type": str(request.get("project_type") or ""),
                     "daily_budget": float(account.get("daily_budget") or 0),
+                    "operation": _initial_operation(request, "project"),
                     "field_defaults": request.get("field_defaults") if isinstance(request.get("field_defaults"), dict) else {},
                     "units": units,
                 }
@@ -393,7 +494,7 @@ def _violations(request: dict[str, Any], policy: dict[str, Any], *, candidate_co
     required_materials = _required_material_slots(request)
     if dedupe_scope == "request" and candidate_count < required_materials:
         violations.append(
-            f"candidate pool has {candidate_count} usable materials, expected {required_materials} for dedupe_scope=request"
+            f"source material account has {candidate_count} usable materials, expected {required_materials} for dedupe_scope=request"
         )
     if len(accounts) > max_accounts:
         violations.append("target account count exceeds policy limit")
@@ -411,7 +512,7 @@ def _summary(
     request: dict[str, Any],
     plan_id: str,
     projects: list[dict[str, Any]],
-    candidate_pool_size: int,
+    source_material_count: int,
     violations: list[str],
 ) -> dict[str, Any]:
     units = [unit for project in projects for unit in project.get("units", [])]
@@ -428,7 +529,7 @@ def _summary(
         "planned_project_count": len(projects),
         "planned_unit_count": len(units),
         "planned_material_count": len(material_ids),
-        "candidate_pool_size": candidate_pool_size,
+        "source_material_count": source_material_count,
         "violation_count": len(violations),
     }
 
@@ -445,13 +546,13 @@ def build_create_strategy_plan(
         raise ValueError("create strategy plan requires request_id")
     candidates = _candidate_rows(db_path=db_path, request=cfg, policy=policy)
     existing_by_account = _target_existing_material_ids_by_account(db_path=db_path, request=cfg, policy=policy)
-    candidate_pool_size = _candidate_pool_size(
+    source_material_count = _usable_source_material_count(
         request=cfg,
         candidates=candidates,
         existing_by_account=existing_by_account,
     )
     projects = _build_projects(request=cfg, policy=policy, candidates=candidates, existing_by_account=existing_by_account)
-    violations = _violations(cfg, policy, candidate_count=candidate_pool_size)
+    violations = _violations(cfg, policy, candidate_count=source_material_count)
     plan_id = str(cfg.get("plan_id") or "").strip() or f"create_plan_{request_id}"
     return {
         "ok": not violations,
@@ -466,13 +567,12 @@ def build_create_strategy_plan(
             request=cfg,
             plan_id=plan_id,
             projects=projects,
-            candidate_pool_size=candidate_pool_size,
+            source_material_count=source_material_count,
             violations=violations,
         ),
         "request": cfg,
         "strategy": {
-            "source": "product_source_material_candidates",
-            "pool_key": str(cfg.get("pool_key") or ""),
+            "source": "product_source_materials",
             "source_advertiser_id": str(cfg.get("source_advertiser_id") or ""),
             "projects": projects,
         },

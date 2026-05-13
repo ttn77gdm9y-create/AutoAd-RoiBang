@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import sqlite3
 from datetime import date
 from pathlib import Path
 
@@ -289,6 +290,44 @@ def test_daily_report_pipeline_fetches_syncs_and_learns_for_yesterday(tmp_path):
     assert result["steps"]["report_fetch"]["summary"]["date_count"] == 1
     assert result["steps"]["daily_learning"]["summary"]["target_date"] == "2026-05-06"
     assert Path(result["artifact_path"]).exists()
+
+
+def test_daily_report_pipeline_catches_up_missing_metric_snapshot_dates(tmp_path):
+    db_path = tmp_path / "roibang.sqlite3"
+    csv_path = tmp_path / "accounts.csv"
+    snapshot_dir = tmp_path / "snapshots"
+    bootstrap_database(db_path)
+    _write_accounts_csv(csv_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO metric_snapshots (
+              entity_type, entity_id, metric_date, cost, conversions, roi, payload_json, synced_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("promotion", "old_promotion", "2026-05-03", 10, 1, 0.5, "{}", "2026-05-03T00:00:00+08:00"),
+        )
+
+    request = _pipeline_request(csv_path, snapshot_dir)
+    request["daily_report_pipeline"]["catch_up"] = {"enabled": True, "max_days": 7}
+
+    result = run_daily_report_pipeline_request(
+        request,
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        today=date(2026, 5, 7),
+    )
+
+    assert result["ok"] is True
+    assert result["summary"]["target_dates"] == ["2026-05-04", "2026-05-05", "2026-05-06"]
+    assert result["summary"]["snapshots_written"] == 3
+    assert result["summary"]["snapshots_imported"] == 3
+    assert (snapshot_dir / "2026-05-04.json").exists()
+    assert (snapshot_dir / "2026-05-05.json").exists()
+    assert (snapshot_dir / "2026-05-06.json").exists()
+    with sqlite3.connect(db_path) as conn:
+        latest = conn.execute("SELECT MAX(metric_date) FROM metric_snapshots").fetchone()[0]
+    assert latest == "2026-05-06"
 
 
 def test_daily_report_pipeline_runs_local_material_source_before_learning(tmp_path):

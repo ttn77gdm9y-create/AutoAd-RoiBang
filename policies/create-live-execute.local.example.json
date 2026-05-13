@@ -1,14 +1,23 @@
 {
   "_comment": "真实执行前复制为 policies/create-live-execute.local.json。本地文件不要提交 Git。",
+  "create_plan": {
+    "require_allowed_target_accounts": true,
+    "allowed_target_accounts_path": "configs/allowed-create-accounts.local.json",
+    "max_target_accounts": 20,
+    "max_projects_per_account": 10,
+    "max_units_per_project": 20,
+    "max_materials": 1000,
+    "min_daily_budget": 100
+  },
   "create_execute": {
     "live_api": {
       "enabled": true,
       "transport": "openapi_http",
       "endpoints": {
-        "create_project": "/open_api/2/project/create/",
+        "create_project": "/open_api/v3.0/project/create/",
         "bind_material": "/open_api/2/file/material/bind/",
         "lookup_target_material": "/open_api/2/file/video/get/",
-        "create_unit": "/open_api/2/promotion/create/"
+        "create_unit": "/open_api/v3.0/promotion/create/"
       }
     },
     "payload_schema": {
@@ -30,9 +39,25 @@
       "run_id": "manual-live-create-YYYYMMDD-001",
       "operator": "operator",
       "base_url": "https://api.oceanengine.com",
+      "token_env": "OCEANENGINE_ACCESS_TOKEN",
       "timeout_seconds": 20,
       "max_retries": 0,
-      "token_env": "OCEANENGINE_ACCESS_TOKEN",
+      "retry_sleep_seconds": 120,
+      "min_interval_seconds": 3,
+      "min_interval_seconds_by_operation": {
+        "create_project": 8,
+        "bind_material": 3,
+        "lookup_target_material": 3,
+        "create_unit": 20
+      },
+      "retry_api_codes_by_operation": {
+        "bind_material": [40100],
+        "lookup_target_material": [40100]
+      },
+      "retry_transient_operations": [
+        "bind_material",
+        "lookup_target_material"
+      ],
       "response_audit_dir": "data/runs/create_live_execute_once/audit"
     }
   }

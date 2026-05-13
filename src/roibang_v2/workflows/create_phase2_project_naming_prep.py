@@ -105,7 +105,7 @@ def _batch_code_contract(request: dict[str, Any]) -> dict[str, Any]:
         "algorithm": "sha256_first_8_uppercase",
         "generated_at": generated_at,
         "source_fields": source_fields,
-        "freeze_rule": "generate once in plan, then reuse through preflight, dry-run, approval, and execute",
+        "freeze_rule": "generate once in plan, then reuse through preflight, dry-run, and execute",
     }
 
 

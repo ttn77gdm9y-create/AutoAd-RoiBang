@@ -72,7 +72,7 @@ def _blocked_preview_config_result(*, config, violations: list[str]) -> dict:
             "project_count": 0,
             "unit_count": 0,
             "material_count": 0,
-            "ready_for_approval_chain": False,
+            "ready_for_execute_script": False,
             "ready_for_live_execute": False,
         },
         "scope_guard": {
@@ -92,11 +92,10 @@ def _blocked_preview_config_result(*, config, violations: list[str]) -> dict:
             "derived_preview_config": {},
         },
         "chain_steps": [],
-        "artifacts": {"dry_chain": ""},
+        "artifacts": {"dry_chain": "", "dry_run": "", "create_execute": ""},
         "preparation_check": {},
         "dry_chain": {},
         "create_plan_validation": {},
-        "approved_for_execute": False,
         "human_next_steps": violations,
         "violations": violations,
         "actions": [],
@@ -119,7 +118,6 @@ def _print_result(result: dict) -> None:
                 "scope_guard": result["scope_guard"],
                 "chain_steps": result["chain_steps"],
                 "artifacts": result["artifacts"],
-                "approved_for_execute": result["approved_for_execute"],
                 "human_next_steps": result["human_next_steps"],
                 "artifact_path": result["artifact_path"],
             },
@@ -134,7 +132,8 @@ def run_from_args(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", default="configs/runtime.example.json")
     parser.add_argument("--plan", default="")
     parser.add_argument("--preview-config", default=DEFAULT_PREVIEW_CONFIG)
-    parser.add_argument("--policy", default="policies/strategy.example.json")
+    parser.add_argument("--policy", default="policies/create-policy.example.json")
+    parser.add_argument("--create-execute-handoff", default="")
     args = parser.parse_args(argv)
 
     config = load_runtime_config(args.config)
@@ -143,6 +142,11 @@ def run_from_args(argv: list[str] | None = None) -> int:
 
     bootstrap_database(config.database_path)
     policy = load_json(args.policy)
+    handoff_path = (
+        Path(args.create_execute_handoff)
+        if str(args.create_execute_handoff or "").strip()
+        else Path(config.runs_dir) / "create_execute" / "first-live.local.json"
+    )
     create_plan = None
     preview_config_path = args.preview_config
     if str(args.plan or "").strip():
@@ -192,6 +196,7 @@ def run_from_args(argv: list[str] | None = None) -> int:
                 "preview_config": preview_config,
                 "create_plan": create_plan if isinstance(create_plan, dict) else None,
                 "preview_config_path": preview_config_path,
+                "create_execute_handoff_path": str(handoff_path),
                 "policy": policy,
             }
         },

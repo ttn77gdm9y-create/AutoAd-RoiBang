@@ -9,6 +9,8 @@ data/*.db
 data/runs/**/*.json
 data/runs/**/*.jsonl
 data/runs/**/*.log
+data/runs/**/*.md
+data/generated/
 data/requests/**/*.json
 data/snapshots/**/*.json
 !data/.gitkeep
@@ -27,5 +29,7 @@ data/secrets/
 
 configs/create/*.local.json
 configs/create-plans/*.local.json
+configs/project-updates/*.local.json
+configs/strategies/*.local.json
 configs/*.local.json
 policies/*.local.json

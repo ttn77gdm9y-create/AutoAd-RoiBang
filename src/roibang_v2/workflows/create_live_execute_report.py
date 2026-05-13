@@ -144,6 +144,78 @@ def _message(summary: dict[str, Any]) -> str:
     return f"未执行真实创建：source status={status or 'unknown'}。"
 
 
+def _failure_reason(*, summary: dict[str, Any], source_artifact_path: str) -> dict[str, Any] | None:
+    failure = summary.get("failure") if isinstance(summary.get("failure"), dict) else None
+    if failure:
+        return {
+            "source_artifact_path": source_artifact_path,
+            "operation": str(failure.get("operation") or "unknown"),
+            "index": int(failure.get("index") or 0),
+            "message": str(failure.get("message") or "无错误信息"),
+            "code": int(failure.get("code") or -1),
+        }
+    reasons = [str(item) for item in summary.get("blocking_reasons") or [] if str(item)]
+    if reasons:
+        return {
+            "source_artifact_path": source_artifact_path,
+            "operation": "blocked",
+            "index": 0,
+            "message": reasons[0],
+            "code": -1,
+        }
+    status = str(summary.get("source_status") or "")
+    if status and status != "create_http_completed":
+        return {
+            "source_artifact_path": source_artifact_path,
+            "operation": "status",
+            "index": 0,
+            "message": status,
+            "code": -1,
+        }
+    return None
+
+
+def _batch_summary(sources: list[dict[str, Any]], source_paths: list[str]) -> dict[str, Any]:
+    source_summaries = [_source_summary(source) for source in sources]
+    completed_count = sum(1 for summary in source_summaries if str(summary.get("source_status") or "") == "create_http_completed")
+    failure_reasons: list[dict[str, Any]] = []
+    for index, summary in enumerate(source_summaries):
+        path = source_paths[index] if index < len(source_paths) else ""
+        reason = _failure_reason(summary=summary, source_artifact_path=path)
+        if reason is not None:
+            failure_reasons.append(reason)
+    return {
+        "artifact_count": len(source_summaries),
+        "completed_artifact_count": completed_count,
+        "failed_artifact_count": len(source_summaries) - completed_count,
+        "manual_review_required": bool(failure_reasons),
+        "created_project_count": sum(int(summary.get("created_project_count") or 0) for summary in source_summaries),
+        "created_unit_count": sum(int(summary.get("created_unit_count") or 0) for summary in source_summaries),
+        "target_video_count": sum(int(summary.get("target_video_count") or 0) for summary in source_summaries),
+        "target_video_cover_count": sum(int(summary.get("target_video_cover_count") or 0) for summary in source_summaries),
+        "material_bind_count": sum(int(summary.get("material_bind_count") or 0) for summary in source_summaries),
+        "source_external_api_calls": sum(int(summary.get("source_external_api_calls") or 0) for summary in source_summaries),
+        "source_transport_call_count": sum(int(summary.get("source_transport_call_count") or 0) for summary in source_summaries),
+        "failure_reasons": failure_reasons,
+        "sources": source_summaries,
+    }
+
+
+def _batch_message(summary: dict[str, Any]) -> str:
+    need_manual = "是" if bool(summary.get("manual_review_required")) else "否"
+    message = (
+        f"真实创建汇总：成功项目{int(summary.get('created_project_count') or 0)}个、"
+        f"成功单元{int(summary.get('created_unit_count') or 0)}个、"
+        f"素材推送{int(summary.get('material_bind_count') or 0)}组；"
+        f"需要人工处理：{need_manual}。"
+    )
+    reasons = summary.get("failure_reasons") if isinstance(summary.get("failure_reasons"), list) else []
+    if reasons:
+        first = reasons[0] if isinstance(reasons[0], dict) else {}
+        message += f" 首个失败：{first.get('operation') or 'unknown'}，{first.get('message') or '无错误信息'}。"
+    return message
+
+
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
     row = conn.execute(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
@@ -227,6 +299,34 @@ def build_create_live_execute_report(
     return payload
 
 
+def build_create_live_execute_batch_report(
+    *,
+    create_live_execute_once_artifacts: list[dict[str, Any]],
+    source_artifact_paths: list[str] | None = None,
+) -> dict[str, Any]:
+    source_paths = [str(path) for path in (source_artifact_paths or [])]
+    summary = _batch_summary(create_live_execute_once_artifacts, source_paths)
+    status = "reported_manual_review_required" if bool(summary.get("manual_review_required")) else "reported_completed"
+    return {
+        "ok": True,
+        "workflow": "create_live_execute_report",
+        "phase": "phase2_preparation",
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "status": status,
+        "message": _batch_message(summary),
+        "summary": {},
+        "batch_summary": summary,
+        "create_plan_summary": {},
+        "create_plan_contract": {"available": False, "plan_id_matches_source": False},
+        "db_ledger_summary": {},
+        "source_artifact_path": source_paths[0] if source_paths else "",
+        "source_artifact_paths": source_paths,
+        "plan_artifact_path": "",
+        "actions": [],
+    }
+
+
 def run_create_live_execute_report_request(
     request: dict[str, Any],
     *,
@@ -235,6 +335,21 @@ def run_create_live_execute_report_request(
 ) -> dict[str, Any]:
     cfg = request.get("create_live_execute_report")
     cfg = dict(cfg) if isinstance(cfg, dict) else dict(request)
+    sources = cfg.get("create_live_execute_once_artifacts")
+    if isinstance(sources, list) and sources:
+        valid_sources = [dict(source) for source in sources if isinstance(source, dict)]
+        if not valid_sources:
+            raise ValueError("create live execute report requires create_live_execute_once_artifacts")
+        payload = build_create_live_execute_batch_report(
+            create_live_execute_once_artifacts=valid_sources,
+            source_artifact_paths=[
+                str(path) for path in cfg.get("source_artifact_paths", []) if isinstance(path, (str, Path))
+            ]
+            if isinstance(cfg.get("source_artifact_paths"), list)
+            else [],
+        )
+        artifact_path = write_run_artifact(runs_dir, "create_live_execute_report", payload)
+        return {**payload, "artifact_path": str(artifact_path)}
     source = cfg.get("create_live_execute_once_artifact")
     if not isinstance(source, dict):
         raise ValueError("create live execute report requires create_live_execute_once_artifact")

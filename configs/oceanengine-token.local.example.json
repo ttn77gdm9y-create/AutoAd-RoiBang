@@ -2,8 +2,7 @@
   "oceanengine_token": {
     "store_file": "data/secrets/oceanengine-tokens.local.json",
     "user_id": "default",
-    "app_id_env": "OCEANENGINE_APP_ID",
-    "app_secret_env": "OCEANENGINE_APP_SECRET",
+    "credentials_file": "data/secrets/oceanengine-app.local.json",
     "auth_code_env": "OCEANENGINE_AUTH_CODE",
     "refresh_lead_seconds": 900,
     "notes": [

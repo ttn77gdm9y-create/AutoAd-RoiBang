@@ -14,7 +14,7 @@ def _command(script: str, *, local_path: str) -> str:
         f"PYTHONPATH=src python3 scripts/{script} "
         "--config configs/runtime.example.json "
         f"--preview-config {local_path} "
-        "--policy policies/strategy.example.json"
+        "--policy policies/create-policy.example.json"
     )
 
 

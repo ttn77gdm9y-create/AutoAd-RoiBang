@@ -1,0 +1,46 @@
+{
+  "control_strategy_suggestions": {
+    "product_keyword": "勇者突进",
+    "target_date": "2026-05-11",
+    "allowed_target_accounts_path": "configs/control-allowed-accounts.local.json",
+    "operation_evidence": {
+      "enabled": true,
+      "window_days": 3,
+      "lookback_start": "2026-02-10",
+      "lookback_end": "2026-05-11",
+      "sample_limit": 3
+    },
+    "rules": {
+      "pause_project_low_first_day_roi": {
+        "enabled": true,
+        "min_cost": 500,
+        "min_conversions": 2,
+        "max_roi_1day": 0.25,
+        "operation_action_keywords": ["暂停", "关停"]
+      },
+      "adjust_project_budget_low_roi": {
+        "enabled": true,
+        "min_cost": 800,
+        "min_conversions": 3,
+        "max_roi_1day": 0.35,
+        "budget_decrease_percent": 20,
+        "operation_action_keywords": ["预算"]
+      },
+      "adjust_project_bid_high_cpa": {
+        "enabled": true,
+        "min_cost": 1000,
+        "min_conversions": 2,
+        "max_cpa": 300,
+        "bid_decrease_percent": 10,
+        "operation_action_keywords": ["出价"]
+      },
+      "schedule_hollow_low_realtime_hour_roi": {
+        "enabled": false,
+        "min_cost": 200,
+        "max_roi_1day": 0.2,
+        "min_fresh_synced_at": "",
+        "operation_action_keywords": ["拉空", "投放时段", "时段"]
+      }
+    }
+  }
+}

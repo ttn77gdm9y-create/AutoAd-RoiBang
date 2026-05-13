@@ -95,23 +95,105 @@ def _target_video_cover_placeholder(*, advertiser_id: str, source_video_id: str)
     return f"<lookup:target_video_cover:{advertiser_id}:{source_video_id}>"
 
 
-def _unit_source() -> str:
-    return "RoiBang"
+def _clean_string_list(value: Any) -> list[str]:
+    rows = value if isinstance(value, list) else []
+    result = []
+    for item in rows:
+        text = str(item or "").strip()
+        if text:
+            result.append(text)
+    return result
 
 
-def _unit_title(project: dict[str, Any]) -> str:
-    name = str(project.get("project_name") or "")
-    return name[:30] if len(name) >= 5 else "立即体验精彩玩法"
+def _unit_creative_selection(template_parameters: dict[str, Any]) -> dict[str, Any]:
+    value = template_parameters.get("unit_creative_selection")
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _selection_count(selection: dict[str, Any], *, min_key: str, max_key: str, pool_size: int, seed: str) -> int:
+    if pool_size <= 0:
+        return 0
+    try:
+        min_count = int(selection.get(min_key) or 0)
+    except (TypeError, ValueError):
+        min_count = 0
+    try:
+        max_count = int(selection.get(max_key) or min_count or pool_size)
+    except (TypeError, ValueError):
+        max_count = min_count or pool_size
+    min_count = min(max(min_count, 0), pool_size)
+    max_count = min(max(max_count, min_count), pool_size)
+    if max_count <= min_count:
+        return min_count
+    digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()
+    return min_count + (int(digest[:8], 16) % (max_count - min_count + 1))
+
+
+def _stable_pick_string_list(values: list[str], *, count: int, seed: str) -> list[str]:
+    if count <= 0 or not values:
+        return []
+    ranked = sorted(
+        enumerate(values),
+        key=lambda item: hashlib.sha256(f"{seed}:{item[0]}:{item[1]}".encode("utf-8")).hexdigest(),
+    )
+    return [value for _index, value in ranked[: min(count, len(ranked))]]
+
+
+def _unit_seed(plan: dict[str, Any], project: dict[str, Any], unit: dict[str, Any], field: str) -> str:
+    return ":".join(
+        [
+            str(plan.get("plan_id") or ""),
+            str(plan.get("request_id") or ""),
+            str(project.get("project_key") or ""),
+            str(unit.get("unit_key") or ""),
+            field,
+        ]
+    )
+
+
+def _unit_source(plan: dict[str, Any]) -> str:
+    template_parameters = _template_parameters(plan)
+    product_name = str(template_parameters.get("product_name") or "").strip()
+    if product_name:
+        return product_name
+    source_name = str(template_parameters.get("source_name") or "").strip()
+    if source_name:
+        return source_name
+    return str(_request_payload(plan).get("product") or "").strip()
+
+
+def _unit_titles(
+    template_parameters: dict[str, Any],
+    count: int,
+    *,
+    plan: dict[str, Any],
+    project: dict[str, Any],
+    unit: dict[str, Any],
+) -> list[dict[str, str]]:
+    title_pool = _clean_string_list(template_parameters.get("title_pool"))
+    if not title_pool:
+        return []
+    selection = _unit_creative_selection(template_parameters)
+    if str(selection.get("title_strategy") or "") == "deterministic_shuffle_per_unit":
+        picked = _stable_pick_string_list(
+            title_pool,
+            count=max(count, 1),
+            seed=_unit_seed(plan, project, unit, "title_pool"),
+        )
+        return [{"title": title} for title in picked]
+    return [{"title": title_pool[index % len(title_pool)]} for index in range(max(count, 1))]
 
 
 def _unit_promotion_materials(
     *,
     plan: dict[str, Any],
     project: dict[str, Any],
+    unit: dict[str, Any],
     materials: list[dict[str, Any]],
 ) -> dict[str, Any]:
     advertiser_id = str(project.get("advertiser_id") or "")
     template_parameters = _template_parameters(plan)
+    fixed_video_cover_id = str(template_parameters.get("fixed_video_cover_id") or "").strip()
     video_materials: list[dict[str, Any]] = []
     for material in materials:
         source_video_id = str(material.get("source_video_id") or "")
@@ -121,18 +203,110 @@ def _unit_promotion_materials(
             {
                 "image_mode": "CREATIVE_IMAGE_MODE_VIDEO_VERTICAL",
                 "video_id": _target_video_placeholder(advertiser_id=advertiser_id, source_video_id=source_video_id),
-                "video_cover_id": _target_video_cover_placeholder(advertiser_id=advertiser_id, source_video_id=source_video_id),
+                "video_cover_id": fixed_video_cover_id
+                or _target_video_cover_placeholder(advertiser_id=advertiser_id, source_video_id=source_video_id),
             }
         )
     payload: dict[str, Any] = {
         "video_material_list": video_materials,
-        "title_material_list": [{"title": _unit_title(project)}],
-        "call_to_action_buttons": ["立即查看"],
+        "title_material_list": _unit_titles(
+            template_parameters,
+            len(video_materials),
+            plan=plan,
+            project=project,
+            unit=unit,
+        ),
+        "call_to_action_buttons": [],
     }
     touch_url = str(template_parameters.get("effective_touch_url") or "").strip()
-    if touch_url:
+    if touch_url and not (touch_url.startswith("<") and touch_url.endswith(">")):
         payload["mini_program_info"] = {"url": touch_url}
+    cta_buttons = _clean_string_list(template_parameters.get("cta_pool"))
+    if cta_buttons:
+        selection = _unit_creative_selection(template_parameters)
+        if selection:
+            cta_count = _selection_count(
+                selection,
+                min_key="cta_min_count",
+                max_key="cta_max_count",
+                pool_size=len(cta_buttons),
+                seed=_unit_seed(plan, project, unit, "cta_pool_count"),
+            )
+            cta_buttons = _stable_pick_string_list(
+                cta_buttons,
+                count=cta_count,
+                seed=_unit_seed(plan, project, unit, "cta_pool"),
+            )
+        payload["call_to_action_buttons"] = cta_buttons
+    product_name = str(template_parameters.get("product_name") or "").strip()
+    product_image_id = str(template_parameters.get("product_image_id") or "").strip()
+    selling_points = _clean_string_list(template_parameters.get("product_selling_points"))
+    selection = _unit_creative_selection(template_parameters)
+    if selling_points and selection:
+        selling_point_count = _selection_count(
+            selection,
+            min_key="product_selling_point_min_count",
+            max_key="product_selling_point_max_count",
+            pool_size=len(selling_points),
+            seed=_unit_seed(plan, project, unit, "product_selling_points_count"),
+        )
+        selling_points = _stable_pick_string_list(
+            selling_points,
+            count=selling_point_count,
+            seed=_unit_seed(plan, project, unit, "product_selling_points"),
+        )
+    if product_name or product_image_id or selling_points:
+        payload["product_info"] = {
+            "titles": [product_name] if product_name else [],
+            "image_ids": [product_image_id] if product_image_id else [],
+            "selling_points": selling_points,
+            "product_name_type": "CUSTOM",
+            "product_image_type": "CUSTOM",
+            "product_selling_point_type": "CUSTOM",
+            "product_name_fields": [],
+            "product_image_fields": [],
+            "product_selling_point_fields": [],
+        }
+    landing_url = str(template_parameters.get("landing_url") or "").strip()
+    if landing_url:
+        payload["external_url_material_list"] = [landing_url]
+    anchor_related_type = str(template_parameters.get("anchor_related_type") or "").strip()
+    anchor_id = str(template_parameters.get("anchor_id") or "").strip()
+    anchor_type = str(template_parameters.get("anchor_type") or "").strip()
+    if anchor_related_type == "SELECT" and anchor_id and anchor_type:
+        payload["anchor_material_list"] = [{"anchor_id": anchor_id, "anchor_type": anchor_type}]
     return payload
+
+
+def _unit_native_setting(plan: dict[str, Any], project: dict[str, Any], unit: dict[str, Any]) -> dict[str, Any]:
+    template_parameters = _template_parameters(plan)
+    if str(template_parameters.get("delivery_identity") or "").strip() != "AWEME":
+        return {}
+    aweme_ids = [
+        str(item)
+        for item in (template_parameters.get("aweme_ids") if isinstance(template_parameters.get("aweme_ids"), list) else [])
+        if str(item or "").strip()
+    ]
+    if not aweme_ids:
+        return {}
+    selection = _unit_creative_selection(template_parameters)
+    if selection:
+        aweme_id = _stable_pick_string_list(
+            aweme_ids,
+            count=1,
+            seed=_unit_seed(plan, project, unit, "aweme_ids"),
+        )[0]
+    else:
+        try:
+            unit_index = int(unit.get("unit_index") or 1)
+        except (TypeError, ValueError):
+            unit_index = 1
+        aweme_id = aweme_ids[(unit_index - 1) % len(aweme_ids)]
+    return {
+        "aweme_id": aweme_id,
+        "is_feed_and_fav_see": "OFF",
+        "anchor_related_type": str(template_parameters.get("anchor_related_type") or "OFF"),
+    }
 
 
 def _with_idempotency(plan: dict[str, Any], project: dict[str, Any]) -> dict[str, Any]:
@@ -160,6 +334,18 @@ def _with_idempotency(plan: dict[str, Any], project: dict[str, Any]) -> dict[str
             material_fields = {**unit_fields, "material_id": str(material.get("material_id") or "")}
             source_video_id = str(material.get("source_video_id") or "")
             advertiser_id = str(project.get("advertiser_id") or "")
+            template_parameters = _template_parameters(plan)
+            fixed_video_cover_id = str(template_parameters.get("fixed_video_cover_id") or "").strip()
+            target_video_cover_id = (
+                {}
+                if fixed_video_cover_id
+                else {
+                    "target_video_cover_id": _target_video_cover_placeholder(
+                        advertiser_id=advertiser_id,
+                        source_video_id=source_video_id,
+                    )
+                }
+            )
             materials.append(
                 {
                     **material,
@@ -168,33 +354,28 @@ def _with_idempotency(plan: dict[str, Any], project: dict[str, Any]) -> dict[str
                     "target_advertiser_ids": [advertiser_id],
                     "source_video_ids": [source_video_id],
                     "target_video_id": _target_video_placeholder(advertiser_id=advertiser_id, source_video_id=source_video_id),
-                    "target_video_cover_id": _target_video_cover_placeholder(
-                        advertiser_id=advertiser_id,
-                        source_video_id=source_video_id,
-                    ),
+                    **target_video_cover_id,
                     "idempotency_key": _idempotency_key("bind_material", material_fields),
                 }
             )
-        promotion_materials = _unit_promotion_materials(plan=plan, project=project, materials=materials)
-        template_parameters = _template_parameters(plan)
-        units.append(
-            {
+        promotion_materials = _unit_promotion_materials(plan=plan, project=project, unit=unit, materials=materials)
+        unit_payload = {
                 **unit,
                 "project_id": project_id_placeholder,
                 "promotion_id": promotion_id_placeholder,
-                "budget": float(project.get("daily_budget") or 0),
-                "budget_mode": "BUDGET_MODE_DAY",
-                "roi_goal": template_parameters.get("roi_coefficient"),
-                "source": _unit_source(),
-                "operation": "DISABLE",
+                "source": _unit_source(plan),
+                "operation": str(unit.get("operation") or "DISABLE"),
                 "promotion_materials": promotion_materials,
                 "materials": materials,
                 "idempotency_key": _idempotency_key("create_unit", unit_fields),
-            }
-        )
+        }
+        native_setting = _unit_native_setting(plan, project, unit)
+        if native_setting:
+            unit_payload["native_setting"] = native_setting
+        units.append(unit_payload)
     return {
         **project,
-        "operation": "DISABLE",
+        "operation": str(project.get("operation") or "DISABLE"),
         "units": units,
         "idempotency_key": _idempotency_key("create_project", plan_fields),
     }
@@ -268,6 +449,14 @@ def _task_payload_drafts(project: dict[str, Any], *, payload_schema: dict[str, A
         materials = unit.get("materials") if isinstance(unit.get("materials"), list) else []
         for material in [row for row in materials if isinstance(row, dict)]:
             source_video_id = str(material.get("source_video_id") or "")
+            expected_outputs = {
+                "target_video_id": _target_video_placeholder(
+                    advertiser_id=str(project.get("advertiser_id") or ""),
+                    source_video_id=source_video_id,
+                )
+            }
+            if material.get("target_video_cover_id"):
+                expected_outputs["target_video_cover_id"] = str(material.get("target_video_cover_id") or "")
             drafts.append(
                 {
                     "operation": "lookup_target_material",
@@ -281,16 +470,7 @@ def _task_payload_drafts(project: dict[str, Any], *, payload_schema: dict[str, A
                         "source_video_id": source_video_id,
                         "material_id": str(material.get("material_id") or ""),
                     },
-                    "expected_outputs": {
-                        "target_video_id": _target_video_placeholder(
-                            advertiser_id=str(project.get("advertiser_id") or ""),
-                            source_video_id=source_video_id,
-                        ),
-                        "target_video_cover_id": _target_video_cover_placeholder(
-                            advertiser_id=str(project.get("advertiser_id") or ""),
-                            source_video_id=source_video_id,
-                        ),
-                    },
+                    "expected_outputs": expected_outputs,
                 }
             )
     for unit in [row for row in units if isinstance(row, dict)]:
@@ -310,9 +490,7 @@ def _task_payload_drafts(project: dict[str, Any], *, payload_schema: dict[str, A
                     "promotion_materials": unit.get("promotion_materials")
                     if isinstance(unit.get("promotion_materials"), dict)
                     else {},
-                    "budget": float(unit.get("budget") or 0),
-                    "budget_mode": str(unit.get("budget_mode") or ""),
-                    "roi_goal": unit.get("roi_goal"),
+                    "native_setting": unit.get("native_setting") if isinstance(unit.get("native_setting"), dict) else {},
                     "source": str(unit.get("source") or ""),
                     "operation": str(unit.get("operation") or ""),
                     "field_defaults": project.get("field_defaults") if isinstance(project.get("field_defaults"), dict) else {},
@@ -674,8 +852,6 @@ def _violations(
     )
     if str(preflight.get("status") or "") != "passed" or not bool(preflight.get("ok", True)):
         violations.append("create preflight must pass before dry-run")
-    if bool(preflight.get("approved_for_execute", False)):
-        violations.append("create preflight must not approve execution in phase1")
     max_projects = _policy_limit(policy, "max_projects_per_dry_run", 50)
     max_units = _policy_limit(policy, "max_units_per_dry_run", 500)
     unit_count = sum(
@@ -806,7 +982,6 @@ def build_create_dry_run(
         "idempotency_ledger": {"status": "not_recorded", "recorded_key_count": 0, "existing_key_count": 0},
         "candidate_tasks": candidate_tasks if not violations else [],
         "violations": violations,
-        "approved_for_execute": False,
         "actions": [],
     }
 

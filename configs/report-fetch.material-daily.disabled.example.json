@@ -22,8 +22,7 @@
         "user_id": "default",
         "auto_refresh": true,
         "refresh_lead_seconds": 900,
-        "app_id": "",
-        "app_secret": ""
+        "credentials_file": "data/secrets/oceanengine-app.local.json"
       },
       "timeout_seconds": 20,
       "max_retries": 2,

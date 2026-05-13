@@ -5,6 +5,28 @@ from typing import Any
 
 PROVIDER_FIELD_MAPPING_VERSION = "phase1.oceanengine.create_payload.draft.v1"
 
+_CREATE_PROJECT_TEMPLATE_DEFAULT_FIELDS = {
+    "field_defaults.marketing_goal",
+    "field_defaults.ad_type",
+    "field_defaults.delivery_mode",
+    "field_defaults.micro_promotion_type",
+    "field_defaults.micro_app_instance_id",
+    "field_defaults.aigc_dynamic_creative_switch",
+    "field_defaults.external_action",
+    "field_defaults.deep_external_action",
+    "field_defaults.inventory_catalog",
+    "field_defaults.action_track_url",
+    "field_defaults.schedule_type",
+    "field_defaults.deep_bid_type",
+    "field_defaults.bid_type",
+    "field_defaults.budget_mode",
+    "field_defaults.cpa_bid",
+    "field_defaults.roi_goal",
+    "field_defaults.district",
+    "field_defaults.gender",
+    "field_defaults.audience_platform",
+}
+
 
 def disabled_provider_adapter(policy: dict[str, Any] | None = None) -> dict[str, Any]:
     adapter = policy.get("provider_adapter") if isinstance(policy, dict) and isinstance(policy.get("provider_adapter"), dict) else {}
@@ -165,7 +187,43 @@ def _provider_payload(
         value = _payload_value(payload, internal_field)
         if value is not None:
             _set_payload_value(provider_payload, provider_field, value)
+    if operation == "create_project":
+        _apply_create_project_template_defaults(provider_payload, payload)
     return provider_payload
+
+
+def _apply_create_project_template_defaults(provider_payload: dict[str, Any], payload: dict[str, Any]) -> None:
+    field_defaults = payload.get("field_defaults") if isinstance(payload.get("field_defaults"), dict) else {}
+    template_fields = {
+        "marketing_goal": "marketing_goal",
+        "ad_type": "ad_type",
+        "delivery_mode": "delivery_mode",
+        "micro_promotion_type": "micro_promotion_type",
+        "micro_app_instance_id": "micro_app_instance_id",
+        "aigc_dynamic_creative_switch": "aigc_dynamic_creative_switch",
+        "external_action": "optimize_goal.external_action",
+        "deep_external_action": "optimize_goal.deep_external_action",
+        "inventory_catalog": "delivery_range.inventory_catalog",
+        "action_track_url": "track_url_setting.action_track_url",
+        "schedule_type": "delivery_setting.schedule_type",
+        "deep_bid_type": "delivery_setting.deep_bid_type",
+        "bid_type": "delivery_setting.bid_type",
+        "budget_mode": "delivery_setting.budget_mode",
+        "cpa_bid": "delivery_setting.cpa_bid",
+        "roi_goal": "delivery_setting.roi_goal",
+        "district": "audience.district",
+        "gender": "audience.gender",
+        "audience_platform": "audience.platform",
+    }
+    for internal_field, provider_field in template_fields.items():
+        if internal_field not in field_defaults:
+            continue
+        value = field_defaults.get(internal_field)
+        if isinstance(value, str) and not value.strip():
+            continue
+        if value is None:
+            continue
+        _set_payload_value(provider_payload, provider_field, value)
 
 
 def _unmapped_payload_fields(
@@ -187,8 +245,25 @@ def _unmapped_payload_fields(
     return [
         {"operation": operation, "internal_field": str(field)}
         for field in _payload_field_paths(payload)
-        if field not in operation_map and field not in local_only_fields
+        if not _payload_field_is_mapped(field, operation_map)
+        and field not in local_only_fields
+        and not _is_adapter_consumed_template_field(operation=operation, field=field)
     ]
+
+
+def _payload_field_is_mapped(field: str, operation_map: dict[str, str]) -> bool:
+    if field in operation_map:
+        return True
+    parts = field.split(".")
+    return any(".".join(parts[:index]) in operation_map for index in range(1, len(parts)))
+
+
+def _is_adapter_consumed_template_field(*, operation: str, field: str) -> bool:
+    if operation == "create_project":
+        return field in _CREATE_PROJECT_TEMPLATE_DEFAULT_FIELDS
+    if operation == "create_unit":
+        return field in _CREATE_PROJECT_TEMPLATE_DEFAULT_FIELDS
+    return False
 
 
 def _contract_unmapped_payload_fields(provider_payload_drafts: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -316,6 +391,7 @@ def _set_payload_value(payload: dict[str, Any], field: str, value: Any) -> None:
     parts = [part for part in field.split(".") if part]
     if not parts:
         return
+    value = _provider_value(field, value)
     current = payload
     for part in parts[:-1]:
         existing = current.get(part)
@@ -324,6 +400,18 @@ def _set_payload_value(payload: dict[str, Any], field: str, value: Any) -> None:
             current[part] = existing
         current = existing
     current[parts[-1]] = value
+    if field == "delivery_range.inventory_type":
+        current.setdefault("inventory_catalog", "UNIVERSAL_SMART")
+
+
+def _provider_value(field: str, value: Any) -> Any:
+    if field == "micro_app_instance_id" and isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    if field == "delivery_range.inventory_type" and isinstance(value, str):
+        return [value] if value else []
+    if field == "track_url_setting.action_track_url" and isinstance(value, str):
+        return [value] if value else []
+    return value
 
 
 def _payload_field_paths(payload: dict[str, Any]) -> list[str]:

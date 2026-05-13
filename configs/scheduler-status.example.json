@@ -1,0 +1,54 @@
+{
+  "scheduler_status": {
+    "project_name": "RoiBang-V2",
+    "timezone": "Asia/Shanghai",
+    "expected_data_date": {
+      "mode": "yesterday"
+    },
+    "jobs": [
+      {
+        "job_id": "roibang-material-history-yesterday",
+        "display_name": "02:00 昨日有消耗账户素材明细同步",
+        "data_check": {
+          "type": "material_daily_metrics"
+        }
+      },
+      {
+        "job_id": "roibang-operation-log-yesterday-sync",
+        "display_name": "02:30 昨日有消耗账户操作日志同步",
+        "data_check": {
+          "type": "operation_logs"
+        }
+      },
+      {
+        "job_id": "roibang-daily-report-pipeline",
+        "display_name": "04:00 每日报表同步",
+        "data_check": {
+          "type": "metric_snapshots"
+        }
+      },
+      {
+        "job_id": "roibang-source-material-account-auto-push",
+        "display_name": "05:00 源素材账户自动补材",
+        "data_check": {
+          "type": "source_material_account",
+          "source_advertiser_id": "1856647522964490",
+          "product": "勇者突进"
+        }
+      },
+      {
+        "job_id": "roibang-project-schedule-restore-due",
+        "display_name": "00:10 项目时段到期恢复",
+        "data_check": {
+          "type": "project_schedule_restore_queue"
+        }
+      }
+    ],
+    "delivery": {
+      "feishu": {
+        "enabled": false,
+        "runtime_file": "data/secrets/feishu.runtime.local.json"
+      }
+    }
+  }
+}

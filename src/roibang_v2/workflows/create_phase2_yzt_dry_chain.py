@@ -76,8 +76,8 @@ def _human_next_steps(violations: list[str]) -> list[str]:
         steps.append("把预算改到策略允许范围内，或先调整策略里的预算上限。")
     if "not in account_pool" in joined:
         steps.append("把目标账户换成本地账户池里存在的账户，或先同步账户池。")
-    if "candidate pool has 0 usable materials" in joined or "has 0 materials" in joined:
-        steps.append("先同步或导入素材候选池，确保素材数量够这次预演使用。")
+    if "source material account has 0 usable materials" in joined or "has 0 materials" in joined:
+        steps.append("先同步源素材账户，确保素材数量够这次预演使用。")
     if "create preflight must pass before dry-run" in joined:
         steps.append("等前面的检查通过后，再重新跑完整预演。")
     return steps or ["查看 violations 里的失败原因，修配置或本地数据后重新跑完整预演。"]
@@ -125,7 +125,6 @@ def _failed_chain_payload(
         "artifacts": {"preview": _artifact_path(preview)},
         "preview_summary": preview.get("summary") if isinstance(preview.get("summary"), dict) else {},
         "dry_run_summary": {},
-        "approved_for_execute": False,
         "blocking_summary": _blocking_summary(violations),
         "human_next_steps": _human_next_steps(violations),
         "violations": violations,
@@ -246,7 +245,6 @@ def run_create_phase2_yzt_dry_chain_request(
         },
         "preview_summary": preview_summary,
         "dry_run_summary": dry_run.get("summary") if isinstance(dry_run.get("summary"), dict) else {},
-        "approved_for_execute": False,
         "blocking_summary": _blocking_summary(violations),
         "human_next_steps": _human_next_steps(violations),
         "violations": violations,

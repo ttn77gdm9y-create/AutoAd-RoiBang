@@ -20,7 +20,7 @@ def _latest_artifact(runs_dir: Path, workflow: str) -> Path:
 def run_from_args(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run Phase 1 create dry-run simulation.")
     parser.add_argument("--config", default="configs/runtime.example.json")
-    parser.add_argument("--policy", default="policies/strategy.example.json")
+    parser.add_argument("--policy", default="policies/create-policy.example.json")
     parser.add_argument("--create-strategy-plan-artifact", default="")
     parser.add_argument("--create-preflight-artifact", default="")
     parser.add_argument("--create-provider-field-map-check-artifact", default="")

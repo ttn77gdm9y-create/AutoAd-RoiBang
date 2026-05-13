@@ -1,10 +1,16 @@
 import importlib.util
 import json
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 from roibang_v2.db.bootstrap import bootstrap_database
-from roibang_v2.workflows.create_material_bind_ledger import record_create_material_bind_result
+from roibang_v2.workflows.create_material_bind_ledger import (
+    material_bind_key_from_payload,
+    record_create_material_bind_result,
+)
 from roibang_v2.workflows.create_provider_id_ledger import record_create_provider_id
 from roibang_v2.workflows.create_live_execute_once import run_create_live_execute_once_request
 
@@ -131,24 +137,6 @@ def _execute_artifact() -> dict:
     }
 
 
-def _scaffold_artifact() -> dict:
-    return {
-        "workflow": "create_live_payload_adapter_scaffold",
-        "execution_enabled": False,
-        "external_api_calls": 0,
-        "live_adapter_gate": {
-            "ready_for_live_execute": True,
-            "required_gates": {"phase_gate_allows_live_execute": True},
-            "endpoints": {
-                "create_project": "/open_api/2/project/create/",
-                "create_unit": "/open_api/2/promotion/create/",
-                "lookup_target_material": "/open_api/2/file/video/get/",
-                "bind_material": "/open_api/2/file/material/bind/",
-            },
-        },
-    }
-
-
 def _policy() -> dict:
     return {
         "create_plan": {
@@ -163,8 +151,8 @@ def _policy() -> dict:
             "live_api": {
                 "enabled": True,
                 "endpoints": {
-                    "create_project": "/open_api/2/project/create/",
-                    "create_unit": "/open_api/2/promotion/create/",
+                    "create_project": "/open_api/v3.0/project/create/",
+                    "create_unit": "/open_api/v3.0/promotion/create/",
                     "lookup_target_material": "/open_api/2/file/video/get/",
                     "bind_material": "/open_api/2/file/material/bind/",
                 },
@@ -204,6 +192,29 @@ def _create_plan(*, plan_id: str = "plan-1") -> dict:
     }
 
 
+def _write_token_store(path: Path, *, access: str = "access-secret", refresh: str = "refresh-secret", expires_in: int = 3600) -> None:
+    now = datetime(2026, 5, 7, 2, 0, tzinfo=timezone.utc)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "tokens": {
+                    "default": {
+                        "access_token": access,
+                        "refresh_token": refresh,
+                        "expires_at": (now + timedelta(seconds=expires_in)).isoformat(),
+                        "refresh_token_expires_at": (now + timedelta(days=30)).isoformat(),
+                        "updated_at": now.isoformat(),
+                    }
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
 def _seed_plan_sources(db_path: Path) -> None:
     bootstrap_database(db_path)
     with sqlite3.connect(db_path) as conn:
@@ -225,6 +236,11 @@ def _seed_plan_sources(db_path: Path) -> None:
         )
 
 
+def _write_allowed_accounts(path: Path, rows: list[dict]) -> Path:
+    path.write_text(json.dumps({"allowed_target_accounts": rows}, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
 def test_create_live_execute_once_direct_mode_blocks_without_runtime_or_pack(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     bootstrap_database(db_path)
@@ -233,7 +249,6 @@ def test_create_live_execute_once_direct_mode_blocks_without_runtime_or_pack(tmp
         {
             "create_live_execute_once": {
                 "create_execute_artifact": _execute_artifact(),
-                "create_live_payload_adapter_scaffold_artifact": _scaffold_artifact(),
                 "policy": _policy(),
                 "runtime": {"execution_enabled": False, "external_api_enabled": False},
             }
@@ -246,7 +261,7 @@ def test_create_live_execute_once_direct_mode_blocks_without_runtime_or_pack(tmp
     assert result["workflow"] == "create_live_execute_once"
     assert result["status"] == "blocked"
     assert result["reason"] == "direct_execute_not_ready"
-    assert result["source_execution_pack_status"] == "not_required_direct_create_execute"
+    assert "source_execution_pack_status" not in result
     assert result["execution_enabled"] is False
     assert result["live_execute_enabled"] is False
     assert result["external_api_calls"] == 0
@@ -268,7 +283,6 @@ def test_create_live_execute_once_direct_mode_requires_verified_field_mapping_wh
         {
             "create_live_execute_once": {
                 "create_execute_artifact": _execute_artifact(),
-                "create_live_payload_adapter_scaffold_artifact": _scaffold_artifact(),
                 "policy": policy,
                 "runtime": {"execution_enabled": True, "external_api_enabled": True},
             }
@@ -311,7 +325,6 @@ def test_create_live_execute_once_direct_mode_runs_fixed_sequence_with_transport
         {
             "create_live_execute_once": {
                 "create_execute_artifact": _execute_artifact(),
-                "create_live_payload_adapter_scaffold_artifact": _scaffold_artifact(),
                 "policy": _policy(),
                 "runtime": {"execution_enabled": True, "external_api_enabled": True},
             }
@@ -323,7 +336,7 @@ def test_create_live_execute_once_direct_mode_runs_fixed_sequence_with_transport
 
     assert result["ok"] is True
     assert result["status"] == "create_http_completed"
-    assert result["source_execution_pack_status"] == "not_required_direct_create_execute"
+    assert "source_execution_pack_status" not in result
     assert result["execution_enabled"] is True
     assert result["live_execute_enabled"] is True
     assert result["external_api_calls"] == 4
@@ -333,6 +346,75 @@ def test_create_live_execute_once_direct_mode_runs_fixed_sequence_with_transport
         "lookup_target_material",
         "create_unit",
     ]
+
+
+def test_create_live_execute_once_deletes_closed_projects_and_retries_when_project_cap_is_hit(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+    calls: list[dict] = []
+    create_attempts = {"count": 0}
+
+    def fake_transport(call: dict) -> dict:
+        calls.append(call)
+        if call["operation"] == "create_project":
+            create_attempts["count"] += 1
+            if create_attempts["count"] == 1:
+                return {"code": 40000, "message": "广告主已创建30个项目，请删除部分项目后再试"}
+            return {"code": 0, "data": {"project_id": "project-001"}}
+        if call["operation"] == "lookup_disabled_projects":
+            assert call["payload"]["advertiser_id"] == "target-1"
+            return {
+                "code": 0,
+                "data": {
+                    "list": [
+                        {"project_id": f"closed-{index:02d}", "project_status": "PROJECT_STATUS_DISABLE"}
+                        for index in range(1, 13)
+                    ]
+                },
+            }
+        if call["operation"] == "delete_project":
+            assert call["payload"]["advertiser_id"] == "target-1"
+            return {"code": 0, "data": {"project_id": call["payload"]["project_id"]}}
+        if call["operation"] == "bind_material":
+            return {"code": 0, "data": {"task_id": "bind-001"}}
+        if call["operation"] == "lookup_target_material":
+            return {"code": 0, "data": {"target_video_id": "target-video-001", "target_video_cover_id": "target-cover-001"}}
+        if call["operation"] == "create_unit":
+            assert call["payload"]["project_id"] == "project-001"
+            return {"code": 0, "data": {"promotion_id": "promotion-001"}}
+        raise AssertionError(call["operation"])
+
+    result = run_create_live_execute_once_request(
+        {
+            "create_live_execute_once": {
+                "create_execute_artifact": _execute_artifact(),
+                "policy": _policy(),
+                "runtime": {"execution_enabled": True, "external_api_enabled": True},
+            }
+        },
+        runs_dir=tmp_path / "runs",
+        db_path=db_path,
+        transport=fake_transport,
+    )
+
+    assert result["ok"] is True
+    assert result["status"] == "create_http_completed"
+    assert result["external_api_calls"] == 16
+    assert [call["operation"] for call in calls] == [
+        "create_project",
+        "lookup_disabled_projects",
+        *["delete_project"] * 10,
+        "create_project",
+        "bind_material",
+        "lookup_target_material",
+        "create_unit",
+    ]
+    assert [call["payload"]["project_id"] for call in calls if call["operation"] == "delete_project"] == [
+        f"closed-{index:02d}" for index in range(1, 11)
+    ]
+    assert result["project_cap_cleanup"]["attempted_count"] == 1
+    assert result["project_cap_cleanup"]["deleted_count"] == 10
+    assert result["project_cap_cleanup"]["records"][0]["status"] == "deleted_and_retried"
 
 
 def test_create_live_execute_once_direct_mode_allows_chain_resolvable_lookups(tmp_path: Path):
@@ -358,7 +440,6 @@ def test_create_live_execute_once_direct_mode_allows_chain_resolvable_lookups(tm
         {
             "create_live_execute_once": {
                 "create_execute_artifact": create_execute,
-                "create_live_payload_adapter_scaffold_artifact": _scaffold_artifact(),
                 "policy": _policy(),
                 "runtime": {"execution_enabled": True, "external_api_enabled": True},
             }
@@ -388,7 +469,6 @@ def test_create_live_execute_once_direct_mode_blocks_unproducible_lookup(tmp_pat
         {
             "create_live_execute_once": {
                 "create_execute_artifact": create_execute,
-                "create_live_payload_adapter_scaffold_artifact": _scaffold_artifact(),
                 "policy": _policy(),
                 "runtime": {"execution_enabled": True, "external_api_enabled": True},
             }
@@ -416,7 +496,6 @@ def test_create_live_execute_once_direct_mode_blocks_active_create_payload(tmp_p
         {
             "create_live_execute_once": {
                 "create_execute_artifact": create_execute,
-                "create_live_payload_adapter_scaffold_artifact": _scaffold_artifact(),
                 "policy": _policy(),
                 "runtime": {"execution_enabled": True, "external_api_enabled": True},
             }
@@ -453,7 +532,6 @@ def test_create_live_execute_once_runs_create_http_transport_in_order(tmp_path: 
         {
             "create_live_execute_once": {
                 "create_execute_artifact": _execute_artifact(),
-                "create_live_payload_adapter_scaffold_artifact": _scaffold_artifact(),
                 "policy": _policy(),
                 "runtime": {"execution_enabled": True, "external_api_enabled": True},
             }
@@ -519,6 +597,271 @@ def test_create_live_execute_once_runs_create_http_transport_in_order(tmp_path: 
     ]
 
 
+def test_create_live_execute_once_returns_failure_artifact_for_transport_error(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+    calls: list[str] = []
+
+    def fake_transport(call: dict) -> dict:
+        calls.append(call["operation"])
+        if call["operation"] == "create_project":
+            raise RuntimeError("create HTTP request failed with transient network error")
+        if call["operation"] == "lookup_existing_project":
+            return {"code": 0, "data": {"list": []}}
+        raise AssertionError(call["operation"])
+
+    result = run_create_live_execute_once_request(
+        {
+            "create_live_execute_once": {
+                "create_execute_artifact": _execute_artifact(),
+                "policy": _policy(),
+                "runtime": {"execution_enabled": True, "external_api_enabled": True},
+            }
+        },
+        runs_dir=tmp_path / "runs",
+        db_path=db_path,
+        transport=fake_transport,
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "create_http_failed"
+    assert result["external_api_calls"] == 4
+    assert calls == ["create_project", "lookup_existing_project", "create_project", "lookup_existing_project"]
+    assert result["failure"] == {
+        "operation": "create_project",
+        "index": 0,
+        "message": "create HTTP request failed with transient network error",
+        "code": -1,
+    }
+    assert Path(result["artifact_path"]).exists()
+
+
+def test_create_live_execute_once_retries_create_project_after_lookup_confirms_missing(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+    calls: list[dict] = []
+    create_attempts = {"count": 0}
+
+    def fake_transport(call: dict) -> dict:
+        calls.append(call)
+        if call["operation"] == "create_project":
+            create_attempts["count"] += 1
+            if create_attempts["count"] == 1:
+                raise RuntimeError("create HTTP request failed with transient network error")
+            return {"code": 0, "data": {"project_id": "project-001"}}
+        if call["operation"] == "lookup_existing_project":
+            assert call["payload"] == {"advertiser_id": "target-1", "name": "首单项目"}
+            return {"code": 0, "data": {"list": []}}
+        if call["operation"] == "bind_material":
+            return {"code": 0, "data": {"task_id": "bind-001"}}
+        if call["operation"] == "lookup_target_material":
+            return {"code": 0, "data": {"target_video_id": "target-video-001", "target_video_cover_id": "target-cover-001"}}
+        if call["operation"] == "create_unit":
+            assert call["payload"]["project_id"] == "project-001"
+            return {"code": 0, "data": {"promotion_id": "promotion-001"}}
+        raise AssertionError(call["operation"])
+
+    result = run_create_live_execute_once_request(
+        {
+            "create_live_execute_once": {
+                "create_execute_artifact": _execute_artifact(),
+                "policy": _policy(),
+                "runtime": {"execution_enabled": True, "external_api_enabled": True},
+            }
+        },
+        runs_dir=tmp_path / "runs",
+        db_path=db_path,
+        transport=fake_transport,
+    )
+
+    assert result["ok"] is True
+    assert [call["operation"] for call in calls] == [
+        "create_project",
+        "lookup_existing_project",
+        "create_project",
+        "bind_material",
+        "lookup_target_material",
+        "create_unit",
+    ]
+    assert result["external_api_calls"] == 6
+
+
+def test_create_live_execute_once_returns_failure_when_recovery_lookup_fails(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+    calls: list[str] = []
+
+    def fake_transport(call: dict) -> dict:
+        calls.append(call["operation"])
+        if call["operation"] == "create_project":
+            raise RuntimeError("create HTTP request failed with transient network error")
+        if call["operation"] == "lookup_existing_project":
+            raise RuntimeError("project lookup failed")
+        raise AssertionError(call["operation"])
+
+    result = run_create_live_execute_once_request(
+        {
+            "create_live_execute_once": {
+                "create_execute_artifact": _execute_artifact(),
+                "policy": _policy(),
+                "runtime": {"execution_enabled": True, "external_api_enabled": True},
+            }
+        },
+        runs_dir=tmp_path / "runs",
+        db_path=db_path,
+        transport=fake_transport,
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "create_http_failed"
+    assert result["external_api_calls"] == 2
+    assert calls == ["create_project", "lookup_existing_project"]
+    assert result["failure"] == {
+        "operation": "lookup_existing_project",
+        "index": 0,
+        "message": "project lookup failed",
+        "code": -1,
+    }
+
+
+def test_create_live_execute_once_records_existing_unit_after_transient_create_error(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+    calls: list[dict] = []
+
+    def fake_transport(call: dict) -> dict:
+        calls.append(call)
+        if call["operation"] == "create_project":
+            return {"code": 0, "data": {"project_id": "project-001"}}
+        if call["operation"] == "bind_material":
+            return {"code": 0, "data": {"task_id": "bind-001"}}
+        if call["operation"] == "lookup_target_material":
+            return {"code": 0, "data": {"target_video_id": "target-video-001", "target_video_cover_id": "target-cover-001"}}
+        if call["operation"] == "create_unit":
+            return {"code": 40000, "message": "网络异常"}
+        if call["operation"] == "lookup_existing_unit":
+            assert call["payload"] == {
+                "advertiser_id": "target-1",
+                "project_id": "project-001",
+                "name": "",
+            }
+            return {"code": 0, "data": {"list": [{"promotion_id": "promotion-existing", "promotion_name": ""}]}}
+        raise AssertionError(call["operation"])
+
+    result = run_create_live_execute_once_request(
+        {
+            "create_live_execute_once": {
+                "create_execute_artifact": _execute_artifact(),
+                "policy": _policy(),
+                "runtime": {"execution_enabled": True, "external_api_enabled": True},
+            }
+        },
+        runs_dir=tmp_path / "runs",
+        db_path=db_path,
+        transport=fake_transport,
+    )
+
+    assert result["ok"] is True
+    assert [call["operation"] for call in calls] == [
+        "create_project",
+        "bind_material",
+        "lookup_target_material",
+        "create_unit",
+        "lookup_existing_unit",
+    ]
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT provider_id
+            FROM create_provider_id_ledger
+            WHERE entity_type = 'promotion' AND local_key = 'target-1-p001-u01'
+            """
+        ).fetchone()
+    assert row == ("promotion-existing",)
+
+
+def test_create_live_execute_once_batches_target_material_lookup_by_account(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+    create_execute = json.loads(json.dumps(_execute_artifact(), ensure_ascii=False))
+    create_execute["resolved_provider_payload_drafts"].append(
+        {
+            "operation": "lookup_target_material",
+            "payload": {
+                "target_advertiser_id": "target-1",
+                "source_video_id": "video-2",
+                "material_id": "material-2",
+            },
+            "executable": False,
+            "live_api_payload": False,
+        }
+    )
+    create_execute["provider_id_ledger_requirements"]["required_before_create_unit"].extend(
+        [
+            {"entity_type": "target_video", "local_key": "target_video:target-1:video-2"},
+            {"entity_type": "target_video_cover", "local_key": "target_video_cover:target-1:video-2"},
+        ]
+    )
+    calls: list[dict] = []
+
+    def fake_transport(call: dict) -> dict:
+        calls.append(call)
+        if call["operation"] == "create_project":
+            return {"code": 0, "data": {"project_id": "project-001"}}
+        if call["operation"] == "bind_material":
+            return {"code": 0, "data": {"task_id": "bind-001"}}
+        if call["operation"] == "lookup_target_material":
+            assert call["payload"]["material_ids"] == ["material-1", "material-2"]
+            return {
+                "code": 0,
+                "data": {
+                    "list": [
+                        {"material_id": "material-1", "id": "target-video-001", "video_cover_id": "target-cover-001"},
+                        {"material_id": "material-2", "id": "target-video-002", "video_cover_id": "target-cover-002"},
+                    ]
+                },
+            }
+        if call["operation"] == "create_unit":
+            return {"code": 0, "data": {"promotion_id": "promotion-001"}}
+        raise AssertionError(call["operation"])
+
+    result = run_create_live_execute_once_request(
+        {
+            "create_live_execute_once": {
+                "create_execute_artifact": create_execute,
+                "policy": _policy(),
+                "runtime": {"execution_enabled": True, "external_api_enabled": True},
+            }
+        },
+        runs_dir=tmp_path / "runs",
+        db_path=db_path,
+        transport=fake_transport,
+    )
+
+    assert result["ok"] is True
+    assert [call["operation"] for call in calls] == [
+        "create_project",
+        "bind_material",
+        "lookup_target_material",
+        "create_unit",
+    ]
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT entity_type, local_key, provider_id
+            FROM create_provider_id_ledger
+            WHERE entity_type IN ('target_video', 'target_video_cover')
+            ORDER BY local_key
+            """
+        ).fetchall()
+    assert rows == [
+        ("target_video", "target_video:target-1:video-1", "target-video-001"),
+        ("target_video", "target_video:target-1:video-2", "target-video-002"),
+        ("target_video_cover", "target_video_cover:target-1:video-1", "target-cover-001"),
+        ("target_video_cover", "target_video_cover:target-1:video-2", "target-cover-002"),
+    ]
+
+
 def test_create_live_execute_once_skips_existing_project_and_resumes_unit(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     bootstrap_database(db_path)
@@ -551,7 +894,6 @@ def test_create_live_execute_once_skips_existing_project_and_resumes_unit(tmp_pa
         {
             "create_live_execute_once": {
                 "create_execute_artifact": _execute_artifact(),
-                "create_live_payload_adapter_scaffold_artifact": _scaffold_artifact(),
                 "policy": _policy(),
                 "runtime": {"execution_enabled": True, "external_api_enabled": True},
             }
@@ -587,6 +929,118 @@ def test_create_live_execute_once_skips_existing_project_and_resumes_unit(tmp_pa
         ("target_video", "target_video:target-1:video-1", "target-video-001"),
         ("target_video_cover", "target_video_cover:target-1:video-1", "target-cover-001"),
     ]
+
+
+def test_create_live_execute_once_ignores_mock_provider_ids_during_live_run(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+    record_create_provider_id(
+        db_path=db_path,
+        entity_type="project",
+        local_key="target-1-p001",
+        provider_id="mock_project_target_1_p001",
+        plan_id="old-plan",
+        request_id="old-req",
+        advertiser_id="target-1",
+        source_workflow="create_mock_execute",
+    )
+    record_create_provider_id(
+        db_path=db_path,
+        entity_type="promotion",
+        local_key="target-1-p001-u01",
+        provider_id="mock_promotion_target_1_p001_u01",
+        plan_id="old-plan",
+        request_id="old-req",
+        advertiser_id="target-1",
+        parent_local_key="target-1-p001",
+        source_workflow="create_mock_execute",
+    )
+    calls: list[dict] = []
+
+    def fake_transport(call: dict) -> dict:
+        calls.append(call)
+        if call["operation"] == "create_project":
+            return {"code": 0, "data": {"project_id": "project-real"}}
+        if call["operation"] == "bind_material":
+            return {"code": 0, "data": {"task_id": "bind-001"}}
+        if call["operation"] == "lookup_target_material":
+            return {"code": 0, "data": {"target_video_id": "target-video-real", "target_video_cover_id": "target-cover-real"}}
+        if call["operation"] == "create_unit":
+            assert call["payload"]["project_id"] == "project-real"
+            return {"code": 0, "data": {"promotion_id": "promotion-real"}}
+        raise AssertionError(call["operation"])
+
+    result = run_create_live_execute_once_request(
+        {
+            "create_live_execute_once": {
+                "create_execute_artifact": _execute_artifact(),
+                "policy": _policy(),
+                "runtime": {"execution_enabled": True, "external_api_enabled": True},
+            }
+        },
+        runs_dir=tmp_path / "runs",
+        db_path=db_path,
+        transport=fake_transport,
+    )
+
+    assert result["ok"] is True
+    assert [call["operation"] for call in calls] == [
+        "create_project",
+        "bind_material",
+        "lookup_target_material",
+        "create_unit",
+    ]
+    assert result["idempotency"]["skipped_existing_provider_id_count"] == 0
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT entity_type, local_key, provider_id, source_workflow
+            FROM create_provider_id_ledger
+            ORDER BY entity_type, local_key
+            """
+        ).fetchall()
+    assert ("project", "target-1-p001", "project-real", "create_live_execute_once") in rows
+    assert ("promotion", "target-1-p001-u01", "promotion-real", "create_live_execute_once") in rows
+
+
+def test_create_live_execute_once_replaces_invalid_provider_id_record(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+    record_create_provider_id(
+        db_path=db_path,
+        entity_type="target_video",
+        local_key="target_video:target-1:video-1",
+        provider_id="wrong-video-id",
+        source_workflow="create_live_execute_once",
+    )
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE create_provider_id_ledger
+            SET status = 'invalid'
+            WHERE entity_type = 'target_video'
+              AND local_key = 'target_video:target-1:video-1'
+            """
+        )
+    record = record_create_provider_id(
+        db_path=db_path,
+        entity_type="target_video",
+        local_key="target_video:target-1:video-1",
+        provider_id="correct-video-id",
+        source_workflow="create_live_execute_once",
+    )
+
+    assert record["status"] == "recorded"
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT provider_id, status
+            FROM create_provider_id_ledger
+            WHERE entity_type = 'target_video'
+              AND local_key = 'target_video:target-1:video-1'
+            """
+        ).fetchone()
+    assert row == ("correct-video-id", "active")
 
 
 def test_create_live_execute_once_skips_existing_project_and_unit_then_binds_material(tmp_path: Path):
@@ -629,7 +1083,6 @@ def test_create_live_execute_once_skips_existing_project_and_unit_then_binds_mat
         {
             "create_live_execute_once": {
                 "create_execute_artifact": _execute_artifact(),
-                "create_live_payload_adapter_scaffold_artifact": _scaffold_artifact(),
                 "policy": _policy(),
                 "runtime": {"execution_enabled": True, "external_api_enabled": True},
             }
@@ -710,7 +1163,6 @@ def test_create_live_execute_once_skips_existing_material_bind(tmp_path: Path):
         {
             "create_live_execute_once": {
                 "create_execute_artifact": _execute_artifact(),
-                "create_live_payload_adapter_scaffold_artifact": _scaffold_artifact(),
                 "policy": _policy(),
                 "runtime": {"execution_enabled": True, "external_api_enabled": True},
             }
@@ -734,12 +1186,27 @@ def test_create_live_execute_once_skips_existing_material_bind(tmp_path: Path):
     ]
 
 
+def test_material_bind_ledger_accepts_provider_payload_field_names():
+    assert material_bind_key_from_payload(
+        {
+            "advertiser_id": "source-1",
+            "target_advertiser_ids": ["target-1"],
+            "video_ids": ["video-1"],
+        }
+    ) == material_bind_key_from_payload(
+        {
+            "source_advertiser_id": "source-1",
+            "target_advertiser_ids": ["target-1"],
+            "source_video_ids": ["video-1"],
+        }
+    )
+
+
 def test_run_create_live_execute_once_request_writes_blocked_artifact(tmp_path: Path):
     result = run_create_live_execute_once_request(
         {
             "create_live_execute_once": {
                 "create_execute_artifact": _execute_artifact(),
-                "create_live_payload_adapter_scaffold_artifact": _scaffold_artifact(),
                 "policy": _policy(),
                 "runtime": {"execution_enabled": True, "external_api_enabled": True},
             }
@@ -755,6 +1222,22 @@ def test_run_create_live_execute_once_request_writes_blocked_artifact(tmp_path: 
     assert artifact["actions"] == []
 
 
+def test_create_live_execute_once_request_rejects_unknown_request_options(tmp_path: Path):
+    with pytest.raises(ValueError, match="unexpected options"):
+        run_create_live_execute_once_request(
+            {
+                "create_live_execute_once": {
+                    "create_execute_artifact": _execute_artifact(),
+                    "extra_pack": {"unexpected": True},
+                    "policy": _policy(),
+                    "runtime": {"execution_enabled": False, "external_api_enabled": False},
+                }
+            },
+            runs_dir=tmp_path / "runs",
+            db_path=tmp_path / "roibang.sqlite3",
+        )
+
+
 def test_create_live_execute_once_fixed_script_keeps_default_runtime_blocked(tmp_path: Path, capsys):
     runtime_path = _runtime_config(tmp_path)
     _seed_plan_sources(tmp_path / "roibang.sqlite3")
@@ -762,18 +1245,22 @@ def test_create_live_execute_once_fixed_script_keeps_default_runtime_blocked(tmp
     plan_path = tmp_path / "create-plan.json"
     policy_path.write_text(json.dumps(_policy(), ensure_ascii=False), encoding="utf-8")
     plan_path.write_text(json.dumps(_create_plan(), ensure_ascii=False), encoding="utf-8")
-    runs_dir = tmp_path / "runs"
-    artifacts = {
-        "create_execute": _execute_artifact(),
-        "create_live_payload_adapter_scaffold": _scaffold_artifact(),
-    }
-    for workflow, artifact in artifacts.items():
-        path = runs_dir / workflow / "20260510T000000Z.json"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(artifact, ensure_ascii=False), encoding="utf-8")
+    create_execute_path = tmp_path / "create-execute.json"
+    create_execute_path.write_text(json.dumps(_execute_artifact(), ensure_ascii=False), encoding="utf-8")
     module = _load_script("run_create_live_execute_once")
 
-    exit_code = module.run_from_args(["--config", str(runtime_path), "--policy", str(policy_path), "--plan", str(plan_path)])
+    exit_code = module.run_from_args(
+        [
+            "--config",
+            str(runtime_path),
+            "--policy",
+            str(policy_path),
+            "--plan",
+            str(plan_path),
+            "--create-execute-artifact",
+            str(create_execute_path),
+        ]
+    )
 
     output = json.loads(capsys.readouterr().out)
     artifact = json.loads(Path(output["artifact_path"]).read_text(encoding="utf-8"))
@@ -784,8 +1271,255 @@ def test_create_live_execute_once_fixed_script_keeps_default_runtime_blocked(tmp
     assert output["live_execute_enabled"] is False
     assert output["external_api_calls"] == 0
     assert output["transport_call_count"] == 0
-    assert output["source_execution_pack_status"] == "not_required_direct_create_execute"
+    assert output["local_config_readiness"]["ready"] is False
+    assert "runtime.execution_enabled" in output["local_config_readiness"]["missing"]
+    assert "create_http_transport.token_value" in output["local_config_readiness"]["missing"]
+    assert "source_execution_pack_status" not in output
     assert artifact["actions"] == []
+    assert artifact["local_config_readiness"]["ready"] is False
+
+
+def test_create_live_execute_once_fixed_script_blocks_missing_token_without_crashing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys,
+):
+    monkeypatch.delenv("ROIBANG_TEST_ACCESS_TOKEN", raising=False)
+    runtime_path = _runtime_config(tmp_path, execution_enabled=True, external_api_enabled=True)
+    _seed_plan_sources(tmp_path / "roibang.sqlite3")
+    policy = _policy()
+    policy["create_live_execute_once"]["create_http_transport"].pop("token_env", None)
+    policy_path = tmp_path / "policy.json"
+    plan_path = tmp_path / "create-plan.json"
+    policy_path.write_text(json.dumps(policy, ensure_ascii=False), encoding="utf-8")
+    plan_path.write_text(json.dumps(_create_plan(), ensure_ascii=False), encoding="utf-8")
+    create_execute_path = tmp_path / "create-execute.json"
+    create_execute_path.write_text(json.dumps(_execute_artifact(), ensure_ascii=False), encoding="utf-8")
+    module = _load_script("run_create_live_execute_once")
+
+    exit_code = module.run_from_args(
+        [
+            "--config",
+            str(runtime_path),
+            "--policy",
+            str(policy_path),
+            "--plan",
+            str(plan_path),
+            "--create-execute-artifact",
+            str(create_execute_path),
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    artifact = json.loads(Path(output["artifact_path"]).read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert output["status"] == "blocked"
+    assert output["external_api_calls"] == 0
+    assert output["transport_call_count"] == 0
+    assert output["local_config_readiness"]["ready"] is False
+    assert output["local_config_readiness"]["missing"] == [
+        "create_http_transport.token_pointer",
+        "create_http_transport.token_value",
+    ]
+    assert "create_http_transport.token_pointer" in output["blocking_reasons"][0]
+    assert artifact["local_config_readiness"] == output["local_config_readiness"]
+
+
+def test_create_live_execute_once_fixed_script_check_config_only_never_executes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys,
+):
+    monkeypatch.setenv("ROIBANG_TEST_ACCESS_TOKEN", "secret-token")
+    runtime_path = _runtime_config(tmp_path, execution_enabled=True, external_api_enabled=True)
+    _seed_plan_sources(tmp_path / "roibang.sqlite3")
+    policy_path = tmp_path / "policy.json"
+    plan_path = tmp_path / "create-plan.json"
+    policy_path.write_text(json.dumps(_policy(), ensure_ascii=False), encoding="utf-8")
+    plan_path.write_text(json.dumps(_create_plan(), ensure_ascii=False), encoding="utf-8")
+    create_execute_path = tmp_path / "create-execute.json"
+    create_execute_path.write_text(json.dumps(_execute_artifact(), ensure_ascii=False), encoding="utf-8")
+    module = _load_script("run_create_live_execute_once")
+
+    exit_code = module.run_from_args(
+        [
+            "--config",
+            str(runtime_path),
+            "--policy",
+            str(policy_path),
+            "--plan",
+            str(plan_path),
+            "--create-execute-artifact",
+            str(create_execute_path),
+            "--check-config-only",
+        ]
+    )
+
+    captured = capsys.readouterr().out
+    output = json.loads(captured)
+    artifact = json.loads(Path(output["artifact_path"]).read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert output["ok"] is True
+    assert output["status"] == "config_ready"
+    assert output["execution_enabled"] is False
+    assert output["live_execute_enabled"] is False
+    assert output["external_api_calls"] == 0
+    assert output["transport_call_count"] == 0
+    assert output["local_config_readiness"]["ready"] is True
+    assert output["blocking_reasons"] == []
+    assert artifact["status"] == "config_ready"
+    assert artifact["actions"] == []
+    assert "secret-token" not in captured
+
+
+def test_create_live_execute_once_fixed_script_blocks_disallowed_target_account(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys,
+):
+    monkeypatch.setenv("ROIBANG_TEST_ACCESS_TOKEN", "secret-token")
+    runtime_path = _runtime_config(tmp_path, execution_enabled=True, external_api_enabled=True)
+    _seed_plan_sources(tmp_path / "roibang.sqlite3")
+    allowlist_path = _write_allowed_accounts(
+        tmp_path / "allowed-create-accounts.json",
+        [
+            {
+                "account_name": "Other Account",
+                "advertiser_id": "target-2",
+                "product": "yzt",
+                "enable": True,
+                "channel": "wx",
+            }
+        ],
+    )
+    policy = _policy()
+    policy["create_plan"]["require_allowed_target_accounts"] = True
+    policy["create_plan"]["allowed_target_accounts_path"] = str(allowlist_path)
+    policy_path = tmp_path / "policy.json"
+    plan_path = tmp_path / "create-plan.json"
+    policy_path.write_text(json.dumps(policy, ensure_ascii=False), encoding="utf-8")
+    plan_path.write_text(json.dumps(_create_plan(), ensure_ascii=False), encoding="utf-8")
+    create_execute_path = tmp_path / "create-execute.json"
+    create_execute_path.write_text(json.dumps(_execute_artifact(), ensure_ascii=False), encoding="utf-8")
+    module = _load_script("run_create_live_execute_once")
+
+    exit_code = module.run_from_args(
+        [
+            "--config",
+            str(runtime_path),
+            "--policy",
+            str(policy_path),
+            "--plan",
+            str(plan_path),
+            "--create-execute-artifact",
+            str(create_execute_path),
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert output["status"] == "blocked"
+    assert output["external_api_calls"] == 0
+    assert output["transport_call_count"] == 0
+    assert "target account not in allowed create account list: target-1" in output["blocking_reasons"]
+    assert output["allowed_account_contract"]["missing_allowed_target_accounts"] == ["target-1"]
+
+
+def test_create_live_execute_once_fixed_script_blocks_expired_token_store_without_leaking_secret(
+    tmp_path: Path,
+    capsys,
+):
+    runtime_path = _runtime_config(tmp_path, execution_enabled=True, external_api_enabled=True)
+    _seed_plan_sources(tmp_path / "roibang.sqlite3")
+    token_store_path = tmp_path / "secrets" / "tokens.json"
+    _write_token_store(
+        token_store_path,
+        access="access-secret",
+        refresh="refresh-secret",
+        expires_in=-60,
+    )
+    policy = _policy()
+    transport = policy["create_live_execute_once"]["create_http_transport"]
+    transport.pop("token_env", None)
+    transport["token_store"] = {
+        "enabled": True,
+        "store_file": str(token_store_path),
+        "user_id": "default",
+        "auto_refresh": False,
+    }
+    policy_path = tmp_path / "policy.json"
+    plan_path = tmp_path / "create-plan.json"
+    policy_path.write_text(json.dumps(policy, ensure_ascii=False), encoding="utf-8")
+    plan_path.write_text(json.dumps(_create_plan(), ensure_ascii=False), encoding="utf-8")
+    create_execute_path = tmp_path / "create-execute.json"
+    create_execute_path.write_text(json.dumps(_execute_artifact(), ensure_ascii=False), encoding="utf-8")
+    module = _load_script("run_create_live_execute_once")
+
+    exit_code = module.run_from_args(
+        [
+            "--config",
+            str(runtime_path),
+            "--policy",
+            str(policy_path),
+            "--plan",
+            str(plan_path),
+            "--create-execute-artifact",
+            str(create_execute_path),
+        ]
+    )
+
+    captured = capsys.readouterr().out
+    output = json.loads(captured)
+    assert exit_code == 0
+    assert output["status"] == "blocked"
+    assert output["external_api_calls"] == 0
+    assert output["transport_call_count"] == 0
+    assert output["local_config_readiness"]["token_pointer"] == "token_store"
+    assert output["local_config_readiness"]["token_health"]["status"] == "expired"
+    assert output["local_config_readiness"]["missing"] == ["create_http_transport.token_value"]
+    assert "access-secret" not in captured
+    assert "refresh-secret" not in captured
+
+
+def test_create_live_execute_once_readiness_blocks_wrong_live_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys,
+):
+    monkeypatch.setenv("ROIBANG_TEST_ACCESS_TOKEN", "secret-token")
+    runtime_path = _runtime_config(tmp_path, execution_enabled=True, external_api_enabled=True)
+    _seed_plan_sources(tmp_path / "roibang.sqlite3")
+    policy = _policy()
+    policy["create_execute"]["live_api"]["endpoints"]["bind_material"] = "/wrong/"
+    policy_path = tmp_path / "policy.json"
+    plan_path = tmp_path / "create-plan.json"
+    policy_path.write_text(json.dumps(policy, ensure_ascii=False), encoding="utf-8")
+    plan_path.write_text(json.dumps(_create_plan(), ensure_ascii=False), encoding="utf-8")
+    create_execute_path = tmp_path / "create-execute.json"
+    create_execute_path.write_text(json.dumps(_execute_artifact(), ensure_ascii=False), encoding="utf-8")
+    module = _load_script("run_create_live_execute_once")
+
+    exit_code = module.run_from_args(
+        [
+            "--config",
+            str(runtime_path),
+            "--policy",
+            str(policy_path),
+            "--plan",
+            str(plan_path),
+            "--create-execute-artifact",
+            str(create_execute_path),
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert output["local_config_readiness"]["ready"] is False
+    assert output["local_config_readiness"]["missing"] == [
+        "create_execute.live_api.endpoints.bind_material"
+    ]
+    assert output["status"] == "blocked"
+    assert output["external_api_calls"] == 0
 
 
 def test_create_live_execute_once_fixed_script_blocks_plan_mismatch(tmp_path: Path, capsys):
@@ -795,13 +1529,22 @@ def test_create_live_execute_once_fixed_script_blocks_plan_mismatch(tmp_path: Pa
     plan_path = tmp_path / "create-plan.json"
     policy_path.write_text(json.dumps(_policy(), ensure_ascii=False), encoding="utf-8")
     plan_path.write_text(json.dumps(_create_plan(plan_id="different-plan"), ensure_ascii=False), encoding="utf-8")
-    runs_dir = tmp_path / "runs"
-    path = runs_dir / "create_execute" / "20260510T000000Z.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(_execute_artifact(), ensure_ascii=False), encoding="utf-8")
+    create_execute_path = tmp_path / "create-execute.json"
+    create_execute_path.write_text(json.dumps(_execute_artifact(), ensure_ascii=False), encoding="utf-8")
     module = _load_script("run_create_live_execute_once")
 
-    exit_code = module.run_from_args(["--config", str(runtime_path), "--policy", str(policy_path), "--plan", str(plan_path)])
+    exit_code = module.run_from_args(
+        [
+            "--config",
+            str(runtime_path),
+            "--policy",
+            str(policy_path),
+            "--plan",
+            str(plan_path),
+            "--create-execute-artifact",
+            str(create_execute_path),
+        ]
+    )
 
     output = json.loads(capsys.readouterr().out)
     artifact = json.loads(Path(output["artifact_path"]).read_text(encoding="utf-8"))
@@ -816,21 +1559,13 @@ def test_create_live_execute_once_fixed_script_blocks_plan_mismatch(tmp_path: Pa
     assert artifact["actions"] == []
 
 
-def test_create_live_execute_once_fixed_script_reports_missing_artifacts_as_blocked(tmp_path: Path, capsys):
+def test_create_live_execute_once_fixed_script_requires_explicit_plan_and_create_execute_artifact(tmp_path: Path):
     runtime_path = _runtime_config(tmp_path)
     policy_path = tmp_path / "policy.json"
     policy_path.write_text(json.dumps(_policy(), ensure_ascii=False), encoding="utf-8")
     module = _load_script("run_create_live_execute_once")
 
-    exit_code = module.run_from_args(["--config", str(runtime_path), "--policy", str(policy_path)])
+    with pytest.raises(SystemExit) as exc:
+        module.run_from_args(["--config", str(runtime_path), "--policy", str(policy_path)])
 
-    output = json.loads(capsys.readouterr().out)
-    artifact = json.loads(Path(output["artifact_path"]).read_text(encoding="utf-8"))
-    assert exit_code == 0
-    assert output["workflow"] == "create_live_execute_once"
-    assert output["status"] == "blocked"
-    assert output["execution_enabled"] is False
-    assert output["external_api_calls"] == 0
-    assert output["transport_call_count"] == 0
-    assert "no create_execute artifacts found" in output["blocking_reasons"][0]
-    assert artifact["actions"] == []
+    assert exc.value.code == 2

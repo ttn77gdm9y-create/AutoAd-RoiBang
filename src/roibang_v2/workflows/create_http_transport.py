@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import ssl
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -13,12 +14,25 @@ from roibang_v2.fetch.openapi_http import HttpResponse
 from roibang_v2.integrations.oceanengine.tokens import OAuthOpener, get_access_token
 
 CreateOpener = Callable[[str, dict[str, Any], dict[str, str], float, str], HttpResponse]
+Sleeper = Callable[[float], None]
 
 CREATE_ENDPOINT_ALLOWLIST = {
-    "create_project": "/open_api/2/project/create/",
-    "create_unit": "/open_api/2/promotion/create/",
+    "create_project": "/open_api/v3.0/project/create/",
+    "create_unit": "/open_api/v3.0/promotion/create/",
     "bind_material": "/open_api/2/file/material/bind/",
     "lookup_target_material": "/open_api/2/file/video/get/",
+    "lookup_existing_project": "/open_api/v3.0/project/list/",
+    "lookup_existing_unit": "/open_api/v3.0/promotion/list/",
+    "lookup_project_list": "/open_api/v3.0/project/list/",
+    "activate_unit": "/open_api/v3.0/promotion/status/update/",
+    "lookup_project_schedule": "/open_api/v3.0/project/list/",
+    "update_project_week_schedule": "/open_api/v3.0/project/week_schedule/update/",
+    "update_project_status": "/open_api/v3.0/project/status/update/",
+    "update_project_budget": "/open_api/v3.0/project/budget/update/",
+    "update_project_cpa_bid": "/open_api/v3.0/project/cpa_bid/update/",
+    "update_project_roi_goal": "/open_api/v3.0/project/roigoal/update/",
+    "lookup_disabled_projects": "/open_api/v3.0/project/list/",
+    "delete_project": "/open_api/2/project/delete/",
 }
 
 
@@ -30,6 +44,13 @@ def _token_from_config(config: dict[str, Any], *, oauth_opener: OAuthOpener | No
             raise RuntimeError("create HTTP transport token_store requires store_file")
         app_id = str(token_store.get("app_id") or "").strip()
         app_secret = str(token_store.get("app_secret") or "").strip()
+        credentials_file = str(token_store.get("credentials_file") or "").strip()
+        if credentials_file and (not app_id or not app_secret):
+            credentials = json.loads(Path(credentials_file).read_text(encoding="utf-8"))
+            if not isinstance(credentials, dict):
+                raise RuntimeError("create HTTP transport token_store credentials_file must contain a JSON object")
+            app_id = app_id or str(credentials.get("app_id") or "").strip()
+            app_secret = app_secret or str(credentials.get("app_secret") or "").strip()
         app_id_env = str(token_store.get("app_id_env") or "").strip()
         app_secret_env = str(token_store.get("app_secret_env") or "").strip()
         if not app_id and app_id_env:
@@ -106,10 +127,17 @@ def _validate_request(request: dict[str, Any]) -> tuple[str, str, dict[str, Any]
 def _lookup_target_material_payload(payload: dict[str, Any]) -> dict[str, Any]:
     advertiser_id = str(payload.get("advertiser_id") or payload.get("target_advertiser_id") or "").strip()
     material_id = str(payload.get("material_id") or "").strip()
+    material_ids = payload.get("material_ids") if isinstance(payload.get("material_ids"), list) else []
     source_video_id = str(payload.get("source_video_id") or "").strip()
     filtering: dict[str, Any] = {}
-    if material_id:
-        filtering["material_ids"] = [material_id]
+    if material_ids:
+        filtering["material_ids"] = [
+            int(item) if str(item).isdigit() else str(item)
+            for item in material_ids
+            if str(item).strip()
+        ]
+    elif material_id:
+        filtering["material_ids"] = [int(material_id)] if material_id.isdigit() else [material_id]
     elif source_video_id:
         filtering["video_ids"] = [source_video_id]
     return {
@@ -121,12 +149,52 @@ def _lookup_target_material_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _request_method(operation: str) -> str:
-    return "GET" if operation == "lookup_target_material" else "POST"
+    return (
+        "GET"
+        if operation
+        in {
+            "lookup_target_material",
+            "lookup_existing_project",
+            "lookup_existing_unit",
+            "lookup_project_list",
+            "lookup_project_schedule",
+            "lookup_disabled_projects",
+        }
+        else "POST"
+    )
 
 
 def _wire_payload(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
     if operation == "lookup_target_material":
         return _lookup_target_material_payload(payload)
+    if operation == "lookup_existing_project":
+        return {
+            "advertiser_id": str(payload.get("advertiser_id") or "").strip(),
+            "filtering": {"name": str(payload.get("name") or "")},
+            "page": int(payload.get("page") or 1),
+            "page_size": int(payload.get("page_size") or 20),
+        }
+    if operation == "lookup_existing_unit":
+        filtering: dict[str, Any] = {"name": str(payload.get("name") or "")}
+        project_id = str(payload.get("project_id") or "").strip()
+        if project_id:
+            filtering["project_id"] = int(project_id) if project_id.isdigit() else project_id
+        return {
+            "advertiser_id": str(payload.get("advertiser_id") or "").strip(),
+            "filtering": filtering,
+            "page": int(payload.get("page") or 1),
+            "page_size": int(payload.get("page_size") or 20),
+        }
+    if operation == "lookup_disabled_projects":
+        filtering = payload.get("filtering") if isinstance(payload.get("filtering"), dict) else {}
+        if not filtering:
+            filtering = {"project_status": ["PROJECT_STATUS_DISABLE"]}
+        return {
+            "advertiser_id": str(payload.get("advertiser_id") or "").strip(),
+            "filtering": filtering,
+            "page": int(payload.get("page") or 1),
+            "page_size": int(payload.get("page_size") or 100),
+        }
     return payload
 
 
@@ -149,9 +217,11 @@ def _audit_record(
     response_json: dict[str, Any],
     run_id: str,
     operator: str,
+    attempt: int = 1,
 ) -> dict[str, Any]:
     method = str(request.get("method") or _request_method(str(request.get("operation") or "")))
     return {
+        "attempt": attempt,
         "request": {
             "operation": str(request.get("operation") or ""),
             "method": method,
@@ -178,21 +248,91 @@ def _append_audit(path: Path, record: dict[str, Any]) -> None:
         handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
 
 
+def _http_error_json(exc: urllib.error.HTTPError) -> dict[str, Any]:
+    try:
+        raw_body = exc.read().decode("utf-8")
+    except Exception:
+        raw_body = ""
+    parsed: Any = {}
+    if raw_body:
+        try:
+            parsed = json.loads(raw_body)
+        except json.JSONDecodeError:
+            parsed = {"raw_body": raw_body}
+    if not isinstance(parsed, dict):
+        parsed = {"data": parsed}
+    parsed.setdefault("code", int(exc.code))
+    parsed.setdefault("message", str(exc))
+    parsed.setdefault("error_type", "HTTPError")
+    return parsed
+
+
+def _retry_api_codes(config: dict[str, Any], operation: str) -> set[int]:
+    retry_by_operation = config.get("retry_api_codes_by_operation")
+    values: list[Any] = []
+    if isinstance(retry_by_operation, dict):
+        operation_values = retry_by_operation.get(operation)
+        if isinstance(operation_values, list):
+            values.extend(operation_values)
+    global_values = config.get("retry_api_codes")
+    if isinstance(global_values, list):
+        values.extend(global_values)
+    codes: set[int] = set()
+    for value in values:
+        try:
+            codes.add(int(value))
+        except (TypeError, ValueError):
+            continue
+    return codes
+
+
+def _should_retry_api_code(response_json: dict[str, Any], retry_codes: set[int]) -> bool:
+    if not retry_codes:
+        return False
+    try:
+        code = int(response_json.get("code", 0))
+    except (TypeError, ValueError):
+        return False
+    return code in retry_codes
+
+
+def _retry_transient_operations(config: dict[str, Any]) -> set[str]:
+    values = config.get("retry_transient_operations")
+    if not isinstance(values, list):
+        return set()
+    return {str(item) for item in values if str(item) in CREATE_ENDPOINT_ALLOWLIST}
+
+
+def _min_interval_seconds(config: dict[str, Any], operation: str) -> float:
+    by_operation = config.get("min_interval_seconds_by_operation")
+    if isinstance(by_operation, dict) and operation in by_operation:
+        try:
+            return float(by_operation[operation])
+        except (TypeError, ValueError):
+            return 0
+    return float(config.get("min_interval_seconds") or 0)
+
+
 def build_create_http_transport(
     config: dict[str, Any],
     *,
     response_dir: str | Path,
     opener: CreateOpener | None = None,
     oauth_opener: OAuthOpener | None = None,
+    sleeper: Sleeper | None = None,
 ):
     _validate_config(config)
     token = _token_from_config(config, oauth_opener=oauth_opener)
     real_opener = opener or _default_opener
+    real_sleeper = sleeper or time.sleep
     timeout_seconds = float(config.get("timeout_seconds") or 20)
+    max_retries = int(config.get("max_retries") or 0)
+    retry_sleep_seconds = float(config.get("retry_sleep_seconds") or 1)
     base_url = _normalize_base_url(config)
     audit_path = Path(response_dir) / "create_http_responses.jsonl"
     run_id = str(config.get("run_id") or "").strip()
     operator = str(config.get("operator") or "").strip()
+    state = {"called": False}
 
     def transport(request: dict[str, Any]) -> dict[str, Any]:
         operation, endpoint, payload = _validate_request(request)
@@ -205,37 +345,61 @@ def build_create_http_transport(
             "Access-Token": token,
             "Content-Type": "application/json",
         }
-        try:
-            response = real_opener(url, wire_payload, headers, timeout_seconds, method)
-        except (urllib.error.URLError, TimeoutError, ConnectionResetError) as exc:
-            response_json = {"error_type": type(exc).__name__, "error": str(exc)}
+        min_interval_seconds = _min_interval_seconds(config, operation)
+        if state["called"] and min_interval_seconds > 0:
+            real_sleeper(min_interval_seconds)
+        state["called"] = True
+
+        retry_codes = _retry_api_codes(config, operation)
+        retry_transient_operations = _retry_transient_operations(config)
+        attempts = max_retries + 1
+        response_json: dict[str, Any] | None = None
+        for attempt in range(1, attempts + 1):
+            status_code = 0
+            try:
+                response = real_opener(url, wire_payload, headers, timeout_seconds, method)
+                status_code = response.status_code
+                response_json = response.json_body
+            except urllib.error.HTTPError as exc:
+                status_code = int(exc.code)
+                response_json = _http_error_json(exc)
+            except (urllib.error.URLError, TimeoutError, ConnectionResetError) as exc:
+                response_json = {"error_type": type(exc).__name__, "error": str(exc)}
+                _append_audit(
+                    audit_path,
+                    _audit_record(
+                        request=request,
+                        url=url,
+                        headers=headers,
+                        status_code=0,
+                        response_json=response_json,
+                        run_id=run_id,
+                        operator=operator,
+                        attempt=attempt,
+                    ),
+                )
+                if operation in retry_transient_operations and attempt < attempts:
+                    real_sleeper(retry_sleep_seconds)
+                    continue
+                raise RuntimeError(f"create HTTP request failed with transient network error: {exc}") from exc
             _append_audit(
                 audit_path,
                 _audit_record(
                     request=request,
                     url=url,
                     headers=headers,
-                    status_code=0,
+                    status_code=status_code,
                     response_json=response_json,
                     run_id=run_id,
                     operator=operator,
+                    attempt=attempt,
                 ),
             )
-            raise RuntimeError(f"create HTTP request failed with transient network error: {exc}") from exc
-        _append_audit(
-            audit_path,
-            _audit_record(
-                request=request,
-                url=url,
-                headers=headers,
-                status_code=response.status_code,
-                response_json=response.json_body,
-                run_id=run_id,
-                operator=operator,
-            ),
-        )
-        if response.status_code >= 400:
-            raise RuntimeError(f"create HTTP request failed with status {response.status_code}")
-        return response.json_body
+            if not _should_retry_api_code(response_json, retry_codes) or attempt == attempts:
+                break
+            real_sleeper(retry_sleep_seconds)
+        if response_json is None:
+            raise RuntimeError("create HTTP transport did not receive a response")
+        return response_json
 
     return transport

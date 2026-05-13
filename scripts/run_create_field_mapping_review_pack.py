@@ -13,7 +13,7 @@ from roibang_v2.workflows.create_field_mapping_review_pack import (
 def run_from_args(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run Phase 1 create field mapping review pack.")
     parser.add_argument("--config", default="configs/runtime.example.json")
-    parser.add_argument("--policy", default="policies/strategy.example.json")
+    parser.add_argument("--policy", default="policies/create-policy.example.json")
     args = parser.parse_args(argv)
 
     config = load_runtime_config(args.config)

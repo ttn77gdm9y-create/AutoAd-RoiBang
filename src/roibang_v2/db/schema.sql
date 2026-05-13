@@ -147,46 +147,6 @@ CREATE TABLE IF NOT EXISTS product_source_material_metric_rollups (
 CREATE INDEX IF NOT EXISTS idx_product_source_material_rollup_rank
   ON product_source_material_metric_rollups (product, source_advertiser_id, window_key, stat_cost DESC);
 
-CREATE TABLE IF NOT EXISTS product_source_material_candidates (
-  pool_key TEXT NOT NULL,
-  product TEXT NOT NULL,
-  source_advertiser_id TEXT NOT NULL,
-  organization_id TEXT NOT NULL DEFAULT '',
-  window_key TEXT NOT NULL,
-  period_start TEXT NOT NULL,
-  period_end TEXT NOT NULL,
-  rank INTEGER NOT NULL,
-  material_id TEXT NOT NULL,
-  material_type TEXT NOT NULL DEFAULT 'video',
-  source_video_id TEXT NOT NULL DEFAULT '',
-  name TEXT NOT NULL DEFAULT '',
-  review_status TEXT NOT NULL DEFAULT '',
-  signature TEXT NOT NULL DEFAULT '',
-  duration REAL NOT NULL DEFAULT 0,
-  file_size REAL NOT NULL DEFAULT 0,
-  create_time TEXT NOT NULL DEFAULT '',
-  tag_ids_json TEXT NOT NULL DEFAULT '[]',
-  account_count INTEGER NOT NULL DEFAULT 0,
-  project_count INTEGER NOT NULL DEFAULT 0,
-  promotion_count INTEGER NOT NULL DEFAULT 0,
-  stat_cost REAL NOT NULL DEFAULT 0,
-  show_cnt REAL NOT NULL DEFAULT 0,
-  click_cnt REAL NOT NULL DEFAULT 0,
-  convert_cnt REAL NOT NULL DEFAULT 0,
-  active_register REAL NOT NULL DEFAULT 0,
-  roi_1day_cost_weighted REAL NOT NULL DEFAULT 0,
-  roi_7days_cost_weighted REAL NOT NULL DEFAULT 0,
-  score REAL NOT NULL DEFAULT 0,
-  reason_json TEXT NOT NULL DEFAULT '{}',
-  source TEXT NOT NULL,
-  synced_at TEXT NOT NULL,
-  PRIMARY KEY (pool_key, material_id),
-  FOREIGN KEY (material_id) REFERENCES materials(material_id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_product_source_material_candidates_rank
-  ON product_source_material_candidates (pool_key, rank);
-
 CREATE TABLE IF NOT EXISTS material_bindings (
   advertiser_id TEXT NOT NULL,
   project_id TEXT NOT NULL,
@@ -267,6 +227,26 @@ CREATE INDEX IF NOT EXISTS idx_material_daily_metrics_date_material
 
 CREATE INDEX IF NOT EXISTS idx_material_daily_metrics_date_account
   ON material_daily_metrics (metric_date, advertiser_id, stat_cost DESC);
+
+CREATE TABLE IF NOT EXISTS project_hourly_metrics (
+  metric_date TEXT NOT NULL,
+  metric_hour INTEGER NOT NULL,
+  advertiser_id TEXT NOT NULL,
+  project_id TEXT NOT NULL DEFAULT '',
+  project_name TEXT NOT NULL DEFAULT '',
+  stat_cost REAL NOT NULL DEFAULT 0,
+  show_cnt REAL NOT NULL DEFAULT 0,
+  click_cnt REAL NOT NULL DEFAULT 0,
+  convert_cnt REAL NOT NULL DEFAULT 0,
+  roi_1day REAL NOT NULL DEFAULT 0,
+  metric_payload_json TEXT NOT NULL DEFAULT '{}',
+  source TEXT NOT NULL,
+  synced_at TEXT NOT NULL,
+  PRIMARY KEY (metric_date, metric_hour, advertiser_id, project_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_hourly_metrics_date_account
+  ON project_hourly_metrics (metric_date, advertiser_id, metric_hour, stat_cost DESC);
 
 CREATE TABLE IF NOT EXISTS material_sync_state (
   workflow TEXT NOT NULL,

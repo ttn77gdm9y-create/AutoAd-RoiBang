@@ -36,10 +36,10 @@ def test_live_create_policy_template_is_minimal_direct_execute_contract():
         "enabled": True,
         "transport": "openapi_http",
         "endpoints": {
-            "create_project": "/open_api/2/project/create/",
+            "create_project": "/open_api/v3.0/project/create/",
             "bind_material": "/open_api/2/file/material/bind/",
             "lookup_target_material": "/open_api/2/file/video/get/",
-            "create_unit": "/open_api/2/promotion/create/",
+            "create_unit": "/open_api/v3.0/promotion/create/",
         },
     }
     assert payload_schema["live_payload_generation_enabled"] is True

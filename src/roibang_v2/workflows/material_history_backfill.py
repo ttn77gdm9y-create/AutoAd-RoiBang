@@ -40,6 +40,11 @@ def _date_range(start_date: str, end_date: str) -> list[str]:
 
 def _date_range_config(cfg: dict[str, Any]) -> dict[str, str]:
     value = cfg.get("date_range") if isinstance(cfg.get("date_range"), dict) else {}
+    if str(value.get("mode") or "").strip() == "yesterday":
+        base_date_text = str(value.get("base_date") or "").strip()
+        base = date.fromisoformat(base_date_text) if base_date_text else date.today()
+        target = (base - timedelta(days=1)).isoformat()
+        return {"start": target, "end": target}
     start = str(value.get("start") or "").strip()
     end = str(value.get("end") or "").strip()
     if not start or not end:

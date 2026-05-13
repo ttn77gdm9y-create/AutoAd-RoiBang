@@ -52,6 +52,31 @@ def test_account_daily_plan_uses_supported_day_dimension():
     request = plan["requests"][0]
     assert json.loads(request["query_params"]["dimensions"]) == ["stat_time_day"]
     assert json.loads(request["query_params"]["filters"]) == []
+    metrics = json.loads(request["query_params"]["metrics"])
+    assert "attribution_billing_game_in_app_roi_1day" in metrics
+
+
+def test_promotion_daily_plan_requests_billing_roi_metrics():
+    plan = build_openapi_readonly_plan(
+        accounts=[
+            {
+                "advertiser_id": "1858371222574218",
+                "account_name": "account",
+                "product": "勇者突进",
+                "platform": "WECHAT_GAME",
+            }
+        ],
+        dates=["2026-05-06"],
+        endpoints=["report_custom"],
+        report_presets=["promotion_daily"],
+        platforms=["WECHAT_GAME"],
+    )
+
+    metrics = json.loads(plan["requests"][0]["query_params"]["metrics"])
+    assert "attribution_billing_game_in_app_roi_1day" in metrics
+    assert "attribution_billing_game_in_app_ltv_1day" in metrics
+    assert "attribution_convert_cnt" in metrics
+    assert "attribution_convert_cost" in metrics
 
 
 def test_material_daily_plan_uses_supported_material_dimensions():
@@ -79,6 +104,11 @@ def test_material_daily_plan_uses_supported_material_dimensions():
         "cdp_promotion_name",
         "material_id",
     ]
+    metrics = json.loads(request["query_params"]["metrics"])
+    assert "attribution_billing_game_in_app_roi_1day" in metrics
+    assert "attribution_billing_game_in_app_ltv_1day" in metrics
+    assert "attribution_convert_cnt" in metrics
+    assert "attribution_convert_cost" in metrics
     assert request["query_params"]["page_size"] == "20"
 
 

@@ -40,8 +40,6 @@ def disabled_create_payload_schema(policy: dict[str, Any] | None = None) -> dict
                 "promotion_materials.video_material_list",
                 "promotion_materials.title_material_list",
                 "promotion_materials.call_to_action_buttons",
-                "budget",
-                "budget_mode",
                 "source",
                 "operation",
                 "field_defaults.landing_type",
@@ -107,6 +105,8 @@ def validate_create_payload_contract(
                 checked_material_lookup_count += 1
                 lookup_scope = {**project, **unit, **material}
                 for field in lookup_required:
+                    if field == "target_video_cover_id" and _has_fixed_video_cover(lookup_scope):
+                        continue
                     if not _has_payload_value(lookup_scope, field):
                         missing_fields.append(f"lookup_target_material unit {unit_key} missing {field}")
                 checked_material_binding_count += 1
@@ -134,6 +134,19 @@ def _has_payload_value(scope: dict[str, Any], field: str) -> bool:
     if isinstance(value, (int, float)):
         return value > 0
     return bool(str(value or "").strip())
+
+
+def _has_fixed_video_cover(scope: dict[str, Any]) -> bool:
+    video_list = _payload_value(scope, "promotion_materials.video_material_list")
+    if not isinstance(video_list, list):
+        return False
+    for item in video_list:
+        if not isinstance(item, dict):
+            continue
+        cover_id = str(item.get("video_cover_id") or "").strip()
+        if cover_id and not cover_id.startswith("<lookup:"):
+            return True
+    return False
 
 
 def _payload_value(scope: dict[str, Any], field: str) -> Any:

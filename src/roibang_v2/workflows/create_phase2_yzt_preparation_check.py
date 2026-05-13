@@ -46,7 +46,7 @@ def _preparation_command(*, preview_config_path: str = DEFAULT_PREVIEW_CONFIG_PA
         "PYTHONPATH=src python3 scripts/run_create_phase2_yzt_preparation_check.py "
         "--config configs/runtime.example.json "
         f"--preview-config {preview_config_path} "
-        "--policy policies/strategy.example.json"
+        "--policy policies/create-policy.example.json"
     )
 
 
@@ -55,7 +55,7 @@ def _dry_chain_command(*, preview_config_path: str = DEFAULT_PREVIEW_CONFIG_PATH
         "PYTHONPATH=src python3 scripts/run_create_phase2_yzt_dry_chain.py "
         "--config configs/runtime.example.json "
         f"--preview-config {preview_config_path} "
-        "--policy policies/strategy.example.json"
+        "--policy policies/create-policy.example.json"
     )
 
 

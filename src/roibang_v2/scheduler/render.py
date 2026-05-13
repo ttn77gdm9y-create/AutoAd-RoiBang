@@ -14,7 +14,21 @@ LAUNCHD_OUTPUT_DIR = Path("launchd")
 
 def _enabled_jobs(registry: dict[str, Any]) -> list[dict[str, Any]]:
     validate_job_registry(registry)
-    return [job for job in registry["jobs"] if bool(job.get("enabled", False))]
+    return sorted(
+        [job for job in registry["jobs"] if bool(job.get("enabled", False))],
+        key=_daily_schedule_sort_key,
+    )
+
+
+def _daily_schedule_sort_key(job: dict[str, Any]) -> tuple[int, int, str]:
+    schedule = job["schedule"]
+    parts = str(schedule["expr"]).split()
+    if len(parts) != 5:
+        return (99, 99, str(job["id"]))
+    minute, hour = parts[0], parts[1]
+    if not minute.isdigit() or not hour.isdigit():
+        return (99, 99, str(job["id"]))
+    return (int(hour), int(minute), str(job["id"]))
 
 
 def _job_command(job: dict[str, Any], repo_root: Path, *, redirect_logs: bool = True) -> str:
@@ -65,18 +79,31 @@ def _cron_calendar_interval(expr: str) -> dict[str, int]:
     return {"Hour": int(hour), "Minute": int(minute)}
 
 
+def _launchd_schedule(expr: str) -> dict[str, Any]:
+    parts = expr.split()
+    if len(parts) != 5:
+        raise ValueError(f"unsupported cron expression: {expr}")
+    minute, hour, day, month, weekday = parts
+    if minute.startswith("*/") and hour == "*" and day == "*" and month == "*" and weekday == "*":
+        interval_minutes = int(minute[2:])
+        if interval_minutes <= 0:
+            raise ValueError(f"launchd renderer requires positive minute interval: {expr}")
+        return {"StartInterval": interval_minutes * 60}
+    return {"StartCalendarInterval": _cron_calendar_interval(expr)}
+
+
 def render_launchd_plist(job: dict[str, Any], *, repo_root: str | Path) -> str:
     label = f"com.roibang.v2.{job['id']}"
     command = _job_command(job, Path(repo_root))
     plist = {
         "Label": label,
         "ProgramArguments": ["/bin/zsh", "-lc", command],
+        "WorkingDirectory": str(Path(repo_root)),
         "RunAtLoad": False,
-        "StartCalendarInterval": _cron_calendar_interval(str(job["schedule"]["expr"])),
         "StandardOutPath": str(Path(repo_root) / "logs" / "scheduler" / f"{job['id']}.launchd.out.log"),
         "StandardErrorPath": str(Path(repo_root) / "logs" / "scheduler" / f"{job['id']}.launchd.err.log"),
-        "WorkingDirectory": str(repo_root),
     }
+    plist.update(_launchd_schedule(str(job["schedule"]["expr"])))
     return plistlib.dumps(plist, sort_keys=False).decode("utf-8")
 
 

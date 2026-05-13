@@ -47,7 +47,6 @@ def test_builds_phase1_strategy_plan_from_learning_artifact(tmp_path: Path):
         policy={
             "require_preflight": True,
             "require_dry_run": True,
-            "require_approval_before_execute": True,
         },
     )
 
@@ -59,7 +58,7 @@ def test_builds_phase1_strategy_plan_from_learning_artifact(tmp_path: Path):
     assert plan["strategy"]["recommendations"][0]["recommendation_type"] == "investigate_account"
     assert plan["preflight"]["status"] == "draft_only"
     assert plan["dry_run"]["status"] == "draft_only"
-    assert plan["approval"]["status"] == "disabled_in_phase1"
+    assert "approval" not in plan
     assert plan["execute"]["status"] == "disabled_in_phase1"
 
 
@@ -96,7 +95,6 @@ def test_builds_strategy_plan_with_material_source_provision_recommendations(tmp
         policy={
             "require_preflight": True,
             "require_dry_run": True,
-            "require_approval_before_execute": True,
         },
     )
 
@@ -146,7 +144,6 @@ def test_strategy_plan_request_writes_sqlite_and_run_artifact(tmp_path: Path):
         policy={
             "require_preflight": True,
             "require_dry_run": True,
-            "require_approval_before_execute": True,
         },
     )
 
@@ -194,7 +191,6 @@ def test_strategy_plan_cli_accepts_material_source_artifact(tmp_path: Path, caps
                 "strategy_plan": {
                     "require_preflight": True,
                     "require_dry_run": True,
-                    "require_approval_before_execute": True,
                 }
             },
             ensure_ascii=False,

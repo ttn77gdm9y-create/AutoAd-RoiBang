@@ -7,11 +7,11 @@ from roibang_v2.runs import write_run_artifact
 from roibang_v2.workflows.create_phase2_yzt_create_preview import build_create_phase2_yzt_create_preview
 from roibang_v2.workflows.create_strategy_plan import (
     _candidate_filters,
-    _candidate_pool_size,
     _candidate_rows,
     _material_requirements,
     _required_material_slots,
     _target_existing_material_ids_by_account,
+    _usable_source_material_count,
 )
 
 
@@ -45,7 +45,7 @@ def build_create_phase2_yzt_material_pool_check(
         request=standard_request,
         policy=strategy_policy,
     )
-    usable_count = _candidate_pool_size(
+    usable_count = _usable_source_material_count(
         request=standard_request,
         candidates=candidates,
         existing_by_account=existing_by_account,
@@ -54,13 +54,12 @@ def build_create_phase2_yzt_material_pool_check(
     missing_count = max(required_count - usable_count, 0)
     requirements = _material_requirements(standard_request)
     violations = (
-        [f"本地素材池可用素材 {usable_count} 个，不够本次预演需要的 {required_count} 个，缺 {missing_count} 个"]
+        [f"源素材账户可用素材 {usable_count} 个，不够本次预演需要的 {required_count} 个，缺 {missing_count} 个"]
         if missing_count
         else []
     )
     ok = bool(preview.get("ok")) and not violations
     product = str(standard_request.get("product") or "")
-    pool_key = str(standard_request.get("pool_key") or "")
     source_advertiser_id = str(standard_request.get("source_advertiser_id") or "")
     return {
         "ok": ok,
@@ -68,17 +67,16 @@ def build_create_phase2_yzt_material_pool_check(
         "phase": "phase2_preparation",
         "execution_enabled": False,
         "external_api_calls": 0,
-        "status": "passed" if ok else "needs_material_pool_sync",
+        "status": "passed" if ok else "needs_source_material_account_sync",
         "summary": {
             "product": product,
-            "pool_key": pool_key,
             "source_advertiser_id": source_advertiser_id,
             "required_material_count": required_count,
             "usable_material_count": usable_count,
             "missing_material_count": missing_count,
             "ready_for_dry_chain": ok,
         },
-        "material_pool": {
+        "source_material_account": {
             "material_type": str(requirements.get("material_type") or "video"),
             "materials_per_unit": int(requirements.get("materials_per_unit") or 0),
             "dedupe_scope": str(requirements.get("dedupe_scope") or "request"),
@@ -86,9 +84,9 @@ def build_create_phase2_yzt_material_pool_check(
         },
         "violations": list(preview.get("violations") or []) + violations,
         "human_next_steps": (
-            ["本地素材池数量够用；下一步可以跑完整预演。"]
+            ["源素材账户素材数量够用；下一步可以跑完整预演。"]
             if ok
-            else ["先同步或导入素材池，或减少本次项目数、单元数、每单元素材数。"]
+            else ["先同步源素材账户，或减少本次项目数、单元数、每单元素材数。"]
         ),
         "actions": [],
     }

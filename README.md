@@ -1,316 +1,221 @@
 # RoiBang-v2
 
-RoiBang-v2 是一个“脚本优先”的广告投放自动化系统。
+RoiBang-v2 是一个“固定脚本 + JSON 配置 + JSON 结果”的广告投放自动化系统。
 
-当前仓库是干净的 v2 架构。老项目目录只允许作为历史参考，不能作为当前开发目标；除非明确要求，不要读取老目录。
-
-## 当前阶段
-
-当前处于 第二阶段准备阶段。这个阶段只做本地预演、字段复核、策略整理和安全闸门，不做真实创建，也不调用创建接口。
-
-第二阶段准备收口文档见：`docs/phase-2-preparation-closeout.md`。
-
-当前核心链路固定为：
+核心方向：
 
 ```text
-request -> strategy -> preflight -> dry-run -> approve -> execute
+数据同步 -> 配置/模式生成计划 -> preflight（预演前检查） -> dry-run（预演） -> 人工确认 -> execute（执行） -> report（汇报）
 ```
 
-字段解释：
+AI（人工智能）只负责写代码、修脚本、看数据生成配置、复盘结果。真实业务动作只能由固定脚本读取 JSON 配置后执行，不能由 AI 临场猜账户、猜素材、猜预算、猜项目或改参数。
 
-- `request`：创建请求。
-- `strategy`：策略分配。
-- `preflight`：执行前检查。
-- `dry-run`：本地预演，不产生真实业务动作。
-- `approve`：批准记录，目前仍不是允许真实执行。
-- `execute`：执行阶段，目前必须硬阻断。
+## 当前主线
 
-`approve` 产物会输出 `payload_review` 人工复核视图。这个视图按 `create_project`、`bind_material`、`lookup_target_material`、`create_unit` 四类操作展示 payload 草稿：先创建项目，再把源素材账户素材推送到目标投放账户，再回查目标账户素材 ID 和封面 ID，最后用目标账户素材创建单元。它会汇总 payload 数量、是否仍为 `executable=false`、`live_payload_count` 是否为 0、是否还有 candidate 草稿、是否还有 `<lookup:...>` 占位符，以及 `create_execute` 是否仍需硬阻断。`payload_review` 只方便人工复核，不会打开真实执行。
+当前主线已经从“创建链路”推进到“自动化投放控制”的基础能力：
 
-`execute` 产物会输出 `execute_review_pack` 和 `chain_boundary_contract`。`execute_review_pack` 按同样四类操作展示已尝试解析本地 ID 台账后的 resolved payload 草稿；`chain_boundary_contract` 汇总 approve 是否仍是 record-only（只记录批准）、execute 是否 hard-block、是否没有 live payload、是否没有可执行 payload、是否 `external_api_calls=0`。这些字段用于最终人工复核，不是执行开关。
+- 创建链路：`create_project（创建项目） -> bind_material（素材推送） -> lookup_target_material（目标账户素材回查） -> create_unit（创建单元）`。
+- 创建模式：用固定 `create-modes（创建模式）` 替代每次手写大 JSON。
+- 项目管理：项目状态、预算、出价、ROI 系数、投放时段都走固定配置、预演和执行脚本。
+- 源素材账户：不再使用“源素材候选池”概念，统一从源素材账户同步和补材。
+- 定时任务：`scheduler（定时任务）` 直接写固定 `script.command（脚本命令）`，不依赖 prompt（提示词）解释业务流程。
+- 结果契约：脚本输出固定 JSON，包括 `ok`、`workflow（流程名）`、`summary（摘要）`、`blocking_reasons（阻断原因）`、`artifact_path（结果文件路径）`、`external_api_calls（外部接口调用数）`。
 
-真实创建路径按三件事收敛：
+## 创建模式
 
-```text
-配置 -> 预演 -> 执行脚本
-```
+创建时必须明确模板类型，不能省略“通投/男”。例如 `7R 放量` 是歧义说法，脚本会阻断；必须写成 `7R 通投放量` 或 `7R 男放量`。
 
-- `配置`：本地私有 JSON 配置和 policy 策略文件，账户、素材、项目数、单元数都从这里来。
-- `预演`：固定脚本生成本地预演产物，检查四步顺序、账户、素材、预算和本地台账。
-- `执行脚本`：`scripts/run_create_live_execute_once.py` 可直接读取 `create_execute` 产物和本地 policy/runtime 配置，按 `create_project -> bind_material -> lookup_target_material -> create_unit` 固定顺序执行。AI 不临场选择或改参数。
+当前固定模式：
 
-`create_live_execution_pack`、`create_first_live_prepare_pack` 这类产物只作为辅助复核包，不是主执行路径的必需步骤。真实执行以固定脚本、JSON 配置和 SQLite 台账为准。
+| 中文模式 | mode_key（模式键） | 模板 |
+| --- | --- | --- |
+| 7R 通投放量 | `wx_7r_general_scale` | `wx_7r_general（微小每付 7R 通投）` |
+| 7R 通投测新 | `wx_7r_general_test_new` | `wx_7r_general（微小每付 7R 通投）` |
+| 7R 男放量 | `wx_7r_male_scale` | `wx_7r_male（微小每付 7R 男）` |
+| 7R 男测新 | `wx_7r_male_test_new` | `wx_7r_male（微小每付 7R 男）` |
+| 每付通投放量 | `wx_pay_general_scale` | `wx_pay_general（微小每付通投）` |
+| 每付通投测新 | `wx_pay_general_test_new` | `wx_pay_general（微小每付通投）` |
+| 每付男放量 | `wx_pay_male_scale` | `wx_pay_male（微小每付男）` |
+| 每付男测新 | `wx_pay_male_test_new` | `wx_pay_male（微小每付男）` |
 
-最小真实执行配置模板：
+放量默认：
 
-- runtime（运行时配置）：`configs/runtime.create-live.local.example.json`
-- policy（策略配置）：`policies/create-live-execute.local.example.json`
-- 本地正式文件名建议：`configs/runtime.create-live.local.json` 和 `policies/create-live-execute.local.json`，这两个文件已被 `.gitignore` 忽略。
+- `daily_budget（日预算）`：88888
+- `cpa_bid（项目出价）`：103
+- `roi_coefficient（ROI 系数）`：7R 模板为 0.419
+- 每账户 5 个项目，每项目 1 个单元，每单元 5 个素材
+- 素材回看 60 天，按高消耗素材选择
 
-真实执行时仍只走一个固定入口：
+测新默认：
+
+- `daily_budget（日预算）`：10000
+- `cpa_bid（项目出价）`：105
+- `roi_coefficient（ROI 系数）`：7R 模板为 0.41
+- 每账户 8 个项目，每项目 1 个单元，每单元 6 个素材
+- 素材回看 30 天，按测新素材选择
+
+单元层固定规则：
+
+- `title_pool（文案池）`：放量和测新共用模板文案池。
+- `CTA（行动按钮）`：每个单元从模板池稳定随机选 2-3 个。
+- `product_selling_points（产品卖点）`：每个单元稳定随机选 2-3 个。
+- `aweme_ids（抖音号 ID）`：固定两个抖音号，每个单元稳定随机选 1 个。
+- `anchor（锚点）`、`landing_url（落地页）`、`fixed_video_cover_id（固定封面）`、`product_image_id（产品图）`：固定来自模板。
+- 稳定随机的意思是：同一个 `plan_id（计划 ID）` 和 `unit_key（单元键）` 预演和执行结果一致。
+
+生成创建计划示例：
 
 ```bash
-PYTHONPATH=src python3 scripts/run_create_first_live_local_chain.py \
+PYTHONPATH=src python3 scripts/run_create_mode.py \
   --config configs/runtime.example.json \
-  --preview-config configs/create/yzt-wx-mini-game.preview.local.json \
-  --policy policies/strategy.example.json
+  --request configs/create-mode-requests/wx_7r_general_scale.example.json \
+  --policy policies/create-policy.example.json
+```
 
+## 创建执行
+
+创建真实执行仍走固定脚本，真实执行前必须由用户明确说“确认执行”。
+
+固定顺序：
+
+```text
+create_project（创建项目）
+-> bind_material（素材从源素材账户推送到目标账户）
+-> lookup_target_material（目标账户素材回查）
+-> create_unit（创建单元）
+```
+
+执行入口：
+
+```bash
 PYTHONPATH=src python3 scripts/run_create_live_execute_once.py \
   --config configs/runtime.create-live.local.json \
   --policy policies/create-live-execute.local.json \
-  --create-execute-artifact <上一步输出的 artifacts.create_execute>
+  --create-execute-artifact <create_execute 产物路径>
 ```
 
-这里的 `approval_id` 只是 HTTP transport（HTTP 请求发送层）的本地审计留痕字段，不要求走 `create_live_execution_pack` 或 `create_first_live_prepare_pack`。真正的业务参数仍必须来自本地 JSON 配置、policy 策略文件和 SQLite 台账。
+创建时如果平台返回“已创建30个项目”，固定脚本会：
 
-真实执行前，`create_execute` 产物里的 `resolved_provider_payload_drafts` 必须已经完成 verified provider field mapping（已验证平台字段映射）：也就是发送给平台的字段名已经是平台字段，不是 `project_name`、`daily_budget` 这类内部字段名。`policies/create-live-execute.local.example.json` 默认要求这一点，未满足时执行脚本会停在本地，不会发创建接口。
+1. 查询该账户关闭状态项目。
+2. 删除最多 10 个关闭项目。
+3. 重试当前创建项目。
+4. 在结果 JSON 的 `project_cap_cleanup（项目上限清理结果）` 中汇报。
 
-## 核心原则
+## 项目管理脚本
 
-业务动作必须由固定脚本确定性执行。脚本只能读取 JSON 配置、JSON 策略和 SQLite 状态。
-
-AI 的职责是：
-
-- 写脚本、修脚本。
-- 阅读运行产物 JSON。
-- 更新策略 JSON。
-- 总结复盘结果。
-
-AI 不能在业务运行时临场决定是否执行、创建、暂停、删除、改预算或调时段。
-
-如果固定脚本执行出错，要把它当作代码、配置、策略或数据的 BUG 来修，并补测试。不能让 AI 临场绕过脚本。
-
-## 安全边界
-
-当前阶段必须保持：
-
-```json
-{
-  "execution_enabled": false,
-  "external_api_calls": 0,
-  "actions": []
-}
-```
-
-含义：
-
-- `execution_enabled=false`：业务执行关闭。
-- `external_api_calls=0`：没有外部接口调用。
-- `actions=[]`：没有可执行业务动作。
-
-`create_execute` 必须继续硬阻断。`hard-blocked` 的意思是：即使前面检查通过，脚本也必须停在本地复核产物，不能创建真实项目。
-
-## 第二阶段 常用命令
-
-### 平台字段映射准备
-
-```bash
-PYTHONPATH=src scripts/run_create_phase2_provider_mapping_prep.py \
-  --config configs/runtime.example.json \
-  --policy policies/strategy.example.json
-```
-
-这个命令生成 `create_phase2_provider_mapping_prep` 本地产物，用来检查未来平台字段映射准备情况。
-
-### 模板槽位准备
-
-```bash
-PYTHONPATH=src scripts/run_create_phase2_template_slot_prep.py \
-  --config configs/runtime.example.json \
-  --request configs/requests/example.create-request.json \
-  --policy policies/strategy.example.json
-```
-
-这个命令检查未来创建模板里的固定项、按账户填写项和策略固定项。
-
-勇者突进微信小游戏当前有 4 个模板：
-
-- 微小每付男
-- 微小每付通投
-- 微小每付7R男
-- 微小每付7R通投
-
-### 模板确认记录
-
-```bash
-PYTHONPATH=src scripts/run_create_phase2_template_confirmation_pack.py \
-  --config configs/runtime.example.json
-```
-
-这个命令读取最新模板槽位准备产物，生成待确认记录。`required_user_input_now=true` 表示可以人工确认，但仍不允许真实创建。
-
-### 勇者突进手填配置检查
-
-```bash
-PYTHONPATH=src python3 scripts/run_create_phase2_yzt_config_check.py \
-  --config configs/runtime.example.json \
-  --preview-config configs/create/yzt-wx-mini-game.preview.example.json \
-  --policy policies/strategy.example.json
-```
-
-这个命令检查手填配置是否安全，包括账户、预算、模板、ROI 系数、项目数量、单元数量等。
-
-### 目标账户池检查
-
-```bash
-PYTHONPATH=src python3 scripts/run_create_phase2_yzt_account_pool_check.py \
-  --config configs/runtime.example.json \
-  --preview-config configs/create/yzt-wx-mini-game.preview.example.json \
-  --policy policies/strategy.example.json
-```
-
-这个命令只读本地 SQLite，确认配置里的目标账户是否存在于本地账户池。
-
-### 素材候选池检查
-
-```bash
-PYTHONPATH=src python3 scripts/run_create_phase2_yzt_material_pool_check.py \
-  --config configs/runtime.example.json \
-  --preview-config configs/create/yzt-wx-mini-game.preview.example.json \
-  --policy policies/strategy.example.json
-```
-
-这个命令只读本地 SQLite，检查当前配置需要的素材数量是否能被候选池满足。
-
-### 一键准备检查
-
-```bash
-PYTHONPATH=src python3 scripts/run_create_phase2_yzt_preparation_check.py \
-  --config configs/runtime.example.json \
-  --preview-config configs/create/yzt-wx-mini-game.preview.example.json \
-  --policy policies/strategy.example.json
-```
-
-这个命令依次运行配置检查、账户池检查和素材池检查，并输出 `operator_guide`。`operator_guide` 是操作员指南，告诉你下一步该修什么或跑什么。
-
-### 本地私有配置准备
-
-```bash
-PYTHONPATH=src python3 scripts/run_create_phase2_yzt_local_config_prepare.py
-```
-
-这个命令把安全示例配置复制为本地私有配置：
+项目更新类动作统一走：
 
 ```text
-configs/create/yzt-wx-mini-game.preview.local.json
+项目控制配置文件 -> preflight（预演前检查） -> 用户确认 -> execute（执行） -> JSON 汇报
 ```
 
-这个 `*.local.json` 文件已被 git 忽略，真实账户只能写在这里，不能提交。
-不要提交真实账户。
+固定入口：
 
-### 创建预览
+- `scripts/run_project_status_update.py`：项目开启/关停。
+- `scripts/run_project_budget_update.py`：项目预算调整。
+- `scripts/run_project_bid_update.py`：项目出价调整。
+- `scripts/run_project_roi_coeff_update.py`：7R 项目 ROI 系数调整。
+- `scripts/run_project_update_preflight.py`：项目更新预演。
+- `scripts/run_project_update_execute.py`：项目更新执行。
+- `scripts/run_project_schedule_restore_due.py`：到期时段恢复。
 
-```bash
-PYTHONPATH=src python3 scripts/run_create_phase2_yzt_create_preview.py \
-  --config configs/runtime.example.json \
-  --preview-config configs/create/yzt-wx-mini-game.preview.example.json \
-  --policy policies/strategy.example.json
-```
+项目时段更新已经是固定脚本能力；当天拉空后，恢复逻辑固定在脚本和定时任务里，不靠 AI 记忆。
 
-这个命令生成标准创建请求 `standard_create_request`，并检查项目名、账户、预算、ROI、固定 URL 等。仍然只写本地产物。
+## 数据同步和源素材账户
 
-### 完整本地预演链
+只读同步脚本负责读平台数据、写 SQLite、输出 JSON，不执行业务修改：
 
-```bash
-PYTHONPATH=src python3 scripts/run_create_phase2_yzt_dry_chain.py \
-  --config configs/runtime.example.json \
-  --preview-config configs/create/yzt-wx-mini-game.preview.example.json \
-  --policy policies/strategy.example.json
-```
+- `scripts/run_daily_report_pipeline.py`：每日报表同步。
+- `scripts/run_material_history_backfill_overnight.sh`：素材历史数据回补。
+- `scripts/run_control_operation_log_history_sync.py`：操作日志同步。
+- `scripts/run_source_material_account_auto_push.py`：源素材账户自动补材。
 
-这个命令完整跑：预览、创建请求记录、策略计划、执行前检查、字段映射检查和 dry-run。它不创建项目，只生成本地 JSON 产物。
-
-### 平台字段证据复核
-
-```bash
-PYTHONPATH=src python3 scripts/run_create_provider_evidence_review.py \
-  --config configs/runtime.example.json \
-  --policy policies/strategy.example.json
-```
-
-这个命令生成平台字段证据复核产物。重点输出：
-
-- `evidence_status_counts`：证据状态计数。
-- `operator_guide`：操作员指南。
-- `evidence_worksheet`：证据填写清单。
-- `provider_field_gap_report`：缺平台字段报告。
-
-这个命令不访问外网、不调用接口、不真实创建。
-
-## 项目命名规则
-
-当前勇者突进项目名规则：
-
-```text
-月日_归属_游戏名_项目模板名_批次码_序号
-```
-
-示例：
-
-```text
-0509_郭靖_勇者突进_微小每付7R男_B281B2BCB_01
-```
-
-单元名称当前草稿规则：
-
-```text
-{project_name}_U{unit_index:02d}
-```
-
-示例：
-
-```text
-0509_郭靖_勇者突进_微小每付7R男_B281B2BCB_01_U01
-```
-
-## 本地数据同步
-
-本地同步和分析脚本只负责读数据、写 SQLite、写运行产物，不执行业务动作。
-
-常用命令包括：
-
-```bash
-PYTHONPATH=src scripts/run_material_sync.py --config configs/runtime.example.json --request configs/material-sync.example.json
-PYTHONPATH=src scripts/run_material_source.py --config configs/runtime.example.json --request configs/material-source.example.json
-PYTHONPATH=src scripts/run_data_sync.py --config configs/runtime.example.json --request configs/data-sync.example.json
-PYTHONPATH=src scripts/run_daily_learning.py --config configs/runtime.example.json --request configs/daily-learning.example.json
-```
-
-## 创建链路脚本
-
-创建链路从请求到硬阻断执行，完整顺序是：
-
-```bash
-PYTHONPATH=src scripts/run_create_request.py --config configs/runtime.example.json --request configs/requests/example.create-request.json
-PYTHONPATH=src scripts/run_create_strategy_plan.py --config configs/runtime.example.json --policy policies/strategy.example.json
-PYTHONPATH=src scripts/run_create_preflight.py --config configs/runtime.example.json --policy policies/strategy.example.json
-PYTHONPATH=src scripts/run_create_provider_field_map_check.py --config configs/runtime.example.json --policy policies/strategy.example.json
-PYTHONPATH=src scripts/run_create_dry_run.py --config configs/runtime.example.json --policy policies/strategy.example.json
-PYTHONPATH=src scripts/run_create_approval.py --config configs/runtime.example.json --policy policies/strategy.example.json
-PYTHONPATH=src scripts/run_create_plan_snapshot.py --config configs/runtime.example.json
-PYTHONPATH=src scripts/run_create_execute.py --config configs/runtime.example.json --policy policies/strategy.example.json
-PYTHONPATH=src scripts/run_create_mock_execute.py --config configs/runtime.example.json --policy policies/strategy.example.json
-PYTHONPATH=src scripts/run_create_first_live_runbook.py --config configs/runtime.example.json --policy policies/strategy.example.json
-PYTHONPATH=src scripts/run_create_chain_final_report.py --config configs/runtime.example.json
-```
-
-这些脚本必须保持本地化和可复盘，不能越过安全开关。`run_create_approval.py` 只记录批准复核结果；即使 `policy_decision=would_approve`，也不代表允许真实创建，后续 `run_create_execute.py` 仍必须 hard-block。`run_create_mock_execute.py` 会用 mock provider ID（模拟平台 ID）打通 `create_project -> create_unit -> bind_material` 顺序，并写入本地平台 ID 台账，但不会调用外部接口。`run_create_first_live_runbook.py` 生成首单受控创建评审包，仍然要求你单独批准后才可能进入真实执行。`run_create_chain_final_report.py` 会读取最新 `create_execute` 产物，把真实创建前最后边界汇总到 `creation_boundary_summary`。
+源素材账户自动补材只处理视频素材，不处理文案素材；脚本会输出推送数量、失败样例和外部接口调用数。
 
 ## 定时任务
 
-定时任务配置是示例文件，不会自动安装或执行。
+示例配置：
+
+- `configs/scheduler/roibang-v2.jobs.example.json`
+- `scheduler/cron/roibang-v2.cron.example`
+- `scheduler/launchd/*.plist.example`
+
+定时任务原则：
+
+- 成熟任务 `enabled=true（启用）`。
+- 未成熟任务 `enabled=false（停用）`。
+- 每个 job（定时任务）必须写固定 `script.command（脚本命令）`。
+- 定时日报只读执行结果，不参与业务判断。
+
+常用检查：
 
 ```bash
-PYTHONPATH=src scripts/validate_scheduler_jobs.py --registry configs/scheduler/roibang-v2.jobs.example.json
-PYTHONPATH=src scripts/render_scheduler_templates.py --registry configs/scheduler/roibang-v2.jobs.example.json --output-dir scheduler
-PYTHONPATH=src scripts/run_scheduler_job.py --job-id roibang-material-sync
-PYTHONPATH=src scripts/validate_run_artifact.py --job-id roibang-daily-report-pipeline
+PYTHONPATH=src python3 scripts/validate_scheduler_jobs.py \
+  --registry configs/scheduler/roibang-v2.jobs.example.json
+
+PYTHONPATH=src python3 scripts/render_scheduler_templates.py \
+  --registry configs/scheduler/roibang-v2.jobs.example.json \
+  --output-dir scheduler
+
+PYTHONPATH=src python3 scripts/run_scheduler_status.py \
+  --config configs/runtime.example.json \
+  --request configs/scheduler-status.example.json
 ```
+
+## 本地文件边界
+
+不要提交：
+
+- token（令牌）、session（会话）、本地密钥。
+- `data/secrets/`。
+- 真实账户 CSV。
+- SQLite 数据库。
+- `data/runs/` 下的运行产物。
+- `*.local.json` 本地私有配置。
+
+本地私有创建配置示例路径：
+
+- `configs/create/yzt-wx-mini-game.preview.local.json`
+- `configs/runtime.create-live.local.json`
+- `policies/create-live-execute.local.json`
+
+不要提交真实账户。
+
+`.gitignore` 已忽略常见本地文件和运行产物。
+
+## 测试
+
+关键创建链路测试：
+
+```bash
+PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 -m pytest \
+  tests/test_create_mode.py \
+  tests/test_create_workflow.py \
+  tests/test_create_plan_from_strategy.py \
+  tests/test_create_live_execute_once.py \
+  tests/test_create_http_transport.py \
+  -q
+```
+
+项目管理和定时任务测试：
+
+```bash
+PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 -m pytest \
+  tests/test_project_update_config.py \
+  tests/test_project_update_preflight.py \
+  tests/test_project_update_execute.py \
+  tests/test_project_schedule_restore_due.py \
+  tests/test_scheduler_status.py \
+  tests/test_scheduler_jobs.py \
+  -q
+```
+
+全量测试如果失败，先看是否是历史测试还在按旧报表字段断言；不要为了过测试回退业务字段。
 
 ## 禁止事项
 
-- 不提交 token、session、真实账户 CSV、数据库、运行产物、本地私有配置。
-- 不执行真实创建、暂停、删除、改预算、调时段。
-- 不让 AI 在运行时做业务决策。
-- 不绕过 `request -> strategy -> preflight -> dry-run -> approve -> execute`。
-- 不把 `create_execute` 从硬阻断改成真实执行，除非开启单独批准的 真实执行阶段。
+- 不让 AI 临场执行业务动作。
+- 不让 AI 猜账户、模板、预算、ROI、出价、素材数、项目数、单元数。
+- 不提交本地密钥、token、真实账户和运行产物。
+- 不新增复杂审批包、复核包、执行包作为主路径。
+- 不绕过固定脚本和 JSON 配置。

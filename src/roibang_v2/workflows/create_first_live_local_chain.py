@@ -6,7 +6,6 @@ from typing import Any
 
 from roibang_v2.runs import write_run_artifact
 from roibang_v2.config import load_json
-from roibang_v2.workflows.create_approval import run_create_approval_request
 from roibang_v2.workflows.create_execute import run_create_execute_request
 from roibang_v2.workflows.create_phase2_yzt_dry_chain import run_create_phase2_yzt_dry_chain_request
 from roibang_v2.workflows.create_phase2_yzt_preparation_check import build_create_phase2_yzt_preparation_check
@@ -110,35 +109,34 @@ def create_plan_to_preview_config(create_plan: dict[str, Any]) -> dict[str, Any]
             "dedupe_scope": "request",
         }
     field_defaults = create_plan.get("field_defaults")
-    if not isinstance(field_defaults, dict) or not field_defaults:
-        field_defaults = {
-            "landing_type": "MICRO_GAME",
-            "pricing": "PRICING_OCPM",
-            "inventory_type": "INVENTORY_FEED",
-        }
-    return {
+    result = {
         "template_name": str(create_plan.get("template_name") or "微小每付7R男"),
         "owner": str(create_plan.get("owner") or ""),
         "target_date": str(create_plan.get("target_date") or ""),
         "batch_generated_at": str(create_plan.get("batch_generated_at") or ""),
+        "local_key_namespace": str(create_plan.get("plan_id") or create_plan.get("run_id") or ""),
         "source_advertiser_id": str(create_plan.get("source_advertiser_id") or ""),
         "organization_id": str(create_plan.get("organization_id") or ""),
         "pool_key": str(create_plan.get("pool_key") or ""),
         "defaults": {
             "daily_budget": _positive_int(first_account.get("daily_budget"), 0),
+            "cpa_bid": _positive_int(first_account.get("cpa_bid", create_plan.get("cpa_bid")), 0),
             "project_count": _positive_int(first_account.get("project_count"), 1) or 1,
             "units_per_project": _positive_int(first_account.get("units_per_project"), 1) or 1,
         },
         "roi_coefficient": create_plan.get("roi_coefficient"),
         "accounts": accounts,
         "material_requirements": dict(material_requirements),
-        "field_defaults": dict(field_defaults),
+        "template_key": str(create_plan.get("template_key") or ""),
         "create_plan": {
             "plan_id": str(create_plan.get("plan_id") or ""),
             "reason": str(create_plan.get("reason") or ""),
             "materials": materials,
         },
     }
+    if isinstance(field_defaults, dict) and field_defaults:
+        result["field_defaults"] = dict(field_defaults)
+    return result
 
 
 def _step(step: str, artifact: dict[str, Any]) -> dict[str, Any]:
@@ -218,7 +216,7 @@ def _blocked_chain_payload(
             "project_count": 0,
             "unit_count": 0,
             "material_count": 0,
-            "ready_for_approval_chain": False,
+            "ready_for_execute_script": False,
             "ready_for_live_execute": False,
         },
         "first_live_scope": {
@@ -238,15 +236,22 @@ def _blocked_chain_payload(
             "violations": violations,
         },
         "chain_steps": [],
-        "artifacts": {"dry_chain": "", "dry_run": "", "create_approval": "", "create_execute": ""},
+        "artifacts": {"dry_chain": "", "dry_run": "", "create_execute": ""},
         "preparation_check": {},
         "dry_chain": {},
         "create_plan_validation": create_plan_validation or {},
-        "approved_for_execute": False,
         "human_next_steps": violations,
         "violations": violations,
         "actions": [],
     }
+
+
+def _write_handoff_artifact(*, source_path: str, handoff_path: str | Path) -> str:
+    source = Path(source_path)
+    target = Path(handoff_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    return str(target)
 
 
 def build_create_first_live_local_chain(
@@ -277,7 +282,6 @@ def build_create_first_live_local_chain(
         preview_config_path=preview_config_path,
     )
     dry_chain: dict[str, Any] = {}
-    approval: dict[str, Any] = {}
     execute: dict[str, Any] = {}
     if bool(preparation.get("ok")):
         dry_chain = run_create_phase2_yzt_dry_chain_request(
@@ -292,22 +296,11 @@ def build_create_first_live_local_chain(
         )
     if bool(dry_chain.get("ok")) and str(dry_chain.get("artifacts", {}).get("dry_run") or "").strip():
         dry_run_path = str(dry_chain["artifacts"]["dry_run"])
-        approval = run_create_approval_request(
-            {
-                "create_approval": {
-                    "create_dry_run_artifact": load_json(dry_run_path),
-                    "create_dry_run_artifact_path": dry_run_path,
-                    "policy": _policy_section(policy, "create_approval"),
-                }
-            },
-            runs_dir=runs_dir,
-        )
-    if bool(approval.get("ok")):
         execute = run_create_execute_request(
             {
                 "create_execute": {
-                    "create_approval_artifact": approval,
-                    "create_approval_artifact_path": str(approval.get("artifact_path") or ""),
+                    "create_dry_run_artifact": load_json(dry_run_path),
+                    "create_dry_run_artifact_path": dry_run_path,
                     "policy": _policy_section(policy, "create_execute"),
                 }
             },
@@ -318,7 +311,6 @@ def build_create_first_live_local_chain(
     ok = (
         bool(preparation.get("ok"))
         and bool(dry_chain.get("ok"))
-        and bool(approval.get("ok"))
         and bool(execute.get("ok"))
         and bool(scope_guard.get("ok"))
     )
@@ -334,7 +326,7 @@ def build_create_first_live_local_chain(
             "project_count": int(scope_guard.get("project_count") or 0),
             "unit_count": int(scope_guard.get("unit_count") or 0),
             "material_count": int(scope_guard.get("material_count") or 0),
-            "ready_for_approval_chain": bool(approval.get("ok")),
+            "ready_for_execute_script": bool(execute.get("ok")),
             "ready_for_live_execute": False,
         },
         "first_live_scope": {
@@ -347,19 +339,16 @@ def build_create_first_live_local_chain(
         "chain_steps": [
             _step("preparation_check", preparation),
             _step("dry_chain", dry_chain) if dry_chain else {"step": "dry_chain", "workflow": "", "ok": False, "status": "not_run"},
-            _step("create_approval", approval) if approval else {"step": "create_approval", "workflow": "", "ok": False, "status": "not_run"},
             _step("create_execute", execute) if execute else {"step": "create_execute", "workflow": "", "ok": False, "status": "not_run"},
         ],
         "artifacts": {
             "dry_chain": str(dry_chain.get("artifact_path") or ""),
             "dry_run": str(dry_chain.get("artifacts", {}).get("dry_run") or "") if dry_chain else "",
-            "create_approval": str(approval.get("artifact_path") or ""),
             "create_execute": str(execute.get("artifact_path") or ""),
         },
         "preparation_check": preparation,
         "dry_chain": dry_chain,
         "create_plan_validation": create_plan_validation or {},
-        "approved_for_execute": False,
         "human_next_steps": _human_next_steps(ok=ok, preparation=preparation, dry_chain=dry_chain, scope_guard=scope_guard),
         "violations": _human_next_steps(ok=False, preparation=preparation, dry_chain=dry_chain, scope_guard=scope_guard) if not ok else [],
         "actions": [],
@@ -382,5 +371,12 @@ def run_create_first_live_local_chain_request(
         runs_dir=runs_dir,
         preview_config_path=str(cfg.get("preview_config_path") or "configs/create/yzt-wx-mini-game.preview.example.json"),
     )
+    handoff_path = str(cfg.get("create_execute_handoff_path") or "").strip()
+    create_execute_path = str(payload.get("artifacts", {}).get("create_execute") or "").strip()
+    if bool(payload.get("ok")) and handoff_path and create_execute_path:
+        payload["artifacts"]["create_execute_handoff"] = _write_handoff_artifact(
+            source_path=create_execute_path,
+            handoff_path=handoff_path,
+        )
     artifact_path = write_run_artifact(runs_dir, "create_first_live_local_chain", payload)
     return {**payload, "artifact_path": str(artifact_path)}

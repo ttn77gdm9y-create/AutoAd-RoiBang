@@ -133,10 +133,6 @@ def build_strategy_plan(
             "payloads": [],
             "note": "Phase 1 dry-run draft contains no live API payloads.",
         },
-        "approval": {
-            "required_before_execute": bool(policy.get("require_approval_before_execute", True)),
-            "status": "disabled_in_phase1",
-        },
         "execute": {
             "status": "disabled_in_phase1",
             "reason": "Phase 1 does not implement live create, pause, delete, push, bind, or update.",

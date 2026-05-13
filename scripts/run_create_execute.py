@@ -9,31 +9,19 @@ from roibang_v2.config import load_json, load_runtime_config
 from roibang_v2.workflows.create_execute import run_create_execute_request
 
 
-def _latest_artifact(runs_dir: Path, workflow: str) -> Path:
-    workflow_dir = runs_dir / workflow
-    candidates = sorted(workflow_dir.glob("*.json"))
-    if not candidates:
-        raise FileNotFoundError(f"no {workflow} artifacts found under {workflow_dir}")
-    return candidates[-1]
-
-
 def run_from_args(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Run Phase 1 create execute hard-block.")
+    parser = argparse.ArgumentParser(description="Run local create execute review from an explicit dry-run artifact.")
     parser.add_argument("--config", default="configs/runtime.example.json")
     parser.add_argument("--request", default="")
-    parser.add_argument("--policy", default="policies/strategy.example.json")
-    parser.add_argument("--create-approval-artifact", default="")
+    parser.add_argument("--policy", default="policies/create-policy.example.json")
+    parser.add_argument("--create-dry-run-artifact", required=True)
     args = parser.parse_args(argv)
 
     config = load_runtime_config(args.config)
     if config.external_api_enabled or config.execution_enabled:
-        raise RuntimeError("Phase 1 create execute requires external_api_enabled=false and execution_enabled=false")
+        raise RuntimeError("本地 create execute 要求 external_api_enabled=false 且 execution_enabled=false")
 
-    approval_path = (
-        Path(args.create_approval_artifact)
-        if str(args.create_approval_artifact or "").strip()
-        else _latest_artifact(config.runs_dir, "create_approval")
-    )
+    dry_run_path = Path(args.create_dry_run_artifact)
     policy = load_json(args.policy).get("create_execute") or {}
     request_cfg = load_json(args.request).get("create_execute") if str(args.request or "").strip() else {}
     if isinstance(request_cfg, dict):
@@ -41,8 +29,8 @@ def run_from_args(argv: list[str] | None = None) -> int:
     result = run_create_execute_request(
         {
             "create_execute": {
-                "create_approval_artifact": load_json(approval_path),
-                "create_approval_artifact_path": str(approval_path),
+                "create_dry_run_artifact": load_json(dry_run_path),
+                "create_dry_run_artifact_path": str(dry_run_path),
                 "policy": policy,
             }
         },

@@ -162,7 +162,7 @@ def test_backfill_runner_execute_uses_batch_account_ids(monkeypatch, tmp_path):
             "advertiser_id": "1858371222574218",
             "data_topic": "BASIC_DATA",
             "dimensions": "[\"stat_time_day\",\"cdp_project_id\",\"cdp_project_name\",\"cdp_promotion_id\",\"cdp_promotion_name\"]",
-            "metrics": "[\"stat_cost\",\"show_cnt\",\"click_cnt\",\"convert_cnt\"]",
+            "metrics": "[\"stat_cost\",\"show_cnt\",\"click_cnt\",\"convert_cnt\",\"attribution_convert_cnt\",\"attribution_convert_cost\",\"attribution_billing_game_in_app_ltv_1day\",\"attribution_billing_game_in_app_roi_1day\"]",
             "filters": "[]",
             "start_time": "2026-02-10",
             "end_time": "2026-02-10",

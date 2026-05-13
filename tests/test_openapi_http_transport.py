@@ -273,3 +273,62 @@ def test_http_transport_token_store_reads_oauth_credentials_from_env(monkeypatch
     )
 
     assert transport(_request())["code"] == 0
+
+
+def test_http_transport_token_store_reads_oauth_credentials_from_file(tmp_path):
+    store = tmp_path / "tokens.json"
+    credentials = tmp_path / "credentials.json"
+    store.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "tokens": {
+                    "default": {
+                        "access_token": "access-old",
+                        "refresh_token": "refresh-old",
+                        "expires_at": "2026-05-01T00:00:00+00:00",
+                    }
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    credentials.write_text(
+        json.dumps({"app_id": "app-id-from-file", "app_secret": "app-secret-from-file"}),
+        encoding="utf-8",
+    )
+
+    def fake_oauth_opener(_url, payload, _timeout_seconds):
+        assert payload["app_id"] == "app-id-from-file"
+        assert payload["secret"] == "app-secret-from-file"
+        return HttpResponse(
+            200,
+            {
+                "code": 0,
+                "data": {
+                    "access_token": "access-new",
+                    "refresh_token": "refresh-new",
+                    "expires_in": 3600,
+                    "refresh_token_expires_in": 86400,
+                },
+            },
+        )
+
+    transport = build_http_transport(
+        {
+            "enabled": True,
+            "token_store": {
+                "enabled": True,
+                "store_file": str(store),
+                "user_id": "default",
+                "auto_refresh": True,
+                "credentials_file": str(credentials),
+            },
+        },
+        response_dir=tmp_path / "audit",
+        opener=lambda *_args: HttpResponse(200, {"code": 0, "data": {"logs": []}}),
+        oauth_opener=fake_oauth_opener,
+    )
+
+    assert transport(_request())["code"] == 0

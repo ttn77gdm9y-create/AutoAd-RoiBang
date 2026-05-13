@@ -21,7 +21,7 @@ def _latest_artifact(runs_dir: Path, workflow: str) -> Path:
 def run_from_args(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build a Phase 1 create strategy plan.")
     parser.add_argument("--config", default="configs/runtime.example.json")
-    parser.add_argument("--policy", default="policies/strategy.example.json")
+    parser.add_argument("--policy", default="policies/create-policy.example.json")
     parser.add_argument("--create-request-artifact", default="")
     args = parser.parse_args(argv)
 

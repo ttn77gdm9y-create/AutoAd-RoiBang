@@ -90,8 +90,6 @@ def _violations(
     preflight_ok = bool(preflight.get("ok", True))
     if str(preflight.get("status") or "") != "passed" or not preflight_ok:
         violations.append("strategy preflight must pass before dry-run")
-    if bool(preflight.get("approved_for_execute", False)):
-        violations.append("strategy preflight must not approve execution in phase1")
     target_accounts = {task["target_advertiser_id"] for task in tasks if task.get("target_advertiser_id")}
     material_ids = {material_id for task in tasks for material_id in task.get("material_ids", [])}
     max_materials = _policy_limit(policy, "max_materials_per_dry_run", 50)
@@ -147,7 +145,6 @@ def build_strategy_dry_run(
         },
         "candidate_tasks": tasks if not violations else [],
         "violations": violations,
-        "approved_for_execute": False,
         "actions": [],
     }
 

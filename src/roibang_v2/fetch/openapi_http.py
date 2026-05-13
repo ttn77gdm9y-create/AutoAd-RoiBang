@@ -33,6 +33,13 @@ def _token_from_config(config: dict[str, Any], *, oauth_opener: OAuthOpener | No
             raise RuntimeError("OpenAPI HTTP token_store requires store_file")
         app_id = str(token_store.get("app_id") or "").strip()
         app_secret = str(token_store.get("app_secret") or "").strip()
+        credentials_file = str(token_store.get("credentials_file") or "").strip()
+        if credentials_file and (not app_id or not app_secret):
+            credentials = json.loads(Path(credentials_file).read_text(encoding="utf-8"))
+            if not isinstance(credentials, dict):
+                raise RuntimeError("OpenAPI HTTP token_store credentials_file must contain a JSON object")
+            app_id = app_id or str(credentials.get("app_id") or "").strip()
+            app_secret = app_secret or str(credentials.get("app_secret") or "").strip()
         app_id_env = str(token_store.get("app_id_env") or "").strip()
         app_secret_env = str(token_store.get("app_secret_env") or "").strip()
         if not app_id and app_id_env:

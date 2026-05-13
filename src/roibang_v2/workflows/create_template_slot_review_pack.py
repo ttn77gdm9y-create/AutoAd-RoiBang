@@ -147,7 +147,7 @@ def _review_sections(request: dict[str, Any], policy: dict[str, Any]) -> list[di
                 ),
                 _slot(
                     slot_key="material_id",
-                    source="product_source_material_candidates.material_id",
+                    source="product_source_materials.material_id",
                     value_preview="<selected-by-create-strategy-plan>",
                 ),
             ],

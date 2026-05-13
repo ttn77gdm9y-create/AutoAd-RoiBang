@@ -79,6 +79,29 @@ def _completed_execute_once_artifact() -> dict:
     }
 
 
+def _failed_execute_once_artifact() -> dict:
+    payload = _completed_execute_once_artifact()
+    payload["ok"] = False
+    payload["status"] = "create_http_failed"
+    payload["external_api_calls"] = 3
+    payload["transport_call_count"] = 3
+    payload["ordered_steps"] = [
+        {"operation": "create_project", "status": "completed"},
+        {"operation": "bind_material", "status": "completed"},
+    ]
+    payload["provider_id_records"] = [
+        {"status": "recorded", "entity_type": "project", "local_key": "p2", "provider_id": "project-2"},
+    ]
+    payload["material_bind_records"] = [{"status": "recorded", "bind_key": "bind-2"}]
+    payload["failure"] = {
+        "operation": "create_unit",
+        "index": 0,
+        "message": "网络异常",
+        "code": 40000,
+    }
+    return payload
+
+
 def _create_plan() -> dict:
     return {
         "plan_id": "plan-1",
@@ -203,3 +226,71 @@ def test_create_live_execute_report_script_reports_missing_execute_once_as_not_f
     assert output["create_plan_summary"] == {}
     assert output["plan_artifact_path"] == ""
     assert artifact["actions"] == []
+
+
+def test_create_live_execute_report_summarizes_multiple_execute_once_artifacts(tmp_path: Path):
+    result = run_create_live_execute_report_request(
+        {
+            "create_live_execute_report": {
+                "create_live_execute_once_artifacts": [
+                    _completed_execute_once_artifact(),
+                    _failed_execute_once_artifact(),
+                ],
+                "source_artifact_paths": [
+                    "/runs/create_live_execute_once/a.json",
+                    "/runs/create_live_execute_once/b.json",
+                ],
+            }
+        },
+        runs_dir=tmp_path / "runs",
+        db_path=tmp_path / "roibang.sqlite3",
+    )
+
+    assert result["workflow"] == "create_live_execute_report"
+    assert result["status"] == "reported_manual_review_required"
+    assert result["execution_enabled"] is False
+    assert result["external_api_calls"] == 0
+    assert result["batch_summary"]["artifact_count"] == 2
+    assert result["batch_summary"]["completed_artifact_count"] == 1
+    assert result["batch_summary"]["failed_artifact_count"] == 1
+    assert result["batch_summary"]["manual_review_required"] is True
+    assert result["batch_summary"]["created_project_count"] == 2
+    assert result["batch_summary"]["created_unit_count"] == 1
+    assert result["batch_summary"]["material_bind_count"] == 2
+    assert result["batch_summary"]["failure_reasons"] == [
+        {
+            "source_artifact_path": "/runs/create_live_execute_once/b.json",
+            "operation": "create_unit",
+            "index": 0,
+            "message": "网络异常",
+            "code": 40000,
+        }
+    ]
+    assert "成功项目2个、成功单元1个" in result["message"]
+    assert "需要人工处理：是" in result["message"]
+
+
+def test_create_live_execute_report_script_accepts_multiple_execute_once_artifacts(tmp_path: Path, capsys):
+    runtime_path = _runtime_config(tmp_path)
+    first_path = tmp_path / "a.json"
+    second_path = tmp_path / "b.json"
+    first_path.write_text(json.dumps(_completed_execute_once_artifact(), ensure_ascii=False), encoding="utf-8")
+    second_path.write_text(json.dumps(_failed_execute_once_artifact(), ensure_ascii=False), encoding="utf-8")
+    module = _load_script("run_create_live_execute_report")
+
+    exit_code = module.run_from_args(
+        [
+            "--config",
+            str(runtime_path),
+            "--create-live-execute-once-artifact",
+            str(first_path),
+            "--create-live-execute-once-artifact",
+            str(second_path),
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert output["status"] == "reported_manual_review_required"
+    assert output["batch_summary"]["artifact_count"] == 2
+    assert output["batch_summary"]["manual_review_required"] is True

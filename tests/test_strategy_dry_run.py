@@ -55,7 +55,6 @@ def _strategy_preflight(*, passed: bool = True) -> dict:
             }
         },
         "violations": [] if passed else ["bad plan"],
-        "approved_for_execute": False,
     }
 
 
@@ -123,7 +122,6 @@ def test_strategy_dry_run_builds_non_executable_material_provision_candidates():
             "allowed_phase1_output": "dry_run_only",
         }
     ]
-    assert result["approved_for_execute"] is False
     assert result["actions"] == []
 
 

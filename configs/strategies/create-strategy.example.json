@@ -1,0 +1,61 @@
+{
+  "_comment": "复制为 configs/strategies/<date>.local.json 后填写真实策略。AI 只写这个策略配置，人确认后脚本生成 create_plan。",
+  "strategy_id": "strategy-YYYYMMDD-001",
+  "operator": "operator",
+  "product": "勇者突进",
+  "platform": "WECHAT_GAME",
+  "target_date": "YYYY-MM-DD",
+  "batch_generated_at": "YYYY-MM-DDTHH:MM:SS+08:00",
+  "launch_mode": "create_only",
+  "source_advertiser_id": "source-advertiser-id",
+  "pool_key": "material-pool-key",
+  "defaults": {
+    "daily_budget": 3000,
+    "cpa_bid": 103,
+    "materials_per_unit": 4,
+    "dedupe_scope": "request"
+  },
+  "materials": [
+    {
+      "source_material_id": "material-id-1",
+      "source_video_id": "video-id-1",
+      "name": "素材名称1"
+    },
+    {
+      "source_material_id": "material-id-2",
+      "source_video_id": "video-id-2",
+      "name": "素材名称2"
+    },
+    {
+      "source_material_id": "material-id-3",
+      "source_video_id": "video-id-3",
+      "name": "素材名称3"
+    },
+    {
+      "source_material_id": "material-id-4",
+      "source_video_id": "video-id-4",
+      "name": "素材名称4"
+    }
+  ],
+  "plan_groups": [
+    {
+      "plan_id": "strategy-YYYYMMDD-001-wx-7r-male",
+      "template_key": "wx_7r_male",
+      "template_name": "微小每付7R男",
+      "roi_coefficient": 0.41,
+      "target_accounts": [
+        {
+          "advertiser_id": "target-advertiser-id",
+          "project_count": 1,
+          "unit_count_per_project": 1
+        }
+      ],
+      "reason": "AI 根据昨日数据生成，人工确认后执行。"
+    }
+  ],
+  "notes": [
+    "wx_7r_male 和 wx_7r_general 必须填写 roi_coefficient。",
+    "wx_pay_male 和 wx_pay_general 不允许填写 roi_coefficient。",
+    "dedupe_scope=request 表示本策略内素材不重复；素材数量至少等于 项目数 * 单元数 * materials_per_unit。"
+  ]
+}

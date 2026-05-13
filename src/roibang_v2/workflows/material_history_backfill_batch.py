@@ -44,7 +44,13 @@ def _batch_options(batch_cfg: dict[str, Any]) -> dict[str, Any]:
     return {
         "size": size,
         "retry_failed": bool(value.get("retry_failed", False)),
+        "rerun_completed": bool(value.get("rerun_completed", False)),
+        "rerun_key": str(value.get("rerun_key") or "default"),
     }
+
+
+def _rerun_workflow_name(rerun_key: str) -> str:
+    return f"material_history_backfill_rerun:{rerun_key}"
 
 
 def _sync_state_by_date(
@@ -53,6 +59,7 @@ def _sync_state_by_date(
     dates: list[str],
     product: str,
     platform: str,
+    workflow: str = "material_history_backfill",
 ) -> dict[str, str]:
     if not dates:
         return {}
@@ -68,7 +75,7 @@ def _sync_state_by_date(
               AND sync_date IN ({placeholders})
             ORDER BY sync_date
             """,
-            tuple(["material_history_backfill", product, platform, *dates]),
+            tuple([workflow, product, platform, *dates]),
         ).fetchall()
     return {str(sync_date): str(status) for sync_date, status in rows}
 
@@ -77,16 +84,27 @@ def _partition_dates(
     *,
     dates: list[str],
     state_by_date: dict[str, str],
+    rerun_state_by_date: dict[str, str],
     retry_failed: bool,
+    rerun_completed: bool,
 ) -> dict[str, list[str]]:
     completed: list[str] = []
     failed_skipped: list[str] = []
     candidates: list[str] = []
     retry_dates: list[str] = []
+    rerun_completed_dates: list[str] = []
     for target_date in dates:
         status = state_by_date.get(target_date)
-        if status == "completed":
+        rerun_status = rerun_state_by_date.get(target_date)
+        if rerun_status == "completed":
             completed.append(target_date)
+            continue
+        if status == "completed":
+            if rerun_completed:
+                candidates.append(target_date)
+                rerun_completed_dates.append(target_date)
+            else:
+                completed.append(target_date)
             continue
         if status == "failed":
             if retry_failed:
@@ -101,6 +119,7 @@ def _partition_dates(
         "failed_skipped": failed_skipped,
         "candidates": candidates,
         "retry_dates": retry_dates,
+        "rerun_completed_dates": rerun_completed_dates,
     }
 
 
@@ -169,6 +188,59 @@ def _record_failure_state(
         )
 
 
+def _record_rerun_completion_state(
+    *,
+    db_path: str | Path,
+    dates: list[str],
+    product: str,
+    platform: str,
+    rerun_key: str,
+    artifact_path: str,
+) -> None:
+    if not dates:
+        return
+    updated_at = _utc_now()
+    workflow = _rerun_workflow_name(rerun_key)
+    with sqlite3.connect(db_path) as conn:
+        for target_date in dates:
+            conn.execute(
+                """
+                INSERT INTO material_sync_state (
+                  workflow,
+                  sync_date,
+                  status,
+                  product,
+                  platform,
+                  account_count,
+                  material_row_count,
+                  artifact_path,
+                  error_message,
+                  updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(workflow, sync_date, product, platform)
+                DO UPDATE SET
+                  status=excluded.status,
+                  account_count=excluded.account_count,
+                  material_row_count=excluded.material_row_count,
+                  artifact_path=excluded.artifact_path,
+                  error_message=excluded.error_message,
+                  updated_at=excluded.updated_at
+                """,
+                (
+                    workflow,
+                    target_date,
+                    "completed",
+                    product,
+                    platform,
+                    0,
+                    0,
+                    artifact_path,
+                    "",
+                    updated_at,
+                ),
+            )
+
+
 def build_material_history_backfill_batch_preflight(
     request: dict[str, Any],
     *,
@@ -188,10 +260,21 @@ def build_material_history_backfill_batch_preflight(
         product=product,
         platform=platform,
     )
+    rerun_state_by_date = {}
+    if bool(options["rerun_completed"]):
+        rerun_state_by_date = _sync_state_by_date(
+            db_path=db_path,
+            dates=dates,
+            product=product,
+            platform=platform,
+            workflow=_rerun_workflow_name(str(options["rerun_key"])),
+        )
     partitions = _partition_dates(
         dates=dates,
         state_by_date=state_by_date,
+        rerun_state_by_date=rerun_state_by_date,
         retry_failed=bool(options["retry_failed"]),
+        rerun_completed=bool(options["rerun_completed"]),
     )
     selected_dates = partitions["candidates"][: int(options["size"])]
     remaining_dates = partitions["candidates"][int(options["size"]) :]
@@ -213,6 +296,9 @@ def build_material_history_backfill_batch_preflight(
     discovery_request_count = int(discovery_plan["summary"]["planned_request_count"])
     detail_request_count = int(detail_plan["summary"]["planned_request_count"])
     selected_retry_dates = [target_date for target_date in selected_dates if target_date in partitions["retry_dates"]]
+    selected_rerun_completed_dates = [
+        target_date for target_date in selected_dates if target_date in partitions["rerun_completed_dates"]
+    ]
     payload = {
         "ok": True,
         "workflow": "material_history_backfill_batch_preflight",
@@ -236,21 +322,26 @@ def build_material_history_backfill_batch_preflight(
         "batch": {
             "size": int(options["size"]),
             "retry_failed": bool(options["retry_failed"]),
+            "rerun_completed": bool(options["rerun_completed"]),
+            "rerun_key": str(options["rerun_key"]),
         },
         "selected_dates": selected_dates,
         "remaining_dates": remaining_dates,
         "retry_dates": selected_retry_dates,
+        "rerun_completed_dates": selected_rerun_completed_dates,
         "skipped_dates": {
             "completed": partitions["completed"],
             "failed": partitions["failed_skipped"],
         },
         "state_by_date": state_by_date,
+        "rerun_state_by_date": rerun_state_by_date,
         "accounts": accounts,
         "discovery_plan": discovery_plan,
         "detail_plan": detail_plan,
         "guardrails": [
             "Preflight only; no external API calls are made.",
             "Completed material_history_backfill dates are skipped.",
+            "Completed dates are rerun only when batch.rerun_completed is true.",
             "Failed dates are skipped unless batch.retry_failed is true.",
             "Selected dates are intended for small readonly material_history_backfill runs.",
         ],
@@ -271,6 +362,7 @@ def run_material_history_backfill_batch_request(
     http_sleeper=None,
 ) -> dict[str, Any]:
     batch_cfg, material_cfg = _batch_config(request)
+    options = _batch_options(batch_cfg)
     preflight = build_material_history_backfill_batch_preflight(request, db_path=db_path, runs_dir=runs_dir)
     selected_dates = list(preflight["selected_dates"])
     platforms = _platforms(material_cfg)
@@ -357,4 +449,13 @@ def run_material_history_backfill_batch_request(
         ],
     }
     artifact = write_run_artifact(runs_dir, "material_history_backfill_batch", payload)
+    if bool(options["rerun_completed"]):
+        _record_rerun_completion_state(
+            db_path=db_path,
+            dates=completed_dates,
+            product=product,
+            platform=platform,
+            rerun_key=str(options["rerun_key"]),
+            artifact_path=str(artifact),
+        )
     return {**payload, "artifact_path": str(artifact)}

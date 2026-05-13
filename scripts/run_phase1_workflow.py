@@ -20,7 +20,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run a safe Phase 1 RoiBang-v2 workflow.")
     parser.add_argument("workflow", choices=sorted(ALLOWED_WORKFLOWS))
     parser.add_argument("--config", default="configs/runtime.example.json")
-    parser.add_argument("--policy", default="policies/strategy.example.json")
+    parser.add_argument("--policy", default="policies/create-policy.example.json")
     args = parser.parse_args()
 
     config = load_runtime_config(args.config)

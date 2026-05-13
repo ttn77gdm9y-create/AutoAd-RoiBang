@@ -1,0 +1,52 @@
+{
+  "mode_key": "wx_pay_general_scale",
+  "display_name": "每付通投放量",
+  "product": "勇者突进",
+  "platform": "WECHAT_GAME",
+  "template_key": "wx_pay_general",
+  "template_name_suffix": "放量",
+  "source_advertiser_id": "1856647522964490",
+  "organization_id": "1851650746645060",
+  "defaults": {
+    "daily_budget": 88888,
+    "cpa_bid": 103,
+    "project_count": 5,
+    "units_per_project": 1
+  },
+  "material_requirements": {
+    "material_type": "video",
+    "materials_per_unit": 5,
+    "dedupe_scope": "max_account_overlap",
+    "max_cross_account_overlap_ratio": 0.3,
+    "allow_reuse_across_accounts": true,
+    "on_insufficient": "allow_reuse"
+  },
+  "material_selection": {
+    "source_scope": "source_material_account",
+    "lookback_days": 60,
+    "selection_type": "high_spend",
+    "min_stat_cost": 1000,
+    "sort_by": "stat_cost_desc",
+    "random_shuffle": true,
+    "exclude_recent_used": false,
+    "exclude_recent_used_days": 0
+  },
+  "initial_status": {
+    "project_operation": "ENABLE",
+    "unit_operation": "ENABLE"
+  },
+  "naming": {
+    "project_name_template": "{target_date_mmdd}_{owner}_{product}_{project_template_name}_{batch_code}_{index}"
+  },
+  "fixed_cover": {
+    "mode": "template_fixed"
+  },
+  "unit_creative_selection": {
+    "title_strategy": "deterministic_shuffle_per_unit",
+    "cta_min_count": 2,
+    "cta_max_count": 3,
+    "product_selling_point_min_count": 2,
+    "product_selling_point_max_count": 3,
+    "aweme_select_count": 1
+  }
+}

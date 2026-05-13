@@ -22,6 +22,7 @@ def _print_result(result: dict) -> None:
                 "status": result["status"],
                 "summary": result["summary"],
                 "source_contract": result["source_contract"],
+                "allowed_account_contract": result["allowed_account_contract"],
                 "violations": result["violations"],
                 "artifact_path": result["artifact_path"],
             },
@@ -35,7 +36,7 @@ def run_from_args(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Validate create_plan JSON before preview or live create.")
     parser.add_argument("--config", default="configs/runtime.example.json")
     parser.add_argument("--plan", required=True)
-    parser.add_argument("--policy", default="policies/strategy.example.json")
+    parser.add_argument("--policy", default="policies/create-policy.example.json")
     args = parser.parse_args(argv)
 
     config = load_runtime_config(args.config)

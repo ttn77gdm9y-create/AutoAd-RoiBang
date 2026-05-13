@@ -42,7 +42,6 @@ def _strategy_plan() -> dict:
                 ]
             },
             "dry_run": {"status": "draft_only", "payloads": []},
-            "approval": {"status": "disabled_in_phase1"},
             "execute": {"status": "disabled_in_phase1"},
             "actions": [],
         },
@@ -67,7 +66,6 @@ def test_strategy_preflight_passes_phase1_plan_only_material_provision():
     }
     assert result["lineage"]["strategy_plan"]["plan_id"] == "plan_req_001"
     assert result["lineage"]["strategy_plan"]["target_date"] == "2026-05-06"
-    assert result["approved_for_execute"] is False
     assert result["actions"] == []
 
 

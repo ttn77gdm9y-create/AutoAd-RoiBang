@@ -28,7 +28,7 @@ def run_from_args(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run Phase 1 strategy plan generation.")
     parser.add_argument("--config", default="configs/runtime.example.json")
     parser.add_argument("--request", default="configs/requests/example.strategy-request.json")
-    parser.add_argument("--policy", default="policies/strategy.example.json")
+    parser.add_argument("--policy", default="policies/create-policy.example.json")
     parser.add_argument("--learning-artifact", default="")
     parser.add_argument("--material-source-artifact", default="")
     args = parser.parse_args(argv)

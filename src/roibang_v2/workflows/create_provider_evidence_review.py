@@ -263,7 +263,7 @@ def _operator_guide(*, status: str) -> dict[str, Any]:
             ],
             "next_command": (
                 "PYTHONPATH=src python3 scripts/run_create_provider_evidence_review.py "
-                "--config configs/runtime.example.json --policy policies/strategy.example.json"
+                "--config configs/runtime.example.json --policy policies/create-policy.example.json"
             ),
         }
     return {
@@ -283,7 +283,7 @@ def _operator_guide(*, status: str) -> dict[str, Any]:
         ],
         "next_command": (
             "PYTHONPATH=src python3 scripts/run_create_provider_evidence_review.py "
-            "--config configs/runtime.example.json --policy policies/strategy.example.json"
+            "--config configs/runtime.example.json --policy policies/create-policy.example.json"
         ),
     }
 

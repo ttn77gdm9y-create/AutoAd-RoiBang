@@ -198,6 +198,14 @@ def _configured_days(cfg: dict[str, Any]) -> list[str]:
     return days
 
 
+def _executor_retry_config(openapi_http: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "retry_api_codes": list(openapi_http.get("retry_api_codes") or []),
+        "max_api_retries": int(openapi_http.get("max_api_retries", openapi_http.get("max_retries") or 0) or 0),
+        "retry_sleep_seconds": float(openapi_http.get("retry_sleep_seconds") or 1),
+    }
+
+
 def run_report_fetch_request(
     request: dict[str, Any],
     *,
@@ -291,7 +299,15 @@ def run_report_fetch_request(
             opener=http_opener,
             sleeper=http_sleeper,
         )
-        execution_result = execute_openapi_readonly_plan(request_plan, transport=transport)
+        retry_config = _executor_retry_config(openapi_http)
+        execution_result = execute_openapi_readonly_plan(
+            request_plan,
+            transport=transport,
+            retry_api_codes=retry_config["retry_api_codes"],
+            max_api_retries=retry_config["max_api_retries"],
+            retry_sleep_seconds=retry_config["retry_sleep_seconds"],
+            sleeper=http_sleeper,
+        )
         snapshots = [
             _write_payload_snapshot(snapshot_dir, snapshot_payload)
             for snapshot_payload in build_snapshots_from_execution(execution_result)

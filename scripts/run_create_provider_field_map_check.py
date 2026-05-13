@@ -11,7 +11,7 @@ from roibang_v2.workflows.create_provider_field_map_check import run_create_prov
 def run_from_args(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Check Phase 1 create provider field map config.")
     parser.add_argument("--config", default="configs/runtime.example.json")
-    parser.add_argument("--policy", default="policies/strategy.example.json")
+    parser.add_argument("--policy", default="policies/create-policy.example.json")
     args = parser.parse_args(argv)
 
     config = load_runtime_config(args.config)

@@ -300,6 +300,47 @@ def _first_nonzero(row: dict[str, Any], *keys: str) -> str:
     return ""
 
 
+def _add_promotion_list_rows(account_snapshot: dict[str, Any], rows: list[dict[str, Any]]) -> None:
+    advertiser_id = account_snapshot["advertiser_id"]
+    for row in rows:
+        project_id = _first_nonzero(row, "project_id", "cdp_project_id")
+        project_name = _first_nonzero(row, "project_name", "cdp_project_name")
+        promotion_id = _first_nonzero(row, "promotion_id", "cdp_promotion_id")
+        promotion_name = _first_nonzero(row, "promotion_name", "cdp_promotion_name", "name")
+        if not promotion_id:
+            continue
+
+        if project_id and project_id not in account_snapshot["_seen_projects"]:
+            account_snapshot["_seen_projects"].add(project_id)
+            account_snapshot["projects"].append(
+                {
+                    "advertiser_id": advertiser_id,
+                    "project_id": project_id,
+                    "project_name": project_name,
+                    "project_status": _first_nonzero(row, "project_status", "project_status_name"),
+                }
+            )
+        if promotion_id in account_snapshot["_seen_promotions"]:
+            for promotion in account_snapshot["promotions"]:
+                if str(promotion.get("promotion_id") or promotion.get("cdp_promotion_id") or "") == promotion_id:
+                    if isinstance(row.get("promotion_materials"), dict):
+                        promotion["promotion_materials"] = row["promotion_materials"]
+                    break
+            continue
+        account_snapshot["_seen_promotions"].add(promotion_id)
+        account_snapshot["promotions"].append(
+            {
+                **row,
+                "advertiser_id": advertiser_id,
+                "project_id": project_id,
+                "project_name": project_name,
+                "promotion_id": promotion_id,
+                "promotion_name": promotion_name,
+                "promotion_status_name": _first_nonzero(row, "promotion_status_name", "promotion_status", "status"),
+            }
+        )
+
+
 def build_snapshots_from_execution(execution: dict[str, Any]) -> list[dict[str, Any]]:
     snapshots: dict[str, dict[str, Any]] = {}
     account_snapshots: dict[tuple[str, str], dict[str, Any]] = {}
@@ -307,7 +348,7 @@ def build_snapshots_from_execution(execution: dict[str, Any]) -> list[dict[str, 
         if not isinstance(item, dict):
             continue
         request = item.get("request") if isinstance(item.get("request"), dict) else {}
-        if request.get("endpoint_key") not in {"report_custom", "operation_log_search"}:
+        if request.get("endpoint_key") not in {"report_custom", "operation_log_search", "promotion_list"}:
             continue
         if request.get("endpoint_key") == "report_custom" and request.get("report_preset") != "promotion_daily":
             continue
@@ -328,6 +369,11 @@ def build_snapshots_from_execution(execution: dict[str, Any]) -> list[dict[str, 
         for row in item.get("rows") or []:
             if request.get("endpoint_key") == "report_custom" and isinstance(row, dict):
                 _add_promotion_daily_row(account_snapshots[account_key], row)
+        if request.get("endpoint_key") == "promotion_list":
+            _add_promotion_list_rows(
+                account_snapshots[account_key],
+                [row for row in item.get("rows") or [] if isinstance(row, dict)],
+            )
         if request.get("endpoint_key") == "operation_log_search":
             _add_operation_log_rows(
                 account_snapshots[account_key],

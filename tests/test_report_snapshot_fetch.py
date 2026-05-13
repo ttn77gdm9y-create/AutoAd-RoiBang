@@ -294,6 +294,73 @@ def test_openapi_mock_execute_writes_snapshot_from_fixture_transport(tmp_path):
     ]
 
 
+def test_openapi_mock_execute_imports_promotion_list_material_bindings(tmp_path):
+    db_path = tmp_path / "roibang.sqlite3"
+    csv_path = tmp_path / "accounts.csv"
+    snapshot_dir = tmp_path / "snapshots"
+    fixture_path = tmp_path / "openapi-responses.json"
+    bootstrap_database(db_path)
+    _write_accounts_csv(csv_path)
+    fixture_path.write_text(
+        json.dumps(
+            {
+                "responses": [
+                    {
+                        "endpoint_key": "promotion_list",
+                        "page": 1,
+                        "response": {
+                            "code": 0,
+                            "data": {
+                                "list": [
+                                    {
+                                        "project_id": "project_1",
+                                        "project_name": "0210_勇者突进_项目",
+                                        "promotion_id": "promotion_1",
+                                        "promotion_name": "0210_勇者突进_单元",
+                                        "promotion_materials": {
+                                            "video_material_list": [
+                                                {
+                                                    "material_id": "7446393925521424395",
+                                                    "video_id": "v-source-1",
+                                                    "title": "勇者视频 A",
+                                                }
+                                            ]
+                                        },
+                                    }
+                                ],
+                                "page_info": {"page": 1, "total_page": 1},
+                            },
+                        },
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    request = _request(csv_path, snapshot_dir)
+    request["report_fetch"]["source"] = "openapi_mock_execute"
+    request["report_fetch"]["date_range"] = {"start": "2026-02-10", "end": "2026-02-10"}
+    request["report_fetch"]["openapi"] = {
+        "endpoints": ["promotion_list"],
+        "report_presets": ["promotion_daily"],
+        "fixture_responses": str(fixture_path),
+        "page_size": 20,
+    }
+
+    result = run_report_fetch_request(
+        request,
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+    )
+    imported = import_report_snapshot_file(result["snapshots"][0]["path"], db_path=db_path)
+
+    assert result["ok"] is True
+    assert imported["promotions_imported"] == 1
+    assert imported["material_bindings_imported"] == 1
+    assert imported["material_summary_count"] == 1
+
+
 def _http_execute_request(csv_path: Path, snapshot_dir: Path, audit_dir: Path) -> dict:
     request = _request(csv_path, snapshot_dir)
     request["report_fetch"]["source"] = "openapi_http_execute"
@@ -379,3 +446,61 @@ def test_openapi_http_execute_writes_snapshot_with_injected_opener(monkeypatch, 
     assert result["summary"]["snapshots_written"] == 1
     assert snapshot_path.exists()
     assert "secret-token" not in audit_text
+
+
+def test_openapi_http_execute_retries_configured_api_code(monkeypatch, tmp_path):
+    db_path = tmp_path / "roibang.sqlite3"
+    csv_path = tmp_path / "accounts.csv"
+    snapshot_dir = tmp_path / "snapshots"
+    audit_dir = tmp_path / "audit"
+    bootstrap_database(db_path)
+    _write_accounts_csv(csv_path)
+    monkeypatch.setenv("ROIBANG_TEST_ACCESS_TOKEN", "secret-token")
+    calls = {"count": 0}
+    sleeps: list[float] = []
+
+    def fake_opener(_url, _query_params, _headers, _timeout_seconds):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return HttpResponse(200, {"code": 40100, "message": "系统请求频率超限，请稍后重试"})
+        return HttpResponse(
+            200,
+            {
+                "code": 0,
+                "data": {
+                    "rows": [
+                        {
+                            "dimensions": {
+                                "stat_time": "2026-02-10",
+                                "project_id": "project_1",
+                                "project_name": "0210_勇者突进_项目",
+                                "promotion_id": "promotion_1",
+                                "promotion_name": "0210_勇者突进_单元",
+                            },
+                            "metrics": {"stat_cost": "321.5", "convert_cnt": "9"},
+                        }
+                    ],
+                    "page_info": {"page": 1, "total_page": 1},
+                },
+            },
+        )
+
+    request = _http_execute_request(csv_path, snapshot_dir, audit_dir)
+    request["report_fetch"]["openapi_http"]["retry_api_codes"] = [40100]
+    request["report_fetch"]["openapi_http"]["max_api_retries"] = 1
+    request["report_fetch"]["openapi_http"]["retry_sleep_seconds"] = 7
+
+    result = run_report_fetch_request(
+        request,
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        http_opener=fake_opener,
+        http_sleeper=sleeps.append,
+    )
+
+    assert result["ok"] is True
+    assert result["summary"]["transport_calls"] == 2
+    assert result["external_api_calls"] == 2
+    assert result["summary"]["rows_received"] == 1
+    assert calls["count"] == 2
+    assert sleeps == [7]

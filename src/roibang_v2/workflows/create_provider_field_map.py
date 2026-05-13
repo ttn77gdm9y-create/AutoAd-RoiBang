@@ -20,6 +20,25 @@ _FIELD_PURPOSES = {
     "field_defaults.landing_type": "default landing type",
     "field_defaults.pricing": "default pricing type",
     "field_defaults.inventory_type": "default inventory type",
+    "field_defaults.inventory_catalog": "default inventory catalog",
+    "field_defaults.marketing_goal": "project marketing goal",
+    "field_defaults.ad_type": "project ad type",
+    "field_defaults.delivery_mode": "project delivery mode",
+    "field_defaults.micro_promotion_type": "mini game promotion type",
+    "field_defaults.micro_app_instance_id": "mini game instance id",
+    "field_defaults.aigc_dynamic_creative_switch": "AIGC dynamic creative switch",
+    "field_defaults.external_action": "conversion external action",
+    "field_defaults.deep_external_action": "deep conversion external action",
+    "field_defaults.action_track_url": "click tracking URL",
+    "field_defaults.schedule_type": "project schedule type",
+    "field_defaults.deep_bid_type": "deep bid type",
+    "field_defaults.bid_type": "bid type",
+    "field_defaults.budget_mode": "budget mode",
+    "field_defaults.cpa_bid": "conversion bid",
+    "field_defaults.roi_goal": "ROI goal",
+    "field_defaults.district": "audience district setting",
+    "field_defaults.gender": "audience gender setting",
+    "field_defaults.audience_platform": "audience platform setting",
     "project_key": "local planned project key",
     "project_id": "provider project id lookup placeholder",
     "unit_key": "local planned unit key",
@@ -28,9 +47,10 @@ _FIELD_PURPOSES = {
     "promotion_materials.title_material_list": "provider-facing promotion title material list",
     "promotion_materials.call_to_action_buttons": "provider-facing call-to-action button list",
     "promotion_materials.mini_program_info": "provider-facing mini program landing information",
-    "budget": "unit budget",
-    "budget_mode": "unit budget mode",
-    "roi_goal": "unit ROI goal",
+    "promotion_materials.product_info": "provider-facing product information",
+    "promotion_materials.external_url_material_list": "provider-facing landing URL list",
+    "promotion_materials.anchor_material_list": "provider-facing native anchor materials",
+    "native_setting": "provider-facing native aweme setting",
     "source": "unit creative source",
     "operation": "provider object status operation",
     "promotion_id": "provider promotion id lookup placeholder",
@@ -48,7 +68,14 @@ _FIELD_DEFAULT_SUBFIELDS = [
 ]
 
 _REQUIRED_FIELDS_BY_OPERATION = {
-    "create_project": ["advertiser_id", "project_name", "project_type", "daily_budget", "operation", *_FIELD_DEFAULT_SUBFIELDS],
+    "create_project": [
+        "advertiser_id",
+        "project_name",
+        "project_type",
+        "daily_budget",
+        "operation",
+        *_FIELD_DEFAULT_SUBFIELDS,
+    ],
     "create_unit": [
         "advertiser_id",
         "project_key",
@@ -59,9 +86,6 @@ _REQUIRED_FIELDS_BY_OPERATION = {
         "promotion_materials.title_material_list",
         "promotion_materials.call_to_action_buttons",
         "promotion_materials.mini_program_info",
-        "budget",
-        "budget_mode",
-        "roi_goal",
         "source",
         "operation",
         *_FIELD_DEFAULT_SUBFIELDS,
@@ -289,7 +313,7 @@ def _unknown_internal_fields(operations: dict[str, Any]) -> list[dict[str, str]]
     for operation, rows in operations.items():
         if not isinstance(rows, list):
             continue
-        allowed_fields = set(_REQUIRED_FIELDS_BY_OPERATION.get(str(operation), []))
+        allowed_fields = set(_REQUIRED_FIELDS_BY_OPERATION.get(str(operation), [])) | set(_FIELD_PURPOSES)
         for row in rows:
             if not isinstance(row, dict):
                 continue

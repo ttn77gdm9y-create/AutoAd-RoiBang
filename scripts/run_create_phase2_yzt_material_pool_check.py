@@ -12,15 +12,15 @@ from roibang_v2.workflows.create_phase2_yzt_material_pool_check import (
 
 
 def run_from_args(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Check Phase 2 勇者突进 local material pool capacity.")
+    parser = argparse.ArgumentParser(description="Check Phase 2 勇者突进 source material account capacity.")
     parser.add_argument("--config", default="configs/runtime.example.json")
     parser.add_argument("--preview-config", default="configs/create/yzt-wx-mini-game.preview.example.json")
-    parser.add_argument("--policy", default="policies/strategy.example.json")
+    parser.add_argument("--policy", default="policies/create-policy.example.json")
     args = parser.parse_args(argv)
 
     config = load_runtime_config(args.config)
     if config.external_api_enabled or config.execution_enabled:
-        raise RuntimeError("勇者突进素材池检查要求 external_api_enabled=false 且 execution_enabled=false")
+        raise RuntimeError("勇者突进源素材账户检查要求 external_api_enabled=false 且 execution_enabled=false")
 
     bootstrap_database(config.database_path)
     preview_config = load_json(args.preview_config).get("yzt_create_preview") or {}
@@ -45,7 +45,7 @@ def run_from_args(argv: list[str] | None = None) -> int:
                 "external_api_calls": result["external_api_calls"],
                 "status": result["status"],
                 "summary": result["summary"],
-                "material_pool": result["material_pool"],
+                "source_material_account": result["source_material_account"],
                 "violations": result["violations"],
                 "human_next_steps": result["human_next_steps"],
                 "artifact_path": result["artifact_path"],

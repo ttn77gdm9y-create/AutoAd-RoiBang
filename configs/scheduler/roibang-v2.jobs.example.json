@@ -8,12 +8,11 @@
       "id": "roibang-report-field-catalog",
       "name": "RoiBang-v2 报表字段体检",
       "category": "report_field_catalog",
-      "enabled": true,
+      "enabled": false,
       "schedule": {"type": "cron", "expr": "10 8 * * *", "tz": "Asia/Shanghai"},
       "script": {
-        "path": "scripts/run_report_field_catalog.py",
-        "mode": "foreground",
-        "args": ["--preflight", "--config", "configs/runtime.example.json", "--request", "configs/report-field-catalog.disabled.example.json"]
+        "command": ["python3", "scripts/run_report_field_catalog.py", "--preflight", "--config", "configs/runtime.example.json", "--request", "configs/report-field-catalog.disabled.example.json"],
+        "mode": "foreground"
       },
       "policy": {"config": "configs/runtime.example.json", "request": "configs/report-field-catalog.disabled.example.json"},
       "result_contract": {"workflow": "report_field_catalog_preflight", "artifact_dir": "data/runs/report_field_catalog_preflight", "must_include": ["ok", "execution_enabled", "external_api_calls", "summary"], "must_equal": {"execution_enabled": false, "external_api_calls": 0}},
@@ -24,14 +23,13 @@
       "name": "RoiBang-v2 每日报表拉取同步学习",
       "category": "daily_report_pipeline",
       "enabled": true,
-      "schedule": {"type": "cron", "expr": "20 8 * * *", "tz": "Asia/Shanghai"},
+      "schedule": {"type": "cron", "expr": "0 4 * * *", "tz": "Asia/Shanghai"},
       "script": {
-        "path": "scripts/run_daily_report_pipeline.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--request", "configs/daily-report-pipeline.workbench-discovery.disabled.example.json"]
+        "command": ["python3", "scripts/run_daily_report_pipeline.py", "--config", "configs/runtime.openapi-execute.local.example.json", "--request", "configs/daily-report-pipeline.daily-readonly.example.json", "--enable-readonly"],
+        "mode": "foreground"
       },
-      "policy": {"config": "configs/runtime.example.json", "request": "configs/daily-report-pipeline.workbench-discovery.disabled.example.json"},
-      "result_contract": {"workflow": "daily_report_pipeline", "artifact_dir": "data/runs/daily_report_pipeline", "must_include": ["ok", "execution_enabled", "external_api_calls", "summary", "steps"], "must_equal": {"execution_enabled": false, "external_api_calls": 0}},
+      "policy": {"config": "configs/runtime.openapi-execute.local.example.json", "request": "configs/daily-report-pipeline.daily-readonly.example.json", "readonly": true},
+      "result_contract": {"workflow": "daily_report_pipeline", "artifact_dir": "data/runs/daily_report_pipeline", "must_include": ["ok", "execution_enabled", "external_api_calls", "summary", "steps"], "must_equal": {"execution_enabled": false}},
       "delivery": {"channel": "none"}
     },
     {
@@ -41,9 +39,8 @@
       "enabled": false,
       "schedule": {"type": "cron", "expr": "0 9 * * *", "tz": "Asia/Shanghai"},
       "script": {
-        "path": "scripts/run_data_sync.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--request", "configs/data-sync.example.json"]
+        "command": ["python3", "scripts/run_data_sync.py", "--config", "configs/runtime.example.json", "--request", "configs/data-sync.example.json"],
+        "mode": "foreground"
       },
       "policy": {"config": "configs/runtime.example.json", "request": "configs/data-sync.example.json"},
       "result_contract": {"workflow": "data_sync", "artifact_dir": "data/runs/data_sync", "must_include": ["ok", "execution_enabled", "external_api_calls", "import"], "must_equal": {"execution_enabled": false, "external_api_calls": 0}},
@@ -53,27 +50,95 @@
       "id": "roibang-material-sync",
       "name": "RoiBang-v2 目标账户素材同步",
       "category": "material_sync",
-      "enabled": true,
+      "enabled": false,
       "schedule": {"type": "cron", "expr": "10 9 * * *", "tz": "Asia/Shanghai"},
       "script": {
-        "path": "scripts/run_material_sync.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--request", "configs/material-sync.example.json"]
+        "command": ["python3", "scripts/run_material_sync.py", "--config", "configs/runtime.example.json", "--request", "configs/material-sync.example.json"],
+        "mode": "foreground"
       },
       "policy": {"config": "configs/runtime.example.json", "request": "configs/material-sync.example.json"},
       "result_contract": {"workflow": "material_sync", "artifact_dir": "data/runs/material_sync", "must_include": ["ok", "execution_enabled", "external_api_calls", "plan"], "must_equal": {"execution_enabled": false, "external_api_calls": 0}},
       "delivery": {"channel": "none"}
     },
     {
+      "id": "roibang-material-history-yesterday",
+      "name": "RoiBang-v2 昨日有消耗账户素材明细同步",
+      "category": "readonly_sync",
+      "enabled": true,
+      "schedule": {"type": "cron", "expr": "0 2 * * *", "tz": "Asia/Shanghai"},
+      "script": {
+        "command": ["python3", "scripts/run_material_history_backfill.py", "--config", "configs/runtime.openapi-execute.local.example.json", "--request", "configs/material-history-backfill.daily-readonly.example.json", "--enable-readonly"],
+        "mode": "foreground"
+      },
+      "policy": {"config": "configs/runtime.openapi-execute.local.example.json", "request": "configs/material-history-backfill.daily-readonly.example.json", "readonly": true},
+      "result_contract": {"workflow": "material_history_backfill", "artifact_dir": "data/runs/material_history_backfill", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "summary"], "must_equal": {"execution_enabled": false}},
+      "delivery": {"channel": "none"}
+    },
+    {
+      "id": "roibang-operation-log-yesterday-sync",
+      "name": "RoiBang-v2 昨日有消耗账户操作日志同步",
+      "category": "readonly_sync",
+      "enabled": true,
+      "schedule": {"type": "cron", "expr": "30 2 * * *", "tz": "Asia/Shanghai"},
+      "script": {
+        "command": ["python3", "scripts/run_control_operation_log_history_sync.py", "--config", "configs/runtime.openapi-execute.local.example.json", "--request", "configs/operation-log-history-sync.daily-readonly.example.json", "--enable-readonly"],
+        "mode": "foreground"
+      },
+      "policy": {"config": "configs/runtime.openapi-execute.local.example.json", "request": "configs/operation-log-history-sync.daily-readonly.example.json", "readonly": true, "account_date_source": "material_daily_metrics_yesterday_spent_accounts"},
+      "result_contract": {"workflow": "control_operation_log_history_sync", "artifact_dir": "data/runs/control_operation_log_history_sync", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "summary"], "must_equal": {"execution_enabled": false}},
+      "delivery": {"channel": "none"}
+    },
+    {
+      "id": "roibang-source-material-account-auto-push",
+      "name": "RoiBang-v2 源素材账户自动补材",
+      "category": "source_material_account_auto_push",
+      "enabled": true,
+      "schedule": {"type": "cron", "expr": "0 5 * * *", "tz": "Asia/Shanghai"},
+      "script": {
+        "command": ["python3", "scripts/run_source_material_account_auto_push.py", "--config", "configs/runtime.openapi-execute.local.example.json", "--request", "configs/source-material-account-auto-push.daily.example.json", "--enable-readonly", "--execute", "--yes"],
+        "mode": "foreground"
+      },
+      "policy": {"config": "configs/runtime.openapi-execute.local.example.json", "request": "configs/source-material-account-auto-push.daily.example.json", "source_advertiser_id": "1856647522964490", "approval_policy": "fixed_daily_source_account_auto_push"},
+      "result_contract": {"workflow": "source_material_account_auto_push", "artifact_dir": "data/runs/source_material_account_auto_push", "must_include": ["ok", "workflow", "phase", "status", "execution_enabled", "external_api_calls", "summary", "blocking_reasons"], "must_equal": {}},
+      "delivery": {"channel": "none"}
+    },
+    {
+      "id": "roibang-scheduler-status",
+      "name": "RoiBang-v2 定时任务日报",
+      "category": "scheduler_status",
+      "enabled": true,
+      "schedule": {"type": "cron", "expr": "0 6 * * *", "tz": "Asia/Shanghai"},
+      "script": {
+        "command": ["python3", "scripts/run_scheduler_status.py", "--config", "configs/runtime.example.json", "--request", "configs/scheduler-status.local.json", "--registry", "configs/scheduler/roibang-v2.jobs.example.json"],
+        "mode": "foreground"
+      },
+      "policy": {"config": "configs/runtime.example.json", "request": "configs/scheduler-status.local.json"},
+      "result_contract": {"workflow": "scheduler_status", "artifact_dir": "data/runs/scheduler_status", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "summary", "jobs", "message", "delivery"], "must_equal": {"execution_enabled": false, "external_api_calls": 0}},
+      "delivery": {"channel": "feishu"}
+    },
+    {
+      "id": "roibang-project-schedule-restore-due",
+      "name": "RoiBang-v2 项目时段到期恢复",
+      "category": "control_restore",
+      "enabled": true,
+      "schedule": {"type": "cron", "expr": "10 0 * * *", "tz": "Asia/Shanghai"},
+      "script": {
+        "command": ["python3", "scripts/run_project_schedule_restore_due.py", "--restore-queue", "data/runs/project_schedule_restore_queue.json", "--config", "configs/project-update-execute.local.json", "--execute", "--yes"],
+        "mode": "foreground"
+      },
+      "policy": {"restore_queue": "data/runs/project_schedule_restore_queue.json", "config": "configs/project-update-execute.local.json", "approval_policy": "restore_from_execute_ledger_only"},
+      "result_contract": {"workflow": "project_schedule_restore_due", "artifact_dir": "data/runs/project_schedule_restore_due", "must_include": ["ok", "workflow", "phase", "status", "execution_enabled", "external_api_calls", "summary", "blocking_reasons", "restore_queue_path"], "must_equal": {"execution_enabled": true}},
+      "delivery": {"channel": "none"}
+    },
+    {
       "id": "roibang-material-source-plan",
       "name": "RoiBang-v2 源素材账户补材计划",
       "category": "material_source_plan",
-      "enabled": true,
+      "enabled": false,
       "schedule": {"type": "cron", "expr": "20 9 * * *", "tz": "Asia/Shanghai"},
       "script": {
-        "path": "scripts/run_material_source.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--request", "configs/material-source.example.json"]
+        "command": ["python3", "scripts/run_material_source.py", "--config", "configs/runtime.example.json", "--request", "configs/material-source.example.json"],
+        "mode": "foreground"
       },
       "policy": {"config": "configs/runtime.example.json", "request": "configs/material-source.example.json"},
       "result_contract": {"workflow": "material_source", "artifact_dir": "data/runs/material_source", "must_include": ["ok", "execution_enabled", "external_api_calls", "plan"], "must_equal": {"execution_enabled": false, "external_api_calls": 0}},
@@ -86,9 +151,8 @@
       "enabled": false,
       "schedule": {"type": "cron", "expr": "30 9 * * *", "tz": "Asia/Shanghai"},
       "script": {
-        "path": "scripts/run_daily_learning.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--request", "configs/daily-learning.example.json"]
+        "command": ["python3", "scripts/run_daily_learning.py", "--config", "configs/runtime.example.json", "--request", "configs/daily-learning.example.json"],
+        "mode": "foreground"
       },
       "policy": {"config": "configs/runtime.example.json", "request": "configs/daily-learning.example.json"},
       "result_contract": {"workflow": "daily_learning", "artifact_dir": "data/runs/daily_learning", "must_include": ["ok", "execution_enabled", "external_api_calls", "summary", "decision_hints"], "must_equal": {"execution_enabled": false, "external_api_calls": 0}},
@@ -98,14 +162,13 @@
       "id": "roibang-strategy-plan",
       "name": "RoiBang-v2 策略计划生成",
       "category": "strategy_plan",
-      "enabled": true,
+      "enabled": false,
       "schedule": {"type": "cron", "expr": "40 9 * * *", "tz": "Asia/Shanghai"},
       "script": {
-        "path": "scripts/run_strategy_plan.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--request", "configs/requests/example.strategy-request.json", "--policy", "policies/strategy.example.json"]
+        "command": ["python3", "scripts/run_strategy_plan.py", "--config", "configs/runtime.example.json", "--request", "configs/requests/example.strategy-request.json", "--policy", "policies/create-policy.example.json"],
+        "mode": "foreground"
       },
-      "policy": {"config": "configs/runtime.example.json", "request": "configs/requests/example.strategy-request.json", "policy": "policies/strategy.example.json"},
+      "policy": {"config": "configs/runtime.example.json", "request": "configs/requests/example.strategy-request.json", "policy": "policies/create-policy.example.json"},
       "result_contract": {"workflow": "strategy_plan", "artifact_dir": "data/runs/strategy_plan", "must_include": ["ok", "execution_enabled", "external_api_calls", "plan"], "must_equal": {"execution_enabled": false, "external_api_calls": 0}},
       "delivery": {"channel": "none"}
     },
@@ -113,12 +176,11 @@
       "id": "roibang-strategy-preflight",
       "name": "RoiBang-v2 策略计划预检",
       "category": "strategy_preflight",
-      "enabled": true,
+      "enabled": false,
       "schedule": {"type": "cron", "expr": "45 9 * * *", "tz": "Asia/Shanghai"},
       "script": {
-        "path": "scripts/run_strategy_preflight.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json"]
+        "command": ["python3", "scripts/run_strategy_preflight.py", "--config", "configs/runtime.example.json"],
+        "mode": "foreground"
       },
       "policy": {"config": "configs/runtime.example.json"},
       "result_contract": {"workflow": "strategy_preflight", "artifact_dir": "data/runs/strategy_preflight", "must_include": ["ok", "execution_enabled", "external_api_calls", "status", "summary", "violations", "actions"], "must_equal": {"execution_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
@@ -128,270 +190,14 @@
       "id": "roibang-strategy-dry-run",
       "name": "RoiBang-v2 策略模拟执行",
       "category": "strategy_dry_run",
-      "enabled": true,
+      "enabled": false,
       "schedule": {"type": "cron", "expr": "50 9 * * *", "tz": "Asia/Shanghai"},
       "script": {
-        "path": "scripts/run_strategy_dry_run.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--policy", "policies/strategy.example.json"]
+        "command": ["python3", "scripts/run_strategy_dry_run.py", "--config", "configs/runtime.example.json", "--policy", "policies/create-policy.example.json"],
+        "mode": "foreground"
       },
-      "policy": {"config": "configs/runtime.example.json", "policy": "policies/strategy.example.json"},
+      "policy": {"config": "configs/runtime.example.json", "policy": "policies/create-policy.example.json"},
       "result_contract": {"workflow": "strategy_dry_run", "artifact_dir": "data/runs/strategy_dry_run", "must_include": ["ok", "execution_enabled", "external_api_calls", "status", "summary", "candidate_tasks", "violations", "actions"], "must_equal": {"execution_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-strategy-approval",
-      "name": "RoiBang-v2 策略自动审批记录",
-      "category": "strategy_approval",
-      "enabled": true,
-      "schedule": {"type": "cron", "expr": "55 9 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_strategy_approval.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--policy", "policies/strategy.example.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json", "policy": "policies/strategy.example.json"},
-      "result_contract": {"workflow": "strategy_approval", "artifact_dir": "data/runs/strategy_approval", "must_include": ["ok", "execution_enabled", "external_api_calls", "status", "policy_decision", "execute_allowed", "summary", "violations", "actions"], "must_equal": {"execution_enabled": false, "external_api_calls": 0, "execute_allowed": false}, "must_be_empty": ["actions"]},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-strategy-execute",
-      "name": "RoiBang-v2 策略执行硬阻断",
-      "category": "strategy_execute",
-      "enabled": true,
-      "schedule": {"type": "cron", "expr": "0 10 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_strategy_execute.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--policy", "policies/strategy.example.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json", "policy": "policies/strategy.example.json"},
-      "result_contract": {"workflow": "strategy_execute", "artifact_dir": "data/runs/strategy_execute", "must_include": ["ok", "execution_enabled", "external_api_calls", "status", "reason", "summary", "executed_task_count", "actions"], "must_equal": {"execution_enabled": false, "external_api_calls": 0, "executed_task_count": 0}, "must_be_empty": ["actions"]},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-create-request",
-      "name": "RoiBang-v2 创建请求记录",
-      "category": "create_request",
-      "enabled": false,
-      "schedule": {"type": "cron", "expr": "10 10 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_create_request.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--request", "configs/requests/example.create-request.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json", "request": "configs/requests/example.create-request.json"},
-      "result_contract": {"workflow": "create_request", "artifact_dir": "data/runs/create_request", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "summary", "request", "actions"], "must_equal": {"execution_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-create-strategy-plan",
-      "name": "RoiBang-v2 创建策略计划生成",
-      "category": "create_strategy_plan",
-      "enabled": false,
-      "schedule": {"type": "cron", "expr": "15 10 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_create_strategy_plan.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--policy", "policies/strategy.example.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json", "policy": "policies/strategy.example.json"},
-      "result_contract": {"workflow": "create_strategy_plan", "artifact_dir": "data/runs/create_strategy_plan", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "summary", "lineage", "plan"], "must_equal": {"execution_enabled": false, "external_api_calls": 0}},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-create-preflight",
-      "name": "RoiBang-v2 创建预检",
-      "category": "create_preflight",
-      "enabled": false,
-      "schedule": {"type": "cron", "expr": "20 10 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_create_preflight.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--policy", "policies/strategy.example.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json", "policy": "policies/strategy.example.json"},
-      "result_contract": {"workflow": "create_preflight", "artifact_dir": "data/runs/create_preflight", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "summary", "lineage", "violations", "actions"], "must_equal": {"execution_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-create-provider-field-map-check",
-      "name": "RoiBang-v2 创建字段映射检查",
-      "category": "create_provider_field_map_check",
-      "enabled": false,
-      "schedule": {"type": "cron", "expr": "22 10 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_create_provider_field_map_check.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--policy", "policies/strategy.example.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json", "policy": "policies/strategy.example.json"},
-      "result_contract": {"workflow": "create_provider_field_map_check", "artifact_dir": "data/runs/create_provider_field_map_check", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "summary", "provider_field_map_contract", "provider_field_map_digest", "provider_readiness_contract", "missing_provider_fields", "missing_required_fields", "duplicate_internal_fields", "unknown_internal_fields", "unverified_fields", "violations", "actions"], "must_equal": {"execution_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-create-field-mapping-review-pack",
-      "name": "RoiBang-v2 创建字段映射审阅包",
-      "category": "create_field_mapping_review_pack",
-      "enabled": false,
-      "schedule": {"type": "cron", "expr": "23 10 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_create_field_mapping_review_pack.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--policy", "policies/strategy.example.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json", "policy": "policies/strategy.example.json"},
-      "result_contract": {"workflow": "create_field_mapping_review_pack", "artifact_dir": "data/runs/create_field_mapping_review_pack", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "required_user_input_now", "summary", "payload_schema", "provider_field_map", "provider_field_map_contract", "provider_field_map_digest", "provider_readiness_contract", "review_contract", "review_sections", "violations", "actions"], "must_equal": {"execution_enabled": false, "external_api_calls": 0, "required_user_input_now": false}, "must_be_empty": ["actions"]},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-create-phase2-provider-mapping-prep",
-      "name": "RoiBang-v2 Phase 2 创建字段映射准备",
-      "category": "create_phase2_provider_mapping_prep",
-      "enabled": false,
-      "schedule": {"type": "cron", "expr": "24 10 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_create_phase2_provider_mapping_prep.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--policy", "policies/strategy.example.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json", "policy": "policies/strategy.example.json"},
-      "result_contract": {"workflow": "create_phase2_provider_mapping_prep", "artifact_dir": "data/runs/create_phase2_provider_mapping_prep", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "summary", "phase2_preparation_contract", "payload_schema", "provider_field_map", "provider_field_map_contract", "provider_field_map_digest", "provider_readiness_contract", "review_matrix", "unresolved_mappings", "violations", "actions"], "must_equal": {"phase": "phase2_preparation", "execution_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-create-template-slot-review-pack",
-      "name": "RoiBang-v2 创建模板槽位审阅包",
-      "category": "create_template_slot_review_pack",
-      "enabled": false,
-      "schedule": {"type": "cron", "expr": "25 10 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_create_template_slot_review_pack.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--request", "configs/requests/example.create-request.json", "--policy", "policies/strategy.example.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json", "request": "configs/requests/example.create-request.json", "policy": "policies/strategy.example.json"},
-      "result_contract": {"workflow": "create_template_slot_review_pack", "artifact_dir": "data/runs/create_template_slot_review_pack", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "required_user_input_now", "summary", "template_contract", "review_sections", "violations", "actions"], "must_equal": {"execution_enabled": false, "external_api_calls": 0, "required_user_input_now": false}, "must_be_empty": ["actions"]},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-create-phase2-template-slot-prep",
-      "name": "RoiBang-v2 Phase 2 创建模板槽位准备",
-      "category": "create_phase2_template_slot_prep",
-      "enabled": false,
-      "schedule": {"type": "cron", "expr": "26 10 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_create_phase2_template_slot_prep.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--request", "configs/requests/example.create-request.json", "--policy", "policies/strategy.example.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json", "request": "configs/requests/example.create-request.json", "policy": "policies/strategy.example.json"},
-      "result_contract": {"workflow": "create_phase2_template_slot_prep", "artifact_dir": "data/runs/create_phase2_template_slot_prep", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "summary", "phase2_preparation_contract", "template_slot_contract", "product_template_catalog", "template_confirmation_groups", "template_confirmation_draft", "template_confirmation_checklist", "review_matrix", "unresolved_slots", "violations", "actions"], "must_equal": {"phase": "phase2_preparation", "execution_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-create-phase2-template-confirmation-pack",
-      "name": "RoiBang-v2 Phase 2 创建模板确认记录包",
-      "category": "create_phase2_template_confirmation_pack",
-      "enabled": false,
-      "schedule": {"type": "cron", "expr": "26 11 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_create_phase2_template_confirmation_pack.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json"},
-      "result_contract": {"workflow": "create_phase2_template_confirmation_pack", "artifact_dir": "data/runs/create_phase2_template_confirmation_pack", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "required_user_input_now", "status", "summary", "confirmation_contract", "confirmation_records", "violations", "actions"], "must_equal": {"phase": "phase2_preparation", "execution_enabled": false, "external_api_calls": 0, "required_user_input_now": true}, "must_be_empty": ["actions"]},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-create-phase2-yzt-create-preview",
-      "name": "RoiBang-v2 Phase 2 勇者突进创建预览",
-      "category": "create_phase2_yzt_create_preview",
-      "enabled": false,
-      "schedule": {"type": "cron", "expr": "26 12 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_create_phase2_yzt_create_preview.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--preview-config", "configs/create/yzt-wx-mini-game.preview.example.json", "--policy", "policies/strategy.example.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json", "preview_config": "configs/create/yzt-wx-mini-game.preview.example.json", "policy": "policies/strategy.example.json"},
-      "result_contract": {"workflow": "create_phase2_yzt_create_preview", "artifact_dir": "data/runs/create_phase2_yzt_create_preview", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "summary", "config_contract", "manual_config_contract", "fixed_script_fields", "selected_template", "batch_code", "preview_projects", "standard_create_request", "chain_handoff", "preview_checks", "manual_run", "violations", "actions"], "must_equal": {"phase": "phase2_preparation", "execution_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-create-phase2-yzt-config-check",
-      "name": "RoiBang-v2 Phase 2 勇者突进配置检查",
-      "category": "create_phase2_yzt_config_check",
-      "enabled": false,
-      "schedule": {"type": "cron", "expr": "28 12 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_create_phase2_yzt_config_check.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--preview-config", "configs/create/yzt-wx-mini-game.preview.example.json", "--policy", "policies/strategy.example.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json", "preview_config": "configs/create/yzt-wx-mini-game.preview.example.json", "policy": "policies/strategy.example.json"},
-      "result_contract": {"workflow": "create_phase2_yzt_config_check", "artifact_dir": "data/runs/create_phase2_yzt_config_check", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "summary", "manual_config_contract", "violations", "human_next_steps", "actions"], "must_equal": {"phase": "phase2_preparation", "execution_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-create-phase2-yzt-account-pool-check",
-      "name": "RoiBang-v2 Phase 2 勇者突进账户池检查",
-      "category": "create_phase2_yzt_account_pool_check",
-      "enabled": false,
-      "schedule": {"type": "cron", "expr": "29 12 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_create_phase2_yzt_account_pool_check.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--preview-config", "configs/create/yzt-wx-mini-game.preview.example.json", "--policy", "policies/strategy.example.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json", "preview_config": "configs/create/yzt-wx-mini-game.preview.example.json", "policy": "policies/strategy.example.json"},
-      "result_contract": {"workflow": "create_phase2_yzt_account_pool_check", "artifact_dir": "data/runs/create_phase2_yzt_account_pool_check", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "summary", "account_checks", "violations", "human_next_steps", "actions"], "must_equal": {"phase": "phase2_preparation", "execution_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-create-phase2-yzt-material-pool-check",
-      "name": "RoiBang-v2 Phase 2 勇者突进素材池检查",
-      "category": "create_phase2_yzt_material_pool_check",
-      "enabled": false,
-      "schedule": {"type": "cron", "expr": "30 12 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_create_phase2_yzt_material_pool_check.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--preview-config", "configs/create/yzt-wx-mini-game.preview.example.json", "--policy", "policies/strategy.example.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json", "preview_config": "configs/create/yzt-wx-mini-game.preview.example.json", "policy": "policies/strategy.example.json"},
-      "result_contract": {"workflow": "create_phase2_yzt_material_pool_check", "artifact_dir": "data/runs/create_phase2_yzt_material_pool_check", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "summary", "material_pool", "violations", "human_next_steps", "actions"], "must_equal": {"phase": "phase2_preparation", "execution_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-create-phase2-yzt-preparation-check",
-      "name": "RoiBang-v2 Phase 2 勇者突进一键准备检查",
-      "category": "create_phase2_yzt_preparation_check",
-      "enabled": false,
-      "schedule": {"type": "cron", "expr": "32 12 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_create_phase2_yzt_preparation_check.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--preview-config", "configs/create/yzt-wx-mini-game.preview.example.json", "--policy", "policies/strategy.example.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json", "preview_config": "configs/create/yzt-wx-mini-game.preview.example.json", "policy": "policies/strategy.example.json"},
-      "result_contract": {"workflow": "create_phase2_yzt_preparation_check", "artifact_dir": "data/runs/create_phase2_yzt_preparation_check", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "summary", "check_steps", "config_check", "account_pool_check", "material_pool_check", "violations", "human_next_steps", "operator_guide", "actions"], "must_equal": {"phase": "phase2_preparation", "execution_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-create-phase2-yzt-dry-chain",
-      "name": "RoiBang-v2 Phase 2 勇者突进完整预演",
-      "category": "create_phase2_yzt_dry_chain",
-      "enabled": false,
-      "schedule": {"type": "cron", "expr": "31 12 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_create_phase2_yzt_dry_chain.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--preview-config", "configs/create/yzt-wx-mini-game.preview.example.json", "--policy", "policies/strategy.example.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json", "preview_config": "configs/create/yzt-wx-mini-game.preview.example.json", "policy": "policies/strategy.example.json"},
-      "result_contract": {"workflow": "create_phase2_yzt_dry_chain", "artifact_dir": "data/runs/create_phase2_yzt_dry_chain", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "summary", "chain_steps", "artifacts", "preview_summary", "dry_run_summary", "approved_for_execute", "blocking_summary", "human_next_steps", "violations", "actions"], "must_equal": {"phase": "phase2_preparation", "execution_enabled": false, "external_api_calls": 0, "approved_for_execute": false}, "must_be_empty": ["actions"]},
       "delivery": {"channel": "none"}
     },
     {
@@ -401,13 +207,11 @@
       "enabled": false,
       "schedule": {"type": "cron", "expr": "33 12 * * *", "tz": "Asia/Shanghai"},
       "script": {
-        "command": ["python3", "scripts/run_create_first_live_local_chain.py", "--config", "configs/runtime.example.json", "--plan", "configs/create-plans/first-live.local.json", "--policy", "policies/strategy.example.json"],
-        "path": "scripts/run_create_first_live_local_chain.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--plan", "configs/create-plans/first-live.local.json", "--policy", "policies/strategy.example.json"]
+        "command": ["python3", "scripts/run_create_first_live_local_chain.py", "--config", "configs/runtime.example.json", "--plan", "configs/create-plans/first-live.local.json", "--policy", "policies/create-policy.example.json", "--create-execute-handoff", "data/runs/create_execute/first-live.local.json"],
+        "mode": "foreground"
       },
-      "policy": {"config": "configs/runtime.example.json", "plan": "configs/create-plans/first-live.local.json", "policy": "policies/strategy.example.json"},
-      "result_contract": {"workflow": "create_first_live_local_chain", "artifact_dir": "data/runs/create_first_live_local_chain", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "summary", "first_live_scope", "scope_guard", "chain_steps", "artifacts", "preparation_check", "dry_chain", "approved_for_execute", "human_next_steps", "violations", "actions"], "must_equal": {"phase": "phase2_preparation", "execution_enabled": false, "external_api_calls": 0, "approved_for_execute": false}, "must_be_empty": ["actions"]},
+      "policy": {"config": "configs/runtime.example.json", "plan": "configs/create-plans/first-live.local.json", "policy": "policies/create-policy.example.json", "create_execute_handoff": "data/runs/create_execute/first-live.local.json"},
+      "result_contract": {"workflow": "create_first_live_local_chain", "artifact_dir": "data/runs/create_first_live_local_chain", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "summary", "first_live_scope", "scope_guard", "chain_steps", "artifacts", "preparation_check", "dry_chain", "human_next_steps", "violations", "actions"], "must_equal": {"phase": "phase2_preparation", "execution_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
       "delivery": {"channel": "none"}
     },
     {
@@ -417,193 +221,11 @@
       "enabled": false,
       "schedule": {"type": "cron", "expr": "34 12 * * *", "tz": "Asia/Shanghai"},
       "script": {
-        "command": ["python3", "scripts/run_create_plan_validate.py", "--config", "configs/runtime.example.json", "--plan", "configs/create-plans/first-live.local.json", "--policy", "policies/strategy.example.json"],
-        "path": "scripts/run_create_plan_validate.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--plan", "configs/create-plans/first-live.local.json", "--policy", "policies/strategy.example.json"]
+        "command": ["python3", "scripts/run_create_plan_validate.py", "--config", "configs/runtime.example.json", "--plan", "configs/create-plans/first-live.local.json", "--policy", "policies/create-policy.example.json"],
+        "mode": "foreground"
       },
-      "policy": {"config": "configs/runtime.example.json", "plan": "configs/create-plans/first-live.local.json", "policy": "policies/strategy.example.json"},
+      "policy": {"config": "configs/runtime.example.json", "plan": "configs/create-plans/first-live.local.json", "policy": "policies/create-policy.example.json"},
       "result_contract": {"workflow": "create_plan_validate", "artifact_dir": "data/runs/create_plan_validate", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "summary", "source_contract", "violations", "actions"], "must_equal": {"phase": "phase2_preparation", "execution_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-create-phase2-project-naming-prep",
-      "name": "RoiBang-v2 Phase 2 创建项目命名准备",
-      "category": "create_phase2_project_naming_prep",
-      "enabled": false,
-      "schedule": {"type": "cron", "expr": "27 10 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_create_phase2_project_naming_prep.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--request", "configs/requests/example.create-request.json", "--policy", "policies/strategy.example.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json", "request": "configs/requests/example.create-request.json", "policy": "policies/strategy.example.json"},
-      "result_contract": {"workflow": "create_phase2_project_naming_prep", "artifact_dir": "data/runs/create_phase2_project_naming_prep", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "summary", "phase2_preparation_contract", "naming_rule_contract", "batch_code_contract", "sample_names", "duplicate_names", "invalid_names", "old_project_reference", "unresolved_naming_items", "violations", "actions"], "must_equal": {"phase": "phase2_preparation", "execution_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-create-phase2-preparation-summary",
-      "name": "RoiBang-v2 Phase 2 创建准备总检查",
-      "category": "create_phase2_preparation_summary",
-      "enabled": false,
-      "schedule": {"type": "cron", "expr": "28 10 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_create_phase2_preparation_summary.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json"},
-      "result_contract": {"workflow": "create_phase2_preparation_summary", "artifact_dir": "data/runs/create_phase2_preparation_summary", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "ready_for_live_payload_development", "ready_for_live_execute", "summary", "phase2_preparation_contract", "preparation_checks", "remaining_review_items", "remaining_review_groups", "recommended_next_steps", "violations", "actions"], "must_equal": {"phase": "phase2_preparation", "execution_enabled": false, "external_api_calls": 0, "ready_for_live_payload_development": false, "ready_for_live_execute": false}, "must_be_empty": ["actions"]},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-create-dry-run",
-      "name": "RoiBang-v2 创建预演",
-      "category": "create_dry_run",
-      "enabled": false,
-      "schedule": {"type": "cron", "expr": "25 10 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_create_dry_run.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--policy", "policies/strategy.example.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json", "policy": "policies/strategy.example.json"},
-      "result_contract": {"workflow": "create_dry_run", "artifact_dir": "data/runs/create_dry_run", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "summary", "lineage", "payload_schema", "payload_contract", "payload_draft_contract", "redacted_payload_drafts", "provider_adapter", "provider_adapter_contract", "provider_field_map", "provider_field_map_contract", "provider_field_map_digest", "provider_readiness_contract", "provider_payload_draft_digest", "provider_payload_drafts", "idempotency_contract", "idempotency_ledger", "candidate_tasks", "violations", "actions"], "must_equal": {"execution_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-create-approval",
-      "name": "RoiBang-v2 创建自动审批记录",
-      "category": "create_approval",
-      "enabled": false,
-      "schedule": {"type": "cron", "expr": "30 10 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_create_approval.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--policy", "policies/strategy.example.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json", "policy": "policies/strategy.example.json"},
-      "result_contract": {"workflow": "create_approval", "artifact_dir": "data/runs/create_approval", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "policy_decision", "execute_allowed", "summary", "lineage", "candidate_task_digest", "provider_field_map_digest", "provider_payload_draft_digest", "provider_readiness_contract", "violations", "actions"], "must_equal": {"execution_enabled": false, "external_api_calls": 0, "execute_allowed": false}, "must_be_empty": ["actions"]},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-create-plan-snapshot",
-      "name": "RoiBang-v2 创建计划快照",
-      "category": "create_plan_snapshot",
-      "enabled": false,
-      "schedule": {"type": "cron", "expr": "32 10 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_create_plan_snapshot.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json"},
-      "result_contract": {"workflow": "create_plan_snapshot", "artifact_dir": "data/runs/create_plan_snapshot", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "summary", "lineage", "candidate_task_digest", "payload_contract", "payload_draft_contract", "provider_adapter_contract", "provider_field_map_contract", "provider_field_map_digest", "provider_payload_draft_digest", "provider_readiness_contract", "idempotency_contract", "idempotency_ledger", "accounts", "review_notes", "violations", "actions"], "must_equal": {"execution_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-create-execute",
-      "name": "RoiBang-v2 创建执行硬阻断",
-      "category": "create_execute",
-      "enabled": false,
-      "schedule": {"type": "cron", "expr": "35 10 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_create_execute.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--request", "configs/create-execute.openapi-http.disabled.example.json", "--policy", "policies/strategy.example.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json", "request": "configs/create-execute.openapi-http.disabled.example.json", "policy": "policies/strategy.example.json"},
-      "result_contract": {"workflow": "create_execute", "artifact_dir": "data/runs/create_execute", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "reason", "summary", "lineage", "candidate_task_digest", "payload_schema", "execution_plan", "provider_field_map_digest", "provider_payload_draft_digest", "provider_readiness_contract", "audit", "executed_task_count", "actions"], "must_equal": {"execution_enabled": false, "external_api_calls": 0, "executed_task_count": 0}, "must_be_empty": ["actions"]},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-create-chain-replay",
-      "name": "RoiBang-v2 创建链路回放检查",
-      "category": "create_chain_replay",
-      "enabled": false,
-      "schedule": {"type": "cron", "expr": "40 10 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_create_chain_replay.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json"},
-      "result_contract": {"workflow": "create_chain_replay", "artifact_dir": "data/runs/create_chain_replay", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "summary", "lineage", "digest_consistency", "artifact_identity_contract", "phase1_safety_contract", "violations", "actions"], "must_equal": {"execution_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-create-chain-manifest",
-      "name": "RoiBang-v2 创建链路清单",
-      "category": "create_chain_manifest",
-      "enabled": false,
-      "schedule": {"type": "cron", "expr": "45 10 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_create_chain_manifest.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json"},
-      "result_contract": {"workflow": "create_chain_manifest", "artifact_dir": "data/runs/create_chain_manifest", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "summary", "artifact_paths", "candidate_task_digest", "provider_field_map_digest", "provider_payload_draft_digest", "replay_status", "phase1_safety_contract", "violations", "actions"], "must_equal": {"execution_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-create-readiness-matrix",
-      "name": "RoiBang-v2 创建就绪矩阵",
-      "category": "create_readiness_matrix",
-      "enabled": false,
-      "schedule": {"type": "cron", "expr": "50 10 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_create_readiness_matrix.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json"},
-      "result_contract": {"workflow": "create_readiness_matrix", "artifact_dir": "data/runs/create_readiness_matrix", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "ready_for_live_execute", "summary", "readiness_matrix", "blocking_reasons", "violations", "actions"], "must_equal": {"execution_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-create-live-execute-phase-gate",
-      "name": "RoiBang-v2 创建真实执行阶段闸门",
-      "category": "create_live_execute_phase_gate",
-      "enabled": false,
-      "schedule": {"type": "cron", "expr": "55 10 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_create_live_execute_phase_gate.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--policy", "policies/strategy.example.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json", "policy": "policies/strategy.example.json"},
-      "result_contract": {"workflow": "create_live_execute_phase_gate", "artifact_dir": "data/runs/create_live_execute_phase_gate", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "live_execute_development_allowed", "live_execute_allowed", "summary", "phase_gate_conditions", "readiness_blocking_reasons", "blocking_reasons", "violations", "actions"], "must_equal": {"execution_enabled": false, "external_api_calls": 0, "live_execute_development_allowed": false, "live_execute_allowed": false}, "must_be_empty": ["actions"]},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-create-live-payload-adapter-scaffold",
-      "name": "RoiBang-v2 创建真实请求体适配器脚手架",
-      "category": "create_live_payload_adapter_scaffold",
-      "enabled": false,
-      "schedule": {"type": "cron", "expr": "0 11 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_create_live_payload_adapter_scaffold.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--policy", "policies/strategy.example.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json", "policy": "policies/strategy.example.json"},
-      "result_contract": {"workflow": "create_live_payload_adapter_scaffold", "artifact_dir": "data/runs/create_live_payload_adapter_scaffold", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "live_payload_generation_enabled", "live_payloads", "executable_payloads", "summary", "adapter_interface", "safety_contract", "provider_payload_draft_digest", "blocking_reasons", "violations", "actions"], "must_equal": {"execution_enabled": false, "external_api_calls": 0, "live_payload_generation_enabled": false}, "must_be_empty": ["live_payloads", "executable_payloads", "actions"]},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-create-mock-execute",
-      "name": "RoiBang-v2 创建本地模拟执行",
-      "category": "create_mock_execute",
-      "enabled": false,
-      "schedule": {"type": "cron", "expr": "2 11 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_create_mock_execute.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--policy", "policies/strategy.example.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json", "policy": "policies/strategy.example.json"},
-      "result_contract": {"workflow": "create_mock_execute", "artifact_dir": "data/runs/create_mock_execute", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "mock_execution_mode", "summary", "ordered_steps", "provider_id_records", "final_create_execute", "live_api_calls", "violations", "actions"], "must_equal": {"phase": "phase2_preparation", "execution_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
       "delivery": {"channel": "none"}
     },
     {
@@ -613,12 +235,10 @@
       "enabled": false,
       "schedule": {"type": "cron", "expr": "12 11 * * *", "tz": "Asia/Shanghai"},
       "script": {
-        "command": ["python3", "scripts/run_create_live_execute_once.py", "--config", "configs/runtime.example.json", "--plan", "configs/create-plans/first-live.local.json", "--policy", "policies/strategy.example.json"],
-        "path": "scripts/run_create_live_execute_once.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--plan", "configs/create-plans/first-live.local.json", "--policy", "policies/strategy.example.json"]
+        "command": ["python3", "scripts/run_create_live_execute_once.py", "--config", "configs/runtime.example.json", "--plan", "configs/create-plans/first-live.local.json", "--policy", "policies/create-policy.example.json", "--create-execute-artifact", "data/runs/create_execute/first-live.local.json"],
+        "mode": "foreground"
       },
-      "policy": {"config": "configs/runtime.example.json", "plan": "configs/create-plans/first-live.local.json", "policy": "policies/strategy.example.json"},
+      "policy": {"config": "configs/runtime.example.json", "plan": "configs/create-plans/first-live.local.json", "policy": "policies/create-policy.example.json", "create_execute_artifact": "data/runs/create_execute/first-live.local.json"},
       "result_contract": {"workflow": "create_live_execute_once", "artifact_dir": "data/runs/create_live_execute_once", "must_include": ["ok", "workflow", "phase", "execution_enabled", "live_execute_enabled", "external_api_calls", "status", "blocking_reasons", "transport_call_count", "idempotency", "material_bind_records", "actions"], "must_equal": {"phase": "phase2_preparation", "execution_enabled": false, "live_execute_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
       "delivery": {"channel": "none"}
     },
@@ -630,87 +250,10 @@
       "schedule": {"type": "cron", "expr": "15 11 * * *", "tz": "Asia/Shanghai"},
       "script": {
         "command": ["python3", "scripts/run_create_live_execute_report.py", "--config", "configs/runtime.example.json", "--plan", "configs/create-plans/first-live.local.json"],
-        "path": "scripts/run_create_live_execute_report.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json", "--plan", "configs/create-plans/first-live.local.json"]
+        "mode": "foreground"
       },
       "policy": {"config": "configs/runtime.example.json", "plan": "configs/create-plans/first-live.local.json"},
       "result_contract": {"workflow": "create_live_execute_report", "artifact_dir": "data/runs/create_live_execute_report", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "message", "summary", "create_plan_summary", "create_plan_contract", "db_ledger_summary", "source_artifact_path", "plan_artifact_path", "actions"], "must_equal": {"phase": "phase2_preparation", "execution_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-create-adapter-review-pack",
-      "name": "RoiBang-v2 创建适配器审阅包",
-      "category": "create_adapter_review_pack",
-      "enabled": false,
-      "schedule": {"type": "cron", "expr": "5 11 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_create_adapter_review_pack.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json"},
-      "result_contract": {"workflow": "create_adapter_review_pack", "artifact_dir": "data/runs/create_adapter_review_pack", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "required_user_input_now", "summary", "review_contract", "review_sections", "provider_payload_draft_digest", "violations", "actions"], "must_equal": {"execution_enabled": false, "external_api_calls": 0, "required_user_input_now": false}, "must_be_empty": ["actions"]},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-create-chain-index",
-      "name": "RoiBang-v2 创建链路索引",
-      "category": "create_chain_index",
-      "enabled": false,
-      "schedule": {"type": "cron", "expr": "10 11 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_create_chain_index.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json"},
-      "result_contract": {"workflow": "create_chain_index", "artifact_dir": "data/runs/create_chain_index", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "summary", "artifact_index", "artifact_paths", "safety_contract", "provider_payload_draft_digest", "violations", "actions"], "must_equal": {"execution_enabled": false, "external_api_calls": 0}, "must_be_empty": ["actions"]},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-create-chain-final-report",
-      "name": "RoiBang-v2 创建链路最终报告",
-      "category": "create_chain_final_report",
-      "enabled": false,
-      "schedule": {"type": "cron", "expr": "15 11 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_create_chain_final_report.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json"},
-      "result_contract": {"workflow": "create_chain_final_report", "artifact_dir": "data/runs/create_chain_final_report", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "overall_status", "business_summary", "summary", "completed_sections", "pending_confirmations", "blocking_reasons", "recommended_next_steps", "source_workflows", "adapter_review_status", "required_user_input_now", "violations", "actions"], "must_equal": {"execution_enabled": false, "external_api_calls": 0, "required_user_input_now": false}, "must_be_empty": ["actions"]},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-create-phase1-acceptance-checklist",
-      "name": "RoiBang-v2 创建 Phase 1 验收清单",
-      "category": "create_phase1_acceptance_checklist",
-      "enabled": false,
-      "schedule": {"type": "cron", "expr": "20 11 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_create_phase1_acceptance_checklist.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json"},
-      "result_contract": {"workflow": "create_phase1_acceptance_checklist", "artifact_dir": "data/runs/create_phase1_acceptance_checklist", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "phase1_acceptance_status", "summary", "checklist", "accepted_items", "blocking_items", "recommended_next_steps", "source_workflows", "required_user_input_now", "violations", "actions"], "must_equal": {"execution_enabled": false, "external_api_calls": 0, "required_user_input_now": false}, "must_be_empty": ["actions"]},
-      "delivery": {"channel": "none"}
-    },
-    {
-      "id": "roibang-create-phase1-baseline-freeze",
-      "name": "RoiBang-v2 创建 Phase 1 基线冻结",
-      "category": "create_phase1_baseline_freeze",
-      "enabled": false,
-      "schedule": {"type": "cron", "expr": "25 11 * * *", "tz": "Asia/Shanghai"},
-      "script": {
-        "path": "scripts/run_create_phase1_baseline_freeze.py",
-        "mode": "foreground",
-        "args": ["--config", "configs/runtime.example.json"]
-      },
-      "policy": {"config": "configs/runtime.example.json"},
-      "result_contract": {"workflow": "create_phase1_baseline_freeze", "artifact_dir": "data/runs/create_phase1_baseline_freeze", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "status", "phase1_baseline_status", "baseline_id", "baseline_digest", "summary", "freeze_contract", "frozen_workflows", "source_artifact_paths", "blocking_reasons", "recommended_next_steps", "required_user_input_now", "violations", "actions"], "must_equal": {"execution_enabled": false, "external_api_calls": 0, "required_user_input_now": false}, "must_be_empty": ["actions"]},
       "delivery": {"channel": "none"}
     }
   ]

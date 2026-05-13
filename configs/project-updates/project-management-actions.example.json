@@ -1,0 +1,49 @@
+{
+  "project_update_id": "project-management-example-001",
+  "operator": "operator-name",
+  "allowed_target_accounts_path": "configs/control-allowed-accounts.local.json",
+  "execution": {
+    "enabled": false,
+    "status": "planned_only"
+  },
+  "actions": [
+    {
+      "action_type": "status_update",
+      "advertiser_id": "1856647533952138",
+      "entity_type": "project",
+      "project_id": "example_project_id",
+      "project_name": "example project",
+      "opt_status": "DISABLE",
+      "reason": "关停项目"
+    },
+    {
+      "action_type": "budget_update",
+      "advertiser_id": "1856647533952138",
+      "entity_type": "project",
+      "project_id": "example_project_id",
+      "project_name": "example project",
+      "budget_mode": "BUDGET_MODE_DAY",
+      "budget": 300,
+      "reason": "调整项目日预算"
+    },
+    {
+      "action_type": "bid_update",
+      "advertiser_id": "1856647533952138",
+      "entity_type": "project",
+      "project_id": "example_project_id",
+      "project_name": "example project",
+      "cpa_bid": 103,
+      "reason": "调整项目出价"
+    },
+    {
+      "action_type": "roi_coeff_update",
+      "advertiser_id": "1856647533952138",
+      "entity_type": "project",
+      "project_id": "example_project_id",
+      "project_name": "example project",
+      "roi_goal": 0.41,
+      "reason": "调整7R项目ROI系数"
+    }
+  ],
+  "restore_actions": []
+}

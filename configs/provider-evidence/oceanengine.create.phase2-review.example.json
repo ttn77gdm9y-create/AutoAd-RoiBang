@@ -12,16 +12,23 @@
       "provider_fields": [
         "advertiser_id",
         "name",
+        "micro_promotion_type",
+        "marketing_goal",
+        "ad_type",
+        "delivery_mode",
         "budget",
         "operation",
         "landing_type",
         "pricing",
+        "delivery_setting.budget",
+        "delivery_setting.pricing",
+        "delivery_range.inventory_catalog",
         "delivery_range.inventory_type"
       ],
       "reviewed": true,
       "reviewed_by": "codex_local_api_doc_review",
       "reviewed_at": "2026-05-10T09:45:00Z",
-      "notes": "本地 MiniGameApi 文档已核对：创建项目 API 使用 advertiser_id、name、budget、landing_type、pricing；inventory_type 属于 delivery_range 下的子字段。"
+      "notes": "本地 MiniGameApi 文档已核对：创建项目 API 使用 advertiser_id、name、micro_promotion_type、marketing_goal、ad_type、delivery_mode、budget、landing_type、pricing；inventory_catalog 和 inventory_type 属于 delivery_range 下的子字段。"
     },
     "oceanengine_openapi_promotion_create_request": {
       "title": "OceanEngine promotion create request schema",
@@ -37,6 +44,10 @@
         "promotion_materials.title_material_list",
         "promotion_materials.call_to_action_buttons",
         "promotion_materials.mini_program_info",
+        "promotion_materials.product_info",
+        "promotion_materials.external_url_material_list",
+        "promotion_materials.anchor_material_list",
+        "native_setting",
         "budget",
         "budget_mode",
         "roi_goal",
@@ -63,6 +74,22 @@
       "reviewed_by": "codex_local_api_doc_review",
       "reviewed_at": "2026-05-10T09:50:00Z",
       "notes": "本地 MiniGameApi 文档已核对：素材推送 API 路径为 /open_api/2/file/material/bind/；advertiser_id 表示素材归属客户，也就是源素材账户；target_advertiser_ids 是目标账户列表；视频素材用源账户 video_ids 推送。"
+    },
+    "oceanengine_openapi_material_video_get_request": {
+      "title": "OceanEngine material video get request schema",
+      "source_type": "local_transport_contract",
+      "source_url": "docs/api/MiniGameApi/素材管理/升级版巨量引擎工作台素材管理/获取视频素材.md",
+      "operation": "lookup_target_material",
+      "provider_object": "target_material_lookup",
+      "provider_fields": [
+        "target_advertiser_id",
+        "source_video_id",
+        "material_id"
+      ],
+      "reviewed": true,
+      "reviewed_by": "codex_local_api_doc_review",
+      "reviewed_at": "2026-05-11T06:50:00Z",
+      "notes": "本地传输层会把 target_advertiser_id 转成平台 advertiser_id，把 material_id 优先转成 filtering.material_ids；没有 material_id 时再用 source_video_id 转成 filtering.video_ids。平台接口为 /open_api/2/file/video/get/。"
     }
   }
 }

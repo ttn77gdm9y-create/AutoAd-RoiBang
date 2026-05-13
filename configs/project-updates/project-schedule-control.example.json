@@ -1,0 +1,50 @@
+{
+  "project_update_id": "project-update-YYYYMMDD-schedule-hollow-example",
+  "operator": "operator-name",
+  "source": {
+    "workflow": "project_update_config",
+    "request": "manual_project_schedule_control"
+  },
+  "allowed_target_accounts_path": "configs/control-allowed-accounts.local.json",
+  "execution": {
+    "enabled": false,
+    "status": "planned_only"
+  },
+  "safety": {
+    "requires_preflight": true,
+    "requires_explicit_execute_approval": true,
+    "must_preserve_original_schedule_before_hollow": true,
+    "must_restore_on_restore_at": true
+  },
+  "actions": [
+    {
+      "action_type": "schedule_hollow",
+      "advertiser_id": "target-advertiser-id",
+      "entity_type": "project",
+      "project_id": "target-project-id",
+      "project_name": "optional-project-name",
+      "target_date": "YYYY-MM-DD",
+      "hollow_hours": [12],
+      "preserve_original_schedule_required": true,
+      "restore_required": true,
+      "restore_date": "YYYY-MM-DD",
+      "restore_at": "YYYY-MM-DDT00:10:00+08:00",
+      "reason": "临时拉空 12:00-13:00"
+    }
+  ],
+  "restore_actions": [
+    {
+      "action_type": "schedule_restore",
+      "advertiser_id": "target-advertiser-id",
+      "entity_type": "project",
+      "project_id": "target-project-id",
+      "project_name": "optional-project-name",
+      "target_date": "YYYY-MM-DD",
+      "restore_date": "YYYY-MM-DD",
+      "restore_at": "YYYY-MM-DDT00:10:00+08:00",
+      "restore_source": "preserved_original_schedule",
+      "preserve_original_schedule_required": true,
+      "reason": "到点恢复原始投放时段"
+    }
+  ]
+}

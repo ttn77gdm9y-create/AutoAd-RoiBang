@@ -280,7 +280,7 @@ def _review_matrix(request: dict[str, Any], policy: dict[str, Any]) -> list[dict
                 ),
                 _slot(
                     slot_key="material_id",
-                    value_source="product_source_material_candidates.material_id",
+                    value_source="product_source_materials.material_id",
                     value_preview="<selected-by-create-strategy-plan>",
                     value_scope="selected_by_strategy",
                 ),

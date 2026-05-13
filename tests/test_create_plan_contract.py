@@ -90,6 +90,11 @@ def _seed_plan_sources(db_path: Path) -> None:
         )
 
 
+def _write_allowed_accounts(path: Path, rows: list[dict]) -> Path:
+    path.write_text(json.dumps({"allowed_target_accounts": rows}, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
 def test_validate_create_plan_accepts_plan_from_sqlite_sources(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     _seed_plan_sources(db_path)
@@ -112,6 +117,85 @@ def test_validate_create_plan_accepts_plan_from_sqlite_sources(tmp_path: Path):
     assert result["source_contract"]["materials_in_sqlite"] is True
     assert result["violations"] == []
     assert result["actions"] == []
+
+
+def test_validate_create_plan_requires_allowed_target_accounts_when_policy_says_so(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_plan_sources(db_path)
+    allowlist_path = _write_allowed_accounts(
+        tmp_path / "allowed-create-accounts.json",
+        [
+            {
+                "account_name": "Target Account",
+                "advertiser_id": "target-1",
+                "product": "yzt",
+                "enable": True,
+                "channel": "wx",
+            }
+        ],
+    )
+    policy = _policy()
+    policy["create_plan"]["require_allowed_target_accounts"] = True
+    policy["create_plan"]["allowed_target_accounts_path"] = str(allowlist_path)
+
+    result = validate_create_plan(_plan(), policy=policy, db_path=db_path)
+
+    assert result["ok"] is True
+    assert result["allowed_account_contract"]["checked"] is True
+    assert result["allowed_account_contract"]["allowed_target_account_count"] == 1
+    assert result["violations"] == []
+
+
+def test_validate_create_plan_blocks_target_account_not_in_allowed_list(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_plan_sources(db_path)
+    allowlist_path = _write_allowed_accounts(
+        tmp_path / "allowed-create-accounts.json",
+        [
+            {
+                "account_name": "Other Account",
+                "advertiser_id": "target-2",
+                "product": "yzt",
+                "enable": True,
+                "channel": "wx",
+            }
+        ],
+    )
+    policy = _policy()
+    policy["create_plan"]["require_allowed_target_accounts"] = True
+    policy["create_plan"]["allowed_target_accounts_path"] = str(allowlist_path)
+
+    result = validate_create_plan(_plan(), policy=policy, db_path=db_path)
+
+    assert result["ok"] is False
+    assert "target account not in allowed create account list: target-1" in result["violations"]
+
+
+def test_validate_create_plan_blocks_disabled_or_mismatched_allowed_account(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_plan_sources(db_path)
+    allowlist_path = _write_allowed_accounts(
+        tmp_path / "allowed-create-accounts.json",
+        [
+            {
+                "account_name": "Target Account",
+                "advertiser_id": "target-1",
+                "product": "other-product",
+                "enable": False,
+                "channel": "byte",
+            }
+        ],
+    )
+    policy = _policy()
+    policy["create_plan"]["require_allowed_target_accounts"] = True
+    policy["create_plan"]["allowed_target_accounts_path"] = str(allowlist_path)
+
+    result = validate_create_plan(_plan(), policy=policy, db_path=db_path)
+
+    assert result["ok"] is False
+    assert "target account is disabled in allowed create account list: target-1" in result["violations"]
+    assert "target account product does not match create_plan.product: target-1" in result["violations"]
+    assert "target account channel does not match create_plan.platform: target-1" in result["violations"]
 
 
 def test_validate_create_plan_blocks_placeholders_and_policy_limits():

@@ -60,6 +60,7 @@ def _record_state(
     status: str,
     product: str = "勇者突进",
     platform: str = "WECHAT_GAME",
+    workflow: str = "material_history_backfill",
 ) -> None:
     with sqlite3.connect(db_path) as conn:
         conn.execute(
@@ -68,7 +69,7 @@ def _record_state(
               workflow, sync_date, status, product, platform, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?)
             """,
-            ("material_history_backfill", sync_date, status, product, platform, "2026-05-07T00:00:00+00:00"),
+            (workflow, sync_date, status, product, platform, "2026-05-07T00:00:00+00:00"),
         )
 
 
@@ -111,6 +112,30 @@ def test_material_history_backfill_batch_preflight_skips_completed_and_failed_by
     assert Path(result["artifact_path"]).exists()
 
 
+def test_material_history_backfill_batch_preflight_supports_yesterday_mode(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    csv_path = tmp_path / "accounts.csv"
+    bootstrap_database(db_path)
+    _write_accounts_csv(csv_path)
+    import_accounts_csv(csv_path, db_path=db_path)
+    request = _request(csv_path)
+    request["material_history_backfill_batch"]["material_history_backfill"]["date_range"] = {
+        "mode": "yesterday",
+        "base_date": "2026-05-11",
+    }
+
+    result = build_material_history_backfill_batch_preflight(
+        request,
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+    )
+
+    assert result["ok"] is True
+    assert result["selected_dates"] == ["2026-05-10"]
+    assert result["remaining_dates"] == []
+    assert result["summary"]["date_count"] == 1
+
+
 def test_material_history_backfill_batch_preflight_can_retry_failed_dates(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     csv_path = tmp_path / "accounts.csv"
@@ -130,6 +155,63 @@ def test_material_history_backfill_batch_preflight_can_retry_failed_dates(tmp_pa
     assert result["selected_dates"] == ["2026-02-11", "2026-02-12"]
     assert result["skipped_dates"]["failed"] == []
     assert result["retry_dates"] == ["2026-02-11"]
+
+
+def test_material_history_backfill_batch_preflight_can_rerun_completed_dates(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    csv_path = tmp_path / "accounts.csv"
+    bootstrap_database(db_path)
+    _write_accounts_csv(csv_path)
+    request = _request(csv_path)
+    request["material_history_backfill_batch"]["batch"] = {
+        "size": 2,
+        "retry_failed": False,
+        "rerun_completed": True,
+    }
+    _record_state(db_path, sync_date="2026-02-10", status="completed")
+    _record_state(db_path, sync_date="2026-02-11", status="failed")
+
+    result = build_material_history_backfill_batch_preflight(
+        request,
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+    )
+
+    assert result["selected_dates"] == ["2026-02-10", "2026-02-12"]
+    assert result["skipped_dates"]["completed"] == []
+    assert result["skipped_dates"]["failed"] == ["2026-02-11"]
+    assert result["rerun_completed_dates"] == ["2026-02-10"]
+
+
+def test_material_history_backfill_batch_preflight_skips_completed_dates_already_rerun_for_key(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    csv_path = tmp_path / "accounts.csv"
+    bootstrap_database(db_path)
+    _write_accounts_csv(csv_path)
+    request = _request(csv_path)
+    request["material_history_backfill_batch"]["batch"] = {
+        "size": 2,
+        "retry_failed": False,
+        "rerun_completed": True,
+        "rerun_key": "roi_1day_test",
+    }
+    _record_state(db_path, sync_date="2026-02-10", status="completed")
+    _record_state(
+        db_path,
+        sync_date="2026-02-10",
+        status="completed",
+        workflow="material_history_backfill_rerun:roi_1day_test",
+    )
+
+    result = build_material_history_backfill_batch_preflight(
+        request,
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+    )
+
+    assert result["selected_dates"] == ["2026-02-11", "2026-02-12"]
+    assert result["skipped_dates"]["completed"] == ["2026-02-10"]
+    assert result["rerun_completed_dates"] == []
 
 
 def test_material_history_backfill_batch_preflight_cli_writes_summary(tmp_path: Path, capsys):

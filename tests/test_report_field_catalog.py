@@ -44,6 +44,7 @@ def _config_response():
                     "data_topic": "BASIC_DATA",
                     "dimensions": [
                         {"field": "stat_time_day", "name": "时间-天"},
+                        {"field": "stat_time_hour", "name": "时间-小时"},
                         {"field": "cdp_project_id", "name": "项目ID"},
                         {"field": "cdp_project_name", "name": "项目名称"},
                         {"field": "cdp_promotion_id", "name": "单元ID"},
@@ -54,6 +55,10 @@ def _config_response():
                         {"field": "show_cnt", "name": "展示"},
                         {"field": "click_cnt", "name": "点击"},
                         {"field": "convert_cnt", "name": "转化"},
+                        {"field": "attribution_convert_cnt", "name": "计费时间转化数"},
+                        {"field": "attribution_convert_cost", "name": "计费时间转化成本"},
+                        {"field": "attribution_billing_game_in_app_ltv_1day", "name": "计费当日付费"},
+                        {"field": "attribution_billing_game_in_app_roi_1day", "name": "计费当日付费ROI"},
                     ],
                 },
                 {
@@ -71,6 +76,11 @@ def _config_response():
                         {"field": "show_cnt", "name": "展示"},
                         {"field": "click_cnt", "name": "点击"},
                         {"field": "convert_cnt", "name": "转化"},
+                        {"field": "attribution_convert_cnt", "name": "计费时间转化数"},
+                        {"field": "attribution_convert_cost", "name": "计费时间转化成本"},
+                        {"field": "attribution_billing_game_in_app_ltv_1day", "name": "计费当日付费"},
+                        {"field": "attribution_billing_game_in_app_roi_1day", "name": "计费当日付费ROI"},
+                        {"field": "attribution_billing_game_in_app_roi_7days", "name": "计费7日付费ROI"},
                     ],
                 },
             ]

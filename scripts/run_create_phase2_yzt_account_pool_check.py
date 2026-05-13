@@ -15,7 +15,7 @@ def run_from_args(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Check Phase 2 勇者突进 target accounts in local account pool.")
     parser.add_argument("--config", default="configs/runtime.example.json")
     parser.add_argument("--preview-config", default="configs/create/yzt-wx-mini-game.preview.example.json")
-    parser.add_argument("--policy", default="policies/strategy.example.json")
+    parser.add_argument("--policy", default="policies/create-policy.example.json")
     args = parser.parse_args(argv)
 
     config = load_runtime_config(args.config)

@@ -34,8 +34,10 @@ def build_material_bind_key(
 def _payload_lists(payload: dict[str, Any]) -> tuple[str, list[Any], list[Any]]:
     target_ids = payload.get("target_advertiser_ids")
     video_ids = payload.get("source_video_ids")
+    if not isinstance(video_ids, list):
+        video_ids = payload.get("video_ids")
     return (
-        str(payload.get("source_advertiser_id") or ""),
+        str(payload.get("source_advertiser_id") or payload.get("advertiser_id") or ""),
         list(target_ids) if isinstance(target_ids, list) else [],
         list(video_ids) if isinstance(video_ids, list) else [],
     )

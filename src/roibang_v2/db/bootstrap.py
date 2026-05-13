@@ -10,6 +10,7 @@ def bootstrap_database(database_path: str | Path) -> None:
     schema_path = Path(__file__).with_name("schema.sql")
     with sqlite3.connect(db_path) as conn:
         conn.executescript(schema_path.read_text(encoding="utf-8"))
+        conn.execute("DROP TABLE IF EXISTS product_source_material_candidates")
         _ensure_column(conn, "material_profiles", "canonical_material_key", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "material_metric_rollups", "canonical_material_key", "TEXT NOT NULL DEFAULT ''")
         for column, definition in {
@@ -150,52 +151,6 @@ def bootstrap_database(database_path: str | Path) -> None:
             """
             CREATE INDEX IF NOT EXISTS idx_product_source_material_rollup_rank
               ON product_source_material_metric_rollups (product, source_advertiser_id, window_key, stat_cost DESC)
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS product_source_material_candidates (
-              pool_key TEXT NOT NULL,
-              product TEXT NOT NULL,
-              source_advertiser_id TEXT NOT NULL,
-              organization_id TEXT NOT NULL DEFAULT '',
-              window_key TEXT NOT NULL,
-              period_start TEXT NOT NULL,
-              period_end TEXT NOT NULL,
-              rank INTEGER NOT NULL,
-              material_id TEXT NOT NULL,
-              material_type TEXT NOT NULL DEFAULT 'video',
-              source_video_id TEXT NOT NULL DEFAULT '',
-              name TEXT NOT NULL DEFAULT '',
-              review_status TEXT NOT NULL DEFAULT '',
-              signature TEXT NOT NULL DEFAULT '',
-              duration REAL NOT NULL DEFAULT 0,
-              file_size REAL NOT NULL DEFAULT 0,
-              create_time TEXT NOT NULL DEFAULT '',
-              tag_ids_json TEXT NOT NULL DEFAULT '[]',
-              account_count INTEGER NOT NULL DEFAULT 0,
-              project_count INTEGER NOT NULL DEFAULT 0,
-              promotion_count INTEGER NOT NULL DEFAULT 0,
-              stat_cost REAL NOT NULL DEFAULT 0,
-              show_cnt REAL NOT NULL DEFAULT 0,
-              click_cnt REAL NOT NULL DEFAULT 0,
-              convert_cnt REAL NOT NULL DEFAULT 0,
-              active_register REAL NOT NULL DEFAULT 0,
-              roi_1day_cost_weighted REAL NOT NULL DEFAULT 0,
-              roi_7days_cost_weighted REAL NOT NULL DEFAULT 0,
-              score REAL NOT NULL DEFAULT 0,
-              reason_json TEXT NOT NULL DEFAULT '{}',
-              source TEXT NOT NULL,
-              synced_at TEXT NOT NULL,
-              PRIMARY KEY (pool_key, material_id),
-              FOREIGN KEY (material_id) REFERENCES materials(material_id) ON DELETE CASCADE
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_product_source_material_candidates_rank
-              ON product_source_material_candidates (pool_key, rank)
             """
         )
         conn.execute(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from copy import deepcopy
 from datetime import date, timedelta
 from pathlib import Path
@@ -32,6 +33,55 @@ def _target_date(cfg: dict[str, Any], *, today: date | None = None) -> str:
     if isinstance(value, dict) and value.get("date"):
         return str(value["date"])
     raise ValueError("daily_report_pipeline requires target_date or target_date.mode=yesterday")
+
+
+def _date_span(start_date: str, end_date: str) -> list[str]:
+    start = date.fromisoformat(start_date)
+    end = date.fromisoformat(end_date)
+    if end < start:
+        return []
+    result: list[str] = []
+    current = start
+    while current <= end:
+        result.append(current.isoformat())
+        current += timedelta(days=1)
+    return result
+
+
+def _latest_metric_snapshot_date(db_path: str | Path, *, before_or_on: str) -> str:
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT MAX(metric_date) FROM metric_snapshots WHERE metric_date <= ?",
+            (before_or_on,),
+        ).fetchone()
+    return str(row[0] or "") if row else ""
+
+
+def _catch_up_config(cfg: dict[str, Any]) -> dict[str, Any]:
+    value = cfg.get("catch_up")
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _target_dates(cfg: dict[str, Any], *, db_path: str | Path, today: date | None = None) -> list[str]:
+    target = _target_date(cfg, today=today)
+    catch_up = _catch_up_config(cfg)
+    if not bool(catch_up.get("enabled", False)):
+        return [target]
+    source_table = str(catch_up.get("source_table") or "metric_snapshots")
+    if source_table != "metric_snapshots":
+        raise ValueError("daily_report_pipeline.catch_up.source_table only supports metric_snapshots")
+    latest = _latest_metric_snapshot_date(db_path, before_or_on=target)
+    if not latest:
+        return [target]
+    start = date.fromisoformat(latest) + timedelta(days=1)
+    end = date.fromisoformat(target)
+    if start > end:
+        return [target]
+    max_days = max(int(catch_up.get("max_days") or 7), 1)
+    floor = end - timedelta(days=max_days - 1)
+    if start < floor:
+        start = floor
+    return _date_span(start.isoformat(), target)
 
 
 def _fetch_request(cfg: dict[str, Any], target_date: str) -> dict[str, Any]:
@@ -417,7 +467,18 @@ def run_daily_report_pipeline_request(
     workbench_opener=None,
 ) -> dict[str, Any]:
     cfg = _pipeline_config(request)
-    target_date = _target_date(cfg, today=today)
+    target_dates = _target_dates(cfg, db_path=db_path, today=today)
+    if len(target_dates) > 1:
+        return _run_daily_report_pipeline_batch(
+            cfg,
+            target_dates=target_dates,
+            db_path=db_path,
+            runs_dir=runs_dir,
+            http_opener=http_opener,
+            http_sleeper=http_sleeper,
+            workbench_opener=workbench_opener,
+        )
+    target_date = target_dates[0]
     active_discovery = _run_active_account_discovery(
         cfg,
         target_date=target_date,
@@ -535,6 +596,71 @@ def run_daily_report_pipeline_request(
             ],
             "material_source": material_source,
             "daily_learning": daily_learning,
+        },
+    }
+    artifact = write_run_artifact(runs_dir, "daily_report_pipeline", payload)
+    return {**payload, "artifact_path": str(artifact)}
+
+
+def _run_daily_report_pipeline_batch(
+    cfg: dict[str, Any],
+    *,
+    target_dates: list[str],
+    db_path: str | Path,
+    runs_dir: str | Path,
+    http_opener=None,
+    http_sleeper=None,
+    workbench_opener=None,
+) -> dict[str, Any]:
+    results: list[dict[str, Any]] = []
+    for target_date in target_dates:
+        single_cfg = deepcopy(cfg)
+        single_cfg["target_date"] = {"date": target_date}
+        single_cfg.pop("catch_up", None)
+        results.append(
+            run_daily_report_pipeline_request(
+                {"daily_report_pipeline": single_cfg},
+                db_path=db_path,
+                runs_dir=runs_dir,
+                http_opener=http_opener,
+                http_sleeper=http_sleeper,
+                workbench_opener=workbench_opener,
+            )
+        )
+
+    external_api_calls = sum(int(item.get("external_api_calls") or 0) for item in results)
+    summary = {
+        "target_date": target_dates[-1],
+        "target_dates": target_dates,
+        "snapshots_written": sum(int(item["summary"].get("snapshots_written") or 0) for item in results),
+        "snapshots_imported": sum(int(item["summary"].get("snapshots_imported") or 0) for item in results),
+        "daily_learning_built": any(bool(item["summary"].get("daily_learning_built")) for item in results),
+        "external_api_calls": external_api_calls,
+        "catch_up_runs": len(results),
+    }
+    if any("active_accounts_discovered" in item["summary"] for item in results):
+        summary["active_accounts_discovered"] = sum(
+            int(item["summary"].get("active_accounts_discovered") or 0) for item in results
+        )
+        summary["detail_fetch_account_count"] = sum(
+            int(item["summary"].get("detail_fetch_account_count") or 0) for item in results
+        )
+    payload = {
+        "ok": all(bool(item.get("ok")) for item in results),
+        "workflow": "daily_report_pipeline",
+        "phase": "phase1",
+        "execution_enabled": False,
+        "external_api_calls": external_api_calls,
+        "summary": summary,
+        "steps": {
+            "catch_up": [
+                {
+                    "target_date": target_date,
+                    "artifact_path": item["artifact_path"],
+                    "summary": item["summary"],
+                }
+                for target_date, item in zip(target_dates, results)
+            ]
         },
     }
     artifact = write_run_artifact(runs_dir, "daily_report_pipeline", payload)

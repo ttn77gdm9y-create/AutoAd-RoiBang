@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.roibang.v2.roibang-material-history-yesterday</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/zsh</string>
+		<string>-lc</string>
+		<string>cd '/Users/hongen/Documents/New project 2' &amp;&amp; mkdir -p logs/scheduler &amp;&amp; PYTHONPATH=src scripts/run_scheduler_job.py --registry configs/scheduler/roibang-v2.jobs.example.json --job-id roibang-material-history-yesterday --repo-root '/Users/hongen/Documents/New project 2' &gt;&gt; logs/scheduler/roibang-material-history-yesterday.out.log 2&gt;&gt; logs/scheduler/roibang-material-history-yesterday.err.log</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>/Users/hongen/Documents/New project 2</string>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>StandardOutPath</key>
+	<string>/Users/hongen/Documents/New project 2/logs/scheduler/roibang-material-history-yesterday.launchd.out.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/hongen/Documents/New project 2/logs/scheduler/roibang-material-history-yesterday.launchd.err.log</string>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>2</integer>
+		<key>Minute</key>
+		<integer>0</integer>
+	</dict>
+</dict>
+</plist>

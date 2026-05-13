@@ -31,14 +31,42 @@ def _product_template_catalog(policy: dict[str, Any]) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
+def _template_catalog_path(policy: dict[str, Any]) -> str:
+    prep = _template_prep_policy(policy)
+    return str(prep.get("template_catalog_path") or policy.get("create_template_catalog_path") or "").strip()
+
+
+def _external_template_catalog(policy: dict[str, Any]) -> dict[str, Any]:
+    path = _template_catalog_path(policy)
+    if not path:
+        return {}
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 def _templates(policy: dict[str, Any]) -> list[dict[str, Any]]:
+    external = _external_template_catalog(policy)
+    external_templates = external.get("templates") if isinstance(external.get("templates"), dict) else {}
+    if external_templates:
+        rows = []
+        for key, template in external_templates.items():
+            if not isinstance(template, dict):
+                continue
+            rows.append({"template_key": str(key), **template})
+        return rows
     rows = _product_template_catalog(policy).get("templates")
     return [dict(row) for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
 
 
 def _selected_template(config: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
     template_name = str(config.get("template_name") or "").strip()
+    template_key = str(config.get("template_key") or "").strip()
     for template in _templates(policy):
+        if template_key and str(template.get("template_key") or "") == template_key:
+            return template
         if str(template.get("project_template_name") or "") == template_name:
             return template
         if str(template.get("template_key") or "") == template_name:
@@ -157,6 +185,8 @@ def _project_name(
 
 
 def _requires_roi(template: dict[str, Any]) -> bool:
+    if "requires_roi_goal" in template:
+        return bool(template.get("requires_roi_goal", False))
     roi = template.get("roi_goal")
     return bool(roi.get("required")) if isinstance(roi, dict) else False
 
@@ -188,15 +218,48 @@ def _material_requirements(config: dict[str, Any]) -> dict[str, Any]:
     return {"material_type": "video", "materials_per_unit": 2, "dedupe_scope": "request"}
 
 
-def _field_defaults(config: dict[str, Any]) -> dict[str, Any]:
+def _field_defaults(config: dict[str, Any], template: dict[str, Any]) -> dict[str, Any]:
     value = config.get("field_defaults")
     if isinstance(value, dict):
         return dict(value)
-    return {
-        "landing_type": "MICRO_GAME",
-        "pricing": "PRICING_OCPM",
+    fixed = template.get("project_fixed") if isinstance(template.get("project_fixed"), dict) else {}
+    if not fixed:
+        return {
+            "landing_type": "MICRO_GAME",
+            "pricing": "PRICING_OCPM",
+            "inventory_type": "INVENTORY_FEED",
+        }
+    defaults = _defaults(config)
+    result = {
+        "landing_type": str(fixed.get("landing_type") or "MICRO_GAME"),
+        "marketing_goal": str(fixed.get("marketing_goal") or "VIDEO_AND_IMAGE"),
+        "ad_type": str(fixed.get("ad_type") or "ALL"),
+        "delivery_mode": str(fixed.get("delivery_mode") or "PROCEDURAL"),
+        "micro_promotion_type": str(fixed.get("micro_promotion_type") or template.get("micro_promotion_type") or "WECHAT_GAME"),
+        "micro_app_instance_id": template.get("micro_app_instance_id"),
+        "aigc_dynamic_creative_switch": "ON",
+        "external_action": str(fixed.get("external_action") or "AD_CONVERT_TYPE_PAY"),
+        "inventory_catalog": "UNIVERSAL_SMART",
+        "pricing": str(fixed.get("pricing") or "PRICING_OCPM"),
         "inventory_type": "INVENTORY_FEED",
+        "action_track_url": str(
+            config.get("effective_touch_url")
+            or "https://backend.gravity-engine.com/event_center/api/v1/event/click/?app_id=25964701&channel=base_channel&track_id=eoUhyJSoDxLeOTZR&company=bytedance&advertiser_id=__ADVERTISER_ID__&click_id=__REQUEST_ID__&ua=__UA__&model=__MODEL__&ts=__TS__&idfa=__IDFA__&caid=__CAID__&imei_md5=__IMEI__&android_id_md5=__ANDROIDID__&oaid=__OAID__&oaid_md5=__OAID_MD5__&mac_md5=__MAC__&ip=__IP__&project_id=__PROJECT_ID__&promotion_id=__PROMOTION_ID__&mid1=__MID1__&mid2=__MID2__&mid3=__MID3__&mid4=__MID4__&mid5=__MID5__&mid6=__MID6__&csite=__CSITE__&project_name=__PROJECT_NAME__&promotion_name=__PROMOTION_NAME__&callback=__CALLBACK_PARAM__"
+        ),
+        "schedule_type": "SCHEDULE_FROM_NOW",
+        "deep_bid_type": str(fixed.get("deep_bid_type") or "BID_PER_ACTION"),
+        "bid_type": str(fixed.get("bid_type") or "CUSTOM"),
+        "budget_mode": str(fixed.get("budget_mode") or "BUDGET_MODE_DAY"),
+        "cpa_bid": _float_or_none(defaults.get("cpa_bid", config.get("cpa_bid"))) or 0,
+        "district": "NONE",
+        "gender": str(fixed.get("audience_gender") or "NONE"),
+        "audience_platform": [],
     }
+    if fixed.get("deep_external_action"):
+        result["deep_external_action"] = str(fixed.get("deep_external_action"))
+    if _requires_roi(template):
+        result["roi_goal"] = _float_or_none(config.get("roi_coefficient"))
+    return result
 
 
 def _selected_materials(config: dict[str, Any]) -> list[dict[str, Any]]:
@@ -262,6 +325,36 @@ def _standard_create_request(
     selected_template: dict[str, Any],
     batch_code: str,
 ) -> dict[str, Any]:
+    template_parameters = {
+        "template_name": template_name,
+        "roi_coefficient": _float_or_none(config.get("roi_coefficient")) if _requires_roi(selected_template) else None,
+        "gender": _label(selected_template, "gender"),
+        "age": _label(selected_template, "age"),
+        "effective_touch_url": str(config.get("effective_touch_url") or "<fixed-in-yzt-script>"),
+    }
+    optional_template_parameters = {
+        "template_key": str(selected_template.get("template_key") or ""),
+        "source_name": str(selected_template.get("source_name") or ""),
+        "product_name": str(selected_template.get("product_name") or ""),
+        "title_pool": selected_template.get("title_pool") if isinstance(selected_template.get("title_pool"), list) else [],
+        "product_selling_points": selected_template.get("product_selling_points") if isinstance(selected_template.get("product_selling_points"), list) else [],
+        "cta_pool": selected_template.get("cta_pool") if isinstance(selected_template.get("cta_pool"), list) else [],
+        "landing_url": str(selected_template.get("landing_url") or ""),
+        "delivery_identity": str(selected_template.get("delivery_identity") or ""),
+        "aweme_ids": selected_template.get("aweme_ids") if isinstance(selected_template.get("aweme_ids"), list) else [],
+        "anchor_related_type": str(selected_template.get("anchor_related_type") or ""),
+        "anchor_id": str(selected_template.get("anchor_id") or ""),
+        "anchor_type": str(selected_template.get("anchor_type") or ""),
+        "product_image_id": str(selected_template.get("product_image_id") or ""),
+        "fixed_video_cover_id": str(selected_template.get("fixed_video_cover_id") or ""),
+    }
+    template_parameters.update(
+        {
+            key: value
+            for key, value in optional_template_parameters.items()
+            if value not in ("", [])
+        }
+    )
     request = {
         "request_id": _request_id(config),
         "target_date": str(config.get("target_date") or ""),
@@ -277,24 +370,21 @@ def _standard_create_request(
         "batch_code": batch_code,
         "target_accounts": _standard_target_accounts(config),
         "material_requirements": _material_requirements(config),
-        "field_defaults": _field_defaults(config),
+        "field_defaults": _field_defaults(config, selected_template),
         "project_name_template": _project_name_template(policy),
         "constraints": {
             "phase": "phase1",
             "execution_enabled": False,
             "allow_real_create": False,
         },
-        "template_parameters": {
-            "template_name": template_name,
-            "roi_coefficient": _float_or_none(config.get("roi_coefficient")) if _requires_roi(selected_template) else None,
-            "gender": _label(selected_template, "gender"),
-            "age": _label(selected_template, "age"),
-            "effective_touch_url": "<fixed-in-yzt-script>",
-        },
+        "template_parameters": template_parameters,
     }
     selected_materials = _selected_materials(config)
     if selected_materials:
         request["selected_materials"] = selected_materials
+    local_key_namespace = str(config.get("local_key_namespace") or "").strip()
+    if local_key_namespace:
+        request["local_key_namespace"] = local_key_namespace
     plan_id = _plan_id(config)
     if plan_id:
         request["plan_id"] = plan_id
@@ -441,7 +531,7 @@ def _preview_checks(
         {
             "check": "effective_touch_url_fixed",
             "status": "passed",
-            "message": "有效触点由勇者突进脚本固定",
+            "message": "有效触点由固定创建链路提供",
         },
     ]
     return checks
@@ -498,7 +588,7 @@ def build_create_phase2_yzt_create_preview(
 ) -> dict[str, Any]:
     config = _preview_config(preview_config)
     catalog = _product_template_catalog(policy)
-    product = str(catalog.get("product") or "勇者突进")
+    product = str(catalog.get("product") or "")
     platform = str(catalog.get("platform") or "WECHAT_GAME")
     template = _selected_template(config, policy)
     template_name = str(template.get("project_template_name") or config.get("template_name") or "")
@@ -554,7 +644,7 @@ def build_create_phase2_yzt_create_preview(
         "fixed_script_fields": {
             "product": product,
             "platform": platform,
-            "script_scope": str(catalog.get("script_scope") or "勇者突进微信小游戏专用"),
+            "script_scope": str(catalog.get("script_scope") or ""),
             "effective_touch_url_source": "fixed_in_yzt_script",
             "marketing_scene": "短视频+图文",
             "optimize_goal": "付费",
@@ -580,7 +670,7 @@ def build_create_phase2_yzt_create_preview(
         "manual_run": {
             "script": "scripts/run_create_phase2_yzt_create_preview.py",
             "config": "configs/create/yzt-wx-mini-game.preview.example.json",
-            "command": "PYTHONPATH=src python3 scripts/run_create_phase2_yzt_create_preview.py --config configs/runtime.example.json --preview-config configs/create/yzt-wx-mini-game.preview.example.json --policy policies/strategy.example.json",
+            "command": "PYTHONPATH=src python3 scripts/run_create_phase2_yzt_create_preview.py --config configs/runtime.example.json --preview-config configs/create/yzt-wx-mini-game.preview.example.json --policy policies/create-policy.example.json",
         },
         "preview_checks": preview_checks,
         "violations": violations,

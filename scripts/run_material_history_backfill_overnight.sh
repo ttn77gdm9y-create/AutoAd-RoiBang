@@ -21,6 +21,20 @@ STOP_AT="${STOP_AT:-08:00}"
 MAX_ROUNDS="${MAX_ROUNDS:-20}"
 SLEEP_BETWEEN_ROUNDS="${SLEEP_BETWEEN_ROUNDS:-30}"
 RETRY_FAILED_ONCE="${RETRY_FAILED_ONCE:-1}"
+STOP_AT_EPOCH="$(
+  python3 - "$STOP_AT" <<'PY'
+from datetime import datetime, time, timedelta
+import sys
+
+raw = sys.argv[1].strip()
+hour, minute = [int(part) for part in raw.split(":", 1)]
+now = datetime.now()
+stop_at = datetime.combine(now.date(), time(hour, minute))
+if stop_at <= now:
+    stop_at = stop_at + timedelta(days=1)
+print(int(stop_at.timestamp()))
+PY
+)"
 
 log() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" | tee -a "$LOG_FILE"
@@ -58,15 +72,12 @@ PY
 }
 
 should_stop() {
-  python3 - "$STOP_AT" <<'PY'
-from datetime import datetime, time
+  python3 - "$STOP_AT_EPOCH" <<'PY'
+from datetime import datetime
 import sys
 
-raw = sys.argv[1].strip()
-hour, minute = [int(part) for part in raw.split(":", 1)]
-now = datetime.now()
-stop_today = datetime.combine(now.date(), time(hour, minute))
-raise SystemExit(0 if now >= stop_today else 1)
+stop_at_epoch = int(sys.argv[1])
+raise SystemExit(0 if int(datetime.now().timestamp()) >= stop_at_epoch else 1)
 PY
 }
 

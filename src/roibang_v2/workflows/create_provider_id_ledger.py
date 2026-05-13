@@ -33,6 +33,10 @@ def _entity_type_for_field(field: str) -> str:
     return ""
 
 
+def is_mock_provider_id(value: Any) -> bool:
+    return str(value or "").strip().startswith("mock_")
+
+
 def record_create_provider_id(
     *,
     db_path: str | Path,
@@ -55,13 +59,21 @@ def record_create_provider_id(
     with sqlite3.connect(db_path) as conn:
         existing = conn.execute(
             """
-            SELECT provider_id
+            SELECT provider_id, source_workflow, status
             FROM create_provider_id_ledger
             WHERE entity_type = ? AND local_key = ?
             """,
             (normalized_entity_type, normalized_local_key),
         ).fetchone()
-        if existing and str(existing[0]) != normalized_provider_id:
+        existing_provider_id = str(existing[0]) if existing else ""
+        existing_source_workflow = str(existing[1]) if existing else ""
+        existing_status = str(existing[2]) if existing else ""
+        existing_is_reusable = (
+            existing_status == "active"
+            and not is_mock_provider_id(existing_provider_id)
+            and existing_source_workflow != "create_mock_execute"
+        )
+        if existing and str(existing[0]) != normalized_provider_id and existing_is_reusable:
             return {
                 "status": "conflict",
                 "entity_type": normalized_entity_type,
@@ -146,6 +158,8 @@ def resolve_create_lookup_placeholders(*, db_path: str | Path, payload: dict[str
             SELECT provider_id
             FROM create_provider_id_ledger
             WHERE {where}
+              AND provider_id NOT LIKE 'mock_%'
+              AND source_workflow != 'create_mock_execute'
             ORDER BY entity_type
             LIMIT 1
             """,

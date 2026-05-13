@@ -16,6 +16,14 @@ from roibang_v2.workflows.create_provider_id_ledger import (
 
 Transport = Callable[[dict[str, Any]], dict[str, Any]]
 OPERATION_ORDER = ["create_project", "bind_material", "lookup_target_material", "create_unit"]
+RECOVERY_ENDPOINTS = {
+    "lookup_existing_project": "/open_api/v3.0/project/list/",
+    "lookup_existing_unit": "/open_api/v3.0/promotion/list/",
+}
+PROJECT_CAP_CLEANUP_ENDPOINTS = {
+    "lookup_disabled_projects": "/open_api/v3.0/project/list/",
+    "delete_project": "/open_api/2/project/delete/",
+}
 ACTIVE_STATUS_VALUES = {
     "ACTIVE",
     "ENABLE",
@@ -27,6 +35,16 @@ ACTIVE_STATUS_VALUES = {
     "CAMPAIGN_STATUS_ENABLE",
     "PROJECT_STATUS_ENABLE",
     "PROMOTION_STATUS_ENABLE",
+}
+CLOSED_PROJECT_STATUS_VALUES = {
+    "DISABLE",
+    "DISABLED",
+    "OFF",
+    "STOP",
+    "STOPPED",
+    "PROJECT_STATUS_DISABLE",
+    "PROJECT_STATUS_DISABLED",
+    "PROJECT_STATUS_STOP",
 }
 LAUNCH_FIELD_NAMES = {
     "status",
@@ -71,7 +89,6 @@ def _blocked_result(
         "external_api_calls": 0,
         "status": "blocked",
         "reason": reason,
-        "source_execution_pack_status": "not_required_direct_create_execute",
         "blocking_reasons": blocking_reasons,
         "ordered_steps": [],
         "provider_id_records": [],
@@ -84,6 +101,7 @@ def _blocked_result(
             "skipped_material_bind_records": [],
         },
         "material_bind_records": [],
+        "project_cap_cleanup": _project_cap_cleanup_summary([]),
         "runner_result": None,
         "failure": None,
         "actions": [],
@@ -114,24 +132,40 @@ def _runner_policy(policy: dict[str, Any]) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
-def _adapter_gate(scaffold: dict[str, Any]) -> dict[str, Any]:
-    value = scaffold.get("live_adapter_gate")
-    return dict(value) if isinstance(value, dict) else {}
+def _project_cap_cleanup_policy(policy: dict[str, Any]) -> dict[str, Any]:
+    value = _runner_policy(policy).get("project_cap_cleanup")
+    data = dict(value) if isinstance(value, dict) else {}
+    disabled_status_values = data.get("disabled_status_values")
+    statuses = (
+        {str(item).strip().upper() for item in disabled_status_values if str(item).strip()}
+        if isinstance(disabled_status_values, list)
+        else set(CLOSED_PROJECT_STATUS_VALUES)
+    )
+    delete_count = int(data.get("delete_count") or 10)
+    return {
+        "enabled": bool(data.get("enabled", True)),
+        "delete_count": max(0, delete_count),
+        "page_size": max(int(data.get("page_size") or 100), delete_count, 1),
+        "disabled_status_values": statuses,
+    }
 
 
-def _endpoints(policy: dict[str, Any], scaffold: dict[str, Any]) -> dict[str, str]:
-    scaffold_endpoints = _adapter_gate(scaffold).get("endpoints")
+def _endpoints(policy: dict[str, Any]) -> dict[str, str]:
     policy_endpoints = _live_api_policy(policy).get("endpoints")
-    source = scaffold_endpoints if isinstance(scaffold_endpoints, dict) else policy_endpoints
-    data = source if isinstance(source, dict) else {}
-    return {operation: str(data.get(operation) or "") for operation in OPERATION_ORDER}
+    data = policy_endpoints if isinstance(policy_endpoints, dict) else {}
+    endpoints = {operation: str(data.get(operation) or "") for operation in OPERATION_ORDER}
+    for operation, endpoint in RECOVERY_ENDPOINTS.items():
+        endpoints[operation] = str(data.get(operation) or endpoint)
+    for operation, endpoint in PROJECT_CAP_CLEANUP_ENDPOINTS.items():
+        endpoints[operation] = str(data.get(operation) or endpoint)
+    return endpoints
 
 
 def _provider_payload_drafts(create_execute: dict[str, Any]) -> list[dict[str, Any]]:
-    drafts = _rows(create_execute.get("resolved_provider_payload_drafts"))
+    drafts = _rows(create_execute.get("provider_payload_drafts"))
     if drafts:
         return drafts
-    return _rows(create_execute.get("provider_payload_drafts"))
+    return _rows(create_execute.get("resolved_provider_payload_drafts"))
 
 
 def _create_execute_payload_safety(create_execute: dict[str, Any]) -> dict[str, Any]:
@@ -288,6 +322,8 @@ def _existing_provider_id(*, db_path: str | Path, entity_type: str, local_key: s
             SELECT provider_id
             FROM create_provider_id_ledger
             WHERE entity_type = ? AND local_key = ? AND status = 'active'
+              AND provider_id NOT LIKE 'mock_%'
+              AND source_workflow != 'create_mock_execute'
             LIMIT 1
             """,
             (entity_type, local_key),
@@ -325,6 +361,24 @@ def _response_message(response: dict[str, Any]) -> str:
     return str(response.get("message") or response.get("msg") or "")
 
 
+def _advertiser_id_from_payload(payload: dict[str, Any]) -> str:
+    target_ids = payload.get("target_advertiser_ids")
+    if isinstance(target_ids, list) and target_ids:
+        return str(target_ids[0] or "")
+    return str(payload.get("advertiser_id") or payload.get("target_advertiser_id") or "")
+
+
+def _is_skip_account_create_project_failure(operation: str, response: dict[str, Any]) -> bool:
+    return _is_project_cap_failure(operation, response)
+
+
+def _is_project_cap_failure(operation: str, response: dict[str, Any]) -> bool:
+    if operation != "create_project":
+        return False
+    message = _response_message(response)
+    return _response_code(response) == 40000 and "已创建30个项目" in message
+
+
 def _response_data(response: dict[str, Any]) -> dict[str, Any]:
     value = response.get("data")
     return dict(value) if isinstance(value, dict) else {}
@@ -343,6 +397,158 @@ def _first_response_item(response: dict[str, Any]) -> dict[str, Any]:
             if isinstance(row, dict):
                 return row
     return {}
+
+
+def _project_status_values(row: dict[str, Any]) -> set[str]:
+    values: set[str] = set()
+    for key in ("project_status", "status", "opt_status", "delivery_status", "marketing_status"):
+        value = row.get(key)
+        if isinstance(value, list):
+            values.update(str(item).strip().upper() for item in value if str(item).strip())
+        elif str(value or "").strip():
+            values.add(str(value).strip().upper())
+    return values
+
+
+def _project_id_from_row(row: dict[str, Any]) -> str:
+    for key in ("project_id", "id"):
+        value = row.get(key)
+        if str(value or "").strip():
+            return str(value).strip()
+    return ""
+
+
+def _disabled_project_candidates(response: dict[str, Any], disabled_status_values: set[str]) -> list[str]:
+    project_ids: list[str] = []
+    seen: set[str] = set()
+    for row in _response_items(response):
+        project_id = _project_id_from_row(row)
+        if not project_id or project_id in seen:
+            continue
+        if _project_status_values(row) & disabled_status_values:
+            project_ids.append(project_id)
+            seen.add(project_id)
+    return project_ids
+
+
+def _project_cap_lookup_payload(advertiser_id: str, page_size: int) -> dict[str, Any]:
+    return {
+        "advertiser_id": advertiser_id,
+        "filtering": {"project_status": ["PROJECT_STATUS_DISABLE"]},
+        "page": 1,
+        "page_size": page_size,
+    }
+
+
+def _project_delete_payload(advertiser_id: str, project_id: str) -> dict[str, Any]:
+    return {"advertiser_id": advertiser_id, "project_id": project_id}
+
+
+def _project_cap_cleanup_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "status": "checked" if records else "not_triggered",
+        "attempted_count": len(records),
+        "deleted_count": sum(int(record.get("deleted_count") or 0) for record in records),
+        "records": records,
+    }
+
+
+def _cleanup_closed_projects_for_project_cap(
+    *,
+    advertiser_id: str,
+    endpoints: dict[str, str],
+    policy: dict[str, Any],
+    transport: Transport,
+    sequence: int,
+) -> tuple[dict[str, Any], int, int]:
+    cleanup_policy = _project_cap_cleanup_policy(policy)
+    result: dict[str, Any] = {
+        "advertiser_id": advertiser_id,
+        "status": "not_run",
+        "deleted_count": 0,
+        "deleted_project_ids": [],
+        "failed_project_ids": [],
+    }
+    if not advertiser_id:
+        result["status"] = "missing_advertiser_id"
+        return result, sequence, 0
+    if not bool(cleanup_policy["enabled"]) or int(cleanup_policy["delete_count"]) <= 0:
+        result["status"] = "disabled"
+        return result, sequence, 0
+
+    call_count = 0
+    lookup_call = {
+        "sequence": sequence,
+        "operation": "lookup_disabled_projects",
+        "endpoint": endpoints.get("lookup_disabled_projects", ""),
+        "payload": _project_cap_lookup_payload(advertiser_id, int(cleanup_policy["page_size"])),
+        "transport_mode": "create_http",
+    }
+    try:
+        lookup_response = transport(lookup_call)
+    except RuntimeError as exc:
+        result["status"] = "lookup_failed"
+        result["message"] = str(exc)
+        return result, sequence + 1, call_count + 1
+    sequence += 1
+    call_count += 1
+    result["lookup_response_code"] = _response_code(lookup_response)
+    if _response_code(lookup_response) != 0:
+        result["status"] = "lookup_failed"
+        result["message"] = _response_message(lookup_response)
+        return result, sequence, call_count
+
+    candidates = _disabled_project_candidates(
+        lookup_response,
+        set(cleanup_policy["disabled_status_values"]),
+    )
+    delete_project_ids = candidates[: int(cleanup_policy["delete_count"])]
+    result["candidate_count"] = len(candidates)
+    result["target_delete_count"] = len(delete_project_ids)
+    if not delete_project_ids:
+        result["status"] = "no_closed_projects"
+        return result, sequence, call_count
+
+    deleted_ids: list[str] = []
+    failed_ids: list[str] = []
+    for project_id in delete_project_ids:
+        delete_call = {
+            "sequence": sequence,
+            "operation": "delete_project",
+            "endpoint": endpoints.get("delete_project", ""),
+            "payload": _project_delete_payload(advertiser_id, project_id),
+            "transport_mode": "create_http",
+        }
+        try:
+            delete_response = transport(delete_call)
+        except RuntimeError:
+            sequence += 1
+            call_count += 1
+            failed_ids.append(project_id)
+            continue
+        sequence += 1
+        call_count += 1
+        if _response_code(delete_response) == 0:
+            deleted_ids.append(project_id)
+        else:
+            failed_ids.append(project_id)
+    result["deleted_project_ids"] = deleted_ids
+    result["failed_project_ids"] = failed_ids
+    result["deleted_count"] = len(deleted_ids)
+    result["status"] = "deleted" if deleted_ids else "delete_failed"
+    return result, sequence, call_count
+
+
+def _response_items(response: dict[str, Any]) -> list[dict[str, Any]]:
+    data = _response_data(response)
+    for key in ("list", "rows", "data"):
+        rows = data.get(key)
+        if isinstance(rows, list):
+            return [row for row in rows if isinstance(row, dict)]
+    rows = response.get("list")
+    if isinstance(rows, list):
+        return [row for row in rows if isinstance(row, dict)]
+    return []
 
 
 def _project_id(response: dict[str, Any]) -> str:
@@ -388,6 +594,36 @@ def _target_video_cover_id(response: dict[str, Any]) -> str:
     )
 
 
+def _target_material_item_for_lookup(response: dict[str, Any], lookup_item: dict[str, Any]) -> dict[str, Any]:
+    rows = _response_items(response)
+    if not rows:
+        return _response_data(response)
+    material_id = str(lookup_item.get("material_id") or "")
+    source_video_id = str(lookup_item.get("source_video_id") or "")
+    for row in rows:
+        row_material_id = str(row.get("material_id") or row.get("id") or "")
+        row_video_id = str(row.get("video_id") or row.get("source_video_id") or row.get("id") or "")
+        if material_id and row_material_id == material_id:
+            return row
+        if source_video_id and row_video_id == source_video_id:
+            return row
+    return rows[0]
+
+
+def _target_video_id_from_item(item: dict[str, Any]) -> str:
+    return str(item.get("target_video_id") or item.get("video_id") or item.get("id") or "")
+
+
+def _target_video_cover_id_from_item(item: dict[str, Any]) -> str:
+    return str(
+        item.get("target_video_cover_id")
+        or item.get("video_cover_id")
+        or item.get("cover_id")
+        or item.get("image_id")
+        or ""
+    )
+
+
 def _material_bind_task_id(response: dict[str, Any]) -> str:
     data = _response_data(response)
     return str(
@@ -416,6 +652,103 @@ def _failure(operation: str, index: int, response: dict[str, Any]) -> dict[str, 
     }
 
 
+def _is_recoverable_create_failure(operation: str, failure: dict[str, Any]) -> bool:
+    if operation not in {"create_project", "create_unit"}:
+        return False
+    message = _response_message(failure) or str(failure.get("error") or "")
+    if any(fragment in message for fragment in ("transient network error", "Connection reset", "网络异常", "timed out", "timeout")):
+        return True
+    return _response_code(failure) in {-1}
+
+
+def _recovery_lookup_operation(operation: str) -> str:
+    if operation == "create_project":
+        return "lookup_existing_project"
+    if operation == "create_unit":
+        return "lookup_existing_unit"
+    return ""
+
+
+def _recovery_lookup_payload(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
+    if operation == "create_project":
+        return {
+            "advertiser_id": str(payload.get("advertiser_id") or ""),
+            "name": str(payload.get("name") or ""),
+        }
+    if operation == "create_unit":
+        return {
+            "advertiser_id": str(payload.get("advertiser_id") or ""),
+            "project_id": str(payload.get("project_id") or ""),
+            "name": str(payload.get("name") or ""),
+        }
+    return {}
+
+
+def _row_name(row: dict[str, Any], operation: str) -> str:
+    if operation == "create_project":
+        return str(row.get("project_name") or row.get("name") or "")
+    if operation == "create_unit":
+        return str(row.get("promotion_name") or row.get("name") or "")
+    return ""
+
+
+def _row_provider_id(row: dict[str, Any], operation: str) -> str:
+    if operation == "create_project":
+        return str(row.get("project_id") or row.get("id") or "")
+    if operation == "create_unit":
+        return str(row.get("promotion_id") or row.get("id") or "")
+    return ""
+
+
+def _existing_create_response(operation: str, lookup_response: dict[str, Any], expected_name: str) -> dict[str, Any]:
+    for row in _response_items(lookup_response):
+        if _row_name(row, operation) != expected_name:
+            continue
+        provider_id = _row_provider_id(row, operation)
+        if not provider_id:
+            continue
+        if operation == "create_project":
+            return {"code": 0, "message": "recovered_existing_project", "data": {"project_id": provider_id}}
+        if operation == "create_unit":
+            return {"code": 0, "message": "recovered_existing_unit", "data": {"promotion_id": provider_id}}
+    return {}
+
+
+def _runner_failure_result(
+    *,
+    operation: str,
+    index: int,
+    message: str,
+    code: int,
+    ordered_steps: list[dict[str, Any]],
+    provider_id_records: list[dict[str, Any]],
+    material_bind_records: list[dict[str, Any]],
+    transport_call_count: int,
+    skipped_provider_id_records: list[dict[str, Any]],
+    skipped_material_bind_records: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "status": "create_http_failed",
+        "blocking_reasons": [],
+        "ordered_steps": ordered_steps,
+        "provider_id_records": provider_id_records,
+        "material_bind_records": material_bind_records,
+        "transport_call_count": transport_call_count,
+        "external_api_calls": transport_call_count,
+        "failure": {
+            "operation": operation,
+            "index": index,
+            "message": message,
+            "code": code,
+        },
+        "idempotency": _idempotency_summary(
+            skipped_provider_id_records=skipped_provider_id_records,
+            skipped_material_bind_records=skipped_material_bind_records,
+        ),
+    }
+
+
 def _record_provider_id(
     *,
     db_path: str | Path,
@@ -423,46 +756,72 @@ def _record_provider_id(
     operation: str,
     index: int,
     response: dict[str, Any],
+    request_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any] | list[dict[str, Any]] | None:
     summary = _summary(create_execute_artifact)
     if operation == "lookup_target_material":
+        payload = request_payload if isinstance(request_payload, dict) else {}
+        lookup_items = payload.get("lookup_items") if isinstance(payload.get("lookup_items"), list) else []
+        if not lookup_items:
+            lookup_items = [
+                {
+                    "target_advertiser_id": str(payload.get("target_advertiser_id") or payload.get("advertiser_id") or ""),
+                    "source_video_id": str(payload.get("source_video_id") or ""),
+                    "material_id": str(payload.get("material_id") or ""),
+                }
+            ]
         records = _target_material_records(create_execute_artifact)
-        provider_ids = {
-            "target_video": _target_video_id(response),
-            "target_video_cover": _target_video_cover_id(response),
-        }
         results: list[dict[str, Any]] = []
-        for row in records[index * 2 : index * 2 + 2]:
-            entity_type = str(row.get("entity_type") or "")
-            local_key = str(row.get("local_key") or "")
-            provider_id = provider_ids.get(entity_type, "")
-            if not local_key or not provider_id:
-                results.append(
-                    {
-                        "status": "missing_provider_id",
-                        "entity_type": entity_type,
-                        "local_key": local_key,
-                        "provider_id": provider_id,
-                        "execution_enabled": False,
-                        "external_api_calls": 0,
-                        "actions": [],
-                    }
-                )
-                continue
-            results.append(
-                record_create_provider_id(
-                    db_path=db_path,
-                    entity_type=entity_type,
-                    local_key=local_key,
-                    provider_id=provider_id,
-                    plan_id=str(summary.get("plan_id") or ""),
-                    request_id=str(summary.get("request_id") or ""),
-                    advertiser_id="",
-                    parent_local_key="",
-                    source_workflow="create_live_execute_once",
-                    response_payload=_safe_response(response),
-                )
+        for lookup_item in lookup_items:
+            source_video_id = str(lookup_item.get("source_video_id") or "")
+            target_advertiser_id = str(
+                lookup_item.get("target_advertiser_id") or lookup_item.get("advertiser_id") or payload.get("target_advertiser_id") or payload.get("advertiser_id") or ""
             )
+            expected_local_keys = {
+                "target_video": f"target_video:{target_advertiser_id}:{source_video_id}",
+                "target_video_cover": f"target_video_cover:{target_advertiser_id}:{source_video_id}",
+            }
+            item = _target_material_item_for_lookup(response, lookup_item)
+            provider_ids = {
+                "target_video": _target_video_id_from_item(item),
+                "target_video_cover": _target_video_cover_id_from_item(item),
+            }
+            matching_records = [
+                row
+                for row in records
+                if str(row.get("local_key") or "") == expected_local_keys.get(str(row.get("entity_type") or ""), "")
+            ]
+            for row in matching_records:
+                entity_type = str(row.get("entity_type") or "")
+                local_key = str(row.get("local_key") or "")
+                provider_id = provider_ids.get(entity_type, "")
+                if not local_key or not provider_id:
+                    results.append(
+                        {
+                            "status": "missing_provider_id",
+                            "entity_type": entity_type,
+                            "local_key": local_key,
+                            "provider_id": provider_id,
+                            "execution_enabled": False,
+                            "external_api_calls": 0,
+                            "actions": [],
+                        }
+                    )
+                    continue
+                results.append(
+                    record_create_provider_id(
+                        db_path=db_path,
+                        entity_type=entity_type,
+                        local_key=local_key,
+                        provider_id=provider_id,
+                        plan_id=str(summary.get("plan_id") or ""),
+                        request_id=str(summary.get("request_id") or ""),
+                        advertiser_id="",
+                        parent_local_key="",
+                        source_workflow="create_live_execute_once",
+                        response_payload=_safe_response(response),
+                    )
+                )
         return results
     if operation == "create_project":
         provider_id = _project_id(response)
@@ -565,7 +924,18 @@ def _split_existing_target_materials(
     pending: list[tuple[int, dict[str, Any]]] = []
     skipped: list[dict[str, Any]] = []
     for index, draft in enumerate(drafts):
-        record_pair = records[index * 2 : index * 2 + 2]
+        payload = draft.get("payload") if isinstance(draft.get("payload"), dict) else {}
+        source_video_id = str(payload.get("source_video_id") or "")
+        target_advertiser_id = str(payload.get("target_advertiser_id") or payload.get("advertiser_id") or "")
+        expected_local_keys = {
+            "target_video": f"target_video:{target_advertiser_id}:{source_video_id}",
+            "target_video_cover": f"target_video_cover:{target_advertiser_id}:{source_video_id}",
+        }
+        record_pair = [
+            row
+            for row in records
+            if str(row.get("local_key") or "") == expected_local_keys.get(str(row.get("entity_type") or ""), "")
+        ]
         existing_rows: list[dict[str, Any]] = []
         for row in record_pair:
             entity_type = str(row.get("entity_type") or "")
@@ -622,19 +992,73 @@ def _idempotency_summary(
     }
 
 
+def _batch_target_material_lookup_drafts(
+    pending: list[tuple[int, dict[str, Any]]],
+    resolved_drafts: list[dict[str, Any]],
+    *,
+    batch_size: int = 20,
+) -> tuple[list[tuple[int, dict[str, Any]]], list[dict[str, Any]]]:
+    batches: list[tuple[int, dict[str, Any]]] = []
+    batch_drafts: list[dict[str, Any]] = []
+    current_key = ""
+    current: list[dict[str, Any]] = []
+    current_first_index = 0
+
+    def flush() -> None:
+        nonlocal current, current_key, current_first_index
+        if not current:
+            return
+        target_advertiser_id = current_key
+        material_ids = [str(item.get("material_id") or "") for item in current if str(item.get("material_id") or "")]
+        source_video_ids = [
+            str(item.get("source_video_id") or "") for item in current if str(item.get("source_video_id") or "")
+        ]
+        payload: dict[str, Any] = {
+            "target_advertiser_id": target_advertiser_id,
+            "advertiser_id": target_advertiser_id,
+            "lookup_items": list(current),
+        }
+        if material_ids:
+            payload["material_ids"] = material_ids
+        if source_video_ids:
+            payload["source_video_ids"] = source_video_ids
+        batches.append((current_first_index, {"operation": "lookup_target_material", "payload": payload}))
+        batch_drafts.append({"operation": "lookup_target_material", "payload": payload})
+        current = []
+        current_key = ""
+
+    for offset, draft in enumerate(resolved_drafts):
+        payload = draft.get("payload") if isinstance(draft.get("payload"), dict) else {}
+        target_advertiser_id = str(payload.get("target_advertiser_id") or payload.get("advertiser_id") or "")
+        item = {
+            "target_advertiser_id": target_advertiser_id,
+            "source_video_id": str(payload.get("source_video_id") or ""),
+            "material_id": str(payload.get("material_id") or ""),
+        }
+        if not current or current_key != target_advertiser_id or len(current) >= batch_size:
+            flush()
+            current_key = target_advertiser_id
+            current_first_index = pending[offset][0]
+        current.append(item)
+    flush()
+    return batches, batch_drafts
+
+
 def _resumable_create_http_run(
     *,
     create_execute_artifact: dict[str, Any],
-    create_live_payload_adapter_scaffold_artifact: dict[str, Any],
     policy: dict[str, Any],
     db_path: str | Path,
     transport: Transport,
 ) -> dict[str, Any]:
-    endpoints = _endpoints(policy, create_live_payload_adapter_scaffold_artifact)
+    endpoints = _endpoints(policy)
     provider_id_records: list[dict[str, Any]] = []
     material_bind_records: list[dict[str, Any]] = []
     skipped_provider_id_records: list[dict[str, Any]] = []
     skipped_material_bind_records: list[dict[str, Any]] = []
+    skipped_account_records: list[dict[str, Any]] = []
+    skipped_account_ids: set[str] = set()
+    project_cap_cleanup_records: list[dict[str, Any]] = []
     ordered_steps: list[dict[str, Any]] = []
     transport_call_count = 0
     sequence = 0
@@ -676,6 +1100,37 @@ def _resumable_create_http_run(
             )
             continue
 
+        operation_skipped_account_count = 0
+        if skipped_account_ids:
+            filtered_pending: list[tuple[int, dict[str, Any]]] = []
+            for original_index, draft in pending:
+                payload = draft.get("payload") if isinstance(draft.get("payload"), dict) else {}
+                advertiser_id = _advertiser_id_from_payload(payload)
+                if advertiser_id and advertiser_id in skipped_account_ids:
+                    operation_skipped_account_count += 1
+                    skipped_account_records.append(
+                        {
+                            "operation": operation,
+                            "index": original_index,
+                            "advertiser_id": advertiser_id,
+                            "status": "skipped_account_after_create_project_failure",
+                        }
+                    )
+                    continue
+                filtered_pending.append((original_index, draft))
+            pending = filtered_pending
+            if drafts and not pending:
+                ordered_steps.append(
+                    {
+                        "operation": operation,
+                        "planned_count": len(drafts),
+                        "status": "completed_with_skipped_accounts",
+                        "test_transport_call_count": 0,
+                        "skipped_account_count": operation_skipped_account_count,
+                    }
+                )
+                continue
+
         pending_drafts = [draft for _index, draft in pending]
         resolution = resolve_provider_payload_drafts(db_path=db_path, provider_payload_drafts=pending_drafts)
         if int(resolution.get("unresolved_count") or 0):
@@ -698,24 +1153,234 @@ def _resumable_create_http_run(
                     skipped_provider_id_records=skipped_provider_id_records,
                     skipped_material_bind_records=skipped_material_bind_records,
                 ),
+                "project_cap_cleanup": _project_cap_cleanup_summary(project_cap_cleanup_records),
             }
 
         resolved_drafts = _rows(resolution.get("resolved_provider_payload_drafts"))
+        if operation == "lookup_target_material":
+            pending, resolved_drafts = _batch_target_material_lookup_drafts(pending, resolved_drafts)
         operation_call_count = 0
         for offset, draft in enumerate(resolved_drafts):
             original_index = pending[offset][0]
-            call = {
-                "sequence": sequence,
-                "operation": operation,
-                "endpoint": endpoints.get(operation, ""),
-                "payload": draft.get("payload") if isinstance(draft.get("payload"), dict) else {},
-                "transport_mode": "create_http",
-            }
-            response = transport(call)
-            sequence += 1
-            transport_call_count += 1
-            operation_call_count += 1
+            payload = draft.get("payload") if isinstance(draft.get("payload"), dict) else {}
+            advertiser_id = _advertiser_id_from_payload(payload)
+            if advertiser_id and advertiser_id in skipped_account_ids:
+                operation_skipped_account_count += 1
+                skipped_account_records.append(
+                    {
+                        "operation": operation,
+                        "index": original_index,
+                        "advertiser_id": advertiser_id,
+                        "status": "skipped_account_after_create_project_failure",
+                    }
+                )
+                continue
+            create_retry_count = 0
+            max_create_retry_count = int(_runner_policy(policy).get("recover_create_after_lookup_max_retries") or 1)
+            while True:
+                call = {
+                    "sequence": sequence,
+                    "operation": operation,
+                    "endpoint": endpoints.get(operation, ""),
+                    "payload": payload,
+                    "transport_mode": "create_http",
+                }
+                try:
+                    response = transport(call)
+                except RuntimeError as exc:
+                    sequence += 1
+                    transport_call_count += 1
+                    operation_call_count += 1
+                    failure_response = {"code": -1, "message": str(exc)}
+                    recovered_response: dict[str, Any] = {}
+                    if _is_recoverable_create_failure(operation, failure_response):
+                        lookup_operation = _recovery_lookup_operation(operation)
+                        lookup_payload = _recovery_lookup_payload(operation, payload)
+                        if lookup_operation:
+                            lookup_call = {
+                                "sequence": sequence,
+                                "operation": lookup_operation,
+                                "endpoint": endpoints.get(lookup_operation, ""),
+                                "payload": lookup_payload,
+                                "transport_mode": "create_http",
+                            }
+                            try:
+                                lookup_response = transport(lookup_call)
+                            except RuntimeError as lookup_exc:
+                                sequence += 1
+                                transport_call_count += 1
+                                operation_call_count += 1
+                                return _runner_failure_result(
+                                    operation=lookup_operation,
+                                    index=original_index,
+                                    message=str(lookup_exc),
+                                    code=-1,
+                                    ordered_steps=ordered_steps,
+                                    provider_id_records=provider_id_records,
+                                    material_bind_records=material_bind_records,
+                                    transport_call_count=transport_call_count,
+                                    skipped_provider_id_records=skipped_provider_id_records,
+                                    skipped_material_bind_records=skipped_material_bind_records,
+                                )
+                            sequence += 1
+                            transport_call_count += 1
+                            operation_call_count += 1
+                            if _response_code(lookup_response) == 0:
+                                recovered_response = _existing_create_response(
+                                    operation,
+                                    lookup_response,
+                                    str(lookup_payload.get("name") or ""),
+                                )
+                    if recovered_response:
+                        response = recovered_response
+                    elif create_retry_count < max_create_retry_count and _is_recoverable_create_failure(
+                        operation, failure_response
+                    ):
+                        create_retry_count += 1
+                        continue
+                    else:
+                        return {
+                            "ok": False,
+                            "status": "create_http_failed",
+                            "blocking_reasons": [],
+                            "ordered_steps": ordered_steps,
+                            "provider_id_records": provider_id_records,
+                            "material_bind_records": material_bind_records,
+                            "transport_call_count": transport_call_count,
+                            "external_api_calls": transport_call_count,
+                            "failure": {
+                                "operation": operation,
+                                "index": original_index,
+                                "message": str(exc),
+                                "code": -1,
+                            },
+                            "idempotency": _idempotency_summary(
+                                skipped_provider_id_records=skipped_provider_id_records,
+                                skipped_material_bind_records=skipped_material_bind_records,
+                            ),
+                        }
+                else:
+                    sequence += 1
+                    transport_call_count += 1
+                    operation_call_count += 1
+                    if _response_code(response) != 0 and _is_recoverable_create_failure(operation, response):
+                        recovered_response = {}
+                        lookup_operation = _recovery_lookup_operation(operation)
+                        lookup_payload = _recovery_lookup_payload(operation, payload)
+                        if lookup_operation:
+                            lookup_call = {
+                                "sequence": sequence,
+                                "operation": lookup_operation,
+                                "endpoint": endpoints.get(lookup_operation, ""),
+                                "payload": lookup_payload,
+                                "transport_mode": "create_http",
+                            }
+                            try:
+                                lookup_response = transport(lookup_call)
+                            except RuntimeError as lookup_exc:
+                                sequence += 1
+                                transport_call_count += 1
+                                operation_call_count += 1
+                                return _runner_failure_result(
+                                    operation=lookup_operation,
+                                    index=original_index,
+                                    message=str(lookup_exc),
+                                    code=-1,
+                                    ordered_steps=ordered_steps,
+                                    provider_id_records=provider_id_records,
+                                    material_bind_records=material_bind_records,
+                                    transport_call_count=transport_call_count,
+                                    skipped_provider_id_records=skipped_provider_id_records,
+                                    skipped_material_bind_records=skipped_material_bind_records,
+                                )
+                            sequence += 1
+                            transport_call_count += 1
+                            operation_call_count += 1
+                            if _response_code(lookup_response) == 0:
+                                recovered_response = _existing_create_response(
+                                    operation,
+                                    lookup_response,
+                                    str(lookup_payload.get("name") or ""),
+                                )
+                        if recovered_response:
+                            response = recovered_response
+                        elif create_retry_count < max_create_retry_count:
+                            create_retry_count += 1
+                            continue
+                break
+            if _response_code(response) != 0 and _is_project_cap_failure(operation, response):
+                cleanup_result, sequence, cleanup_call_count = _cleanup_closed_projects_for_project_cap(
+                    advertiser_id=advertiser_id,
+                    endpoints=endpoints,
+                    policy=policy,
+                    transport=transport,
+                    sequence=sequence,
+                )
+                transport_call_count += cleanup_call_count
+                operation_call_count += cleanup_call_count
+                project_cap_cleanup_records.append(cleanup_result)
+                if int(cleanup_result.get("deleted_count") or 0) > 0:
+                    retry_call = {
+                        "sequence": sequence,
+                        "operation": operation,
+                        "endpoint": endpoints.get(operation, ""),
+                        "payload": payload,
+                        "transport_mode": "create_http",
+                    }
+                    try:
+                        response = transport(retry_call)
+                    except RuntimeError as exc:
+                        sequence += 1
+                        transport_call_count += 1
+                        operation_call_count += 1
+                        cleanup_result["status"] = "deleted_retry_failed"
+                        cleanup_result["retry_message"] = str(exc)
+                        return {
+                            "ok": False,
+                            "status": "create_http_failed",
+                            "blocking_reasons": [],
+                            "ordered_steps": ordered_steps,
+                            "provider_id_records": provider_id_records,
+                            "material_bind_records": material_bind_records,
+                            "transport_call_count": transport_call_count,
+                            "external_api_calls": transport_call_count,
+                            "failure": {
+                                "operation": operation,
+                                "index": original_index,
+                                "message": str(exc),
+                                "code": -1,
+                            },
+                            "idempotency": _idempotency_summary(
+                                skipped_provider_id_records=skipped_provider_id_records,
+                                skipped_material_bind_records=skipped_material_bind_records,
+                            ),
+                            "project_cap_cleanup": _project_cap_cleanup_summary(project_cap_cleanup_records),
+                        }
+                    sequence += 1
+                    transport_call_count += 1
+                    operation_call_count += 1
+                    call = retry_call
+                    cleanup_result["retry_response_code"] = _response_code(response)
+                    cleanup_result["retry_message"] = _response_message(response)
+                    cleanup_result["status"] = (
+                        "deleted_and_retried" if _response_code(response) == 0 else "deleted_retry_failed"
+                    )
             if _response_code(response) != 0:
+                if _is_skip_account_create_project_failure(operation, response):
+                    if advertiser_id:
+                        skipped_account_ids.add(advertiser_id)
+                    skipped_account_records.append(
+                        {
+                            "operation": operation,
+                            "index": original_index,
+                            "advertiser_id": advertiser_id,
+                            "status": "skipped_account_after_create_project_failure",
+                            "code": _response_code(response),
+                            "message": _response_message(response),
+                        }
+                    )
+                    operation_skipped_account_count += 1
+                    continue
                 return {
                     "ok": False,
                     "status": "create_http_failed",
@@ -727,9 +1392,11 @@ def _resumable_create_http_run(
                     "external_api_calls": transport_call_count,
                     "failure": _failure(operation, original_index, response),
                     "idempotency": _idempotency_summary(
-                        skipped_provider_id_records=skipped_provider_id_records,
-                        skipped_material_bind_records=skipped_material_bind_records,
-                    ),
+                            skipped_provider_id_records=skipped_provider_id_records,
+                            skipped_material_bind_records=skipped_material_bind_records,
+                        ),
+                    "project_cap_cleanup": _project_cap_cleanup_summary(project_cap_cleanup_records),
+                    "skipped_accounts": skipped_account_records,
                 }
             record_result = _record_provider_id(
                 db_path=db_path,
@@ -737,6 +1404,7 @@ def _resumable_create_http_run(
                 operation=operation,
                 index=original_index,
                 response=response,
+                request_payload=call["payload"],
             )
             records = record_result if isinstance(record_result, list) else [record_result] if record_result is not None else []
             for record in records:
@@ -761,6 +1429,7 @@ def _resumable_create_http_run(
                             skipped_provider_id_records=skipped_provider_id_records,
                             skipped_material_bind_records=skipped_material_bind_records,
                         ),
+                        "project_cap_cleanup": _project_cap_cleanup_summary(project_cap_cleanup_records),
                     }
             if operation == "bind_material":
                 bind_payload = draft.get("payload") if isinstance(draft.get("payload"), dict) else {}
@@ -772,14 +1441,15 @@ def _resumable_create_http_run(
                         response=response,
                     )
                 )
-        ordered_steps.append(
-            {
-                "operation": operation,
-                "planned_count": len(drafts),
-                "status": "completed",
-                "test_transport_call_count": operation_call_count,
-            }
-        )
+        step = {
+            "operation": operation,
+            "planned_count": len(drafts),
+            "status": "completed_with_skipped_accounts" if operation_skipped_account_count else "completed",
+            "test_transport_call_count": operation_call_count,
+        }
+        if operation_skipped_account_count:
+            step["skipped_account_count"] = operation_skipped_account_count
+        ordered_steps.append(step)
 
     return {
         "ok": True,
@@ -791,6 +1461,8 @@ def _resumable_create_http_run(
         "transport_call_count": transport_call_count,
         "external_api_calls": transport_call_count,
         "failure": None,
+        "skipped_accounts": skipped_account_records,
+        "project_cap_cleanup": _project_cap_cleanup_summary(project_cap_cleanup_records),
         "idempotency": _idempotency_summary(
             skipped_provider_id_records=skipped_provider_id_records,
             skipped_material_bind_records=skipped_material_bind_records,
@@ -836,7 +1508,6 @@ def _direct_blocking_reasons(
 def build_create_live_execute_once_direct(
     *,
     create_execute_artifact: dict[str, Any],
-    create_live_payload_adapter_scaffold_artifact: dict[str, Any],
     policy: dict[str, Any],
     runtime: dict[str, Any],
     db_path: str | Path,
@@ -856,7 +1527,6 @@ def build_create_live_execute_once_direct(
 
     runner_result = _resumable_create_http_run(
         create_execute_artifact=create_execute_artifact,
-        create_live_payload_adapter_scaffold_artifact=create_live_payload_adapter_scaffold_artifact,
         policy=policy,
         db_path=db_path,
         transport=transport,
@@ -874,11 +1544,14 @@ def build_create_live_execute_once_direct(
         "status": str(runner_result.get("status") or "blocked"),
         "reason": "",
         "create_execute_summary": _summary(create_execute_artifact),
-        "source_execution_pack_status": "not_required_direct_create_execute",
         "blocking_reasons": list(runner_result.get("blocking_reasons") or []),
         "ordered_steps": list(runner_result.get("ordered_steps") or []),
         "provider_id_records": list(runner_result.get("provider_id_records") or []),
         "material_bind_records": list(runner_result.get("material_bind_records") or []),
+        "skipped_accounts": list(runner_result.get("skipped_accounts") or []),
+        "project_cap_cleanup": runner_result.get("project_cap_cleanup")
+        if isinstance(runner_result.get("project_cap_cleanup"), dict)
+        else _project_cap_cleanup_summary([]),
         "transport_call_count": int(runner_result.get("transport_call_count") or 0),
         "idempotency": runner_result.get("idempotency")
         if isinstance(runner_result.get("idempotency"), dict)
@@ -903,15 +1576,17 @@ def run_create_live_execute_once_request(
     transport: Transport | None = None,
 ) -> dict[str, Any]:
     cfg = _once_config(request)
+    allowed_keys = {"create_execute_artifact", "policy", "runtime"}
+    unexpected_keys = sorted(str(key) for key in cfg if key not in allowed_keys)
+    if unexpected_keys:
+        raise ValueError(f"create live execute once received unexpected options: {', '.join(unexpected_keys)}")
     create_execute = cfg.get("create_execute_artifact")
-    scaffold = cfg.get("create_live_payload_adapter_scaffold_artifact")
     if not isinstance(create_execute, dict):
         raise ValueError("create live execute once requires create_execute_artifact")
     policy = cfg.get("policy") if isinstance(cfg.get("policy"), dict) else {}
     runtime = cfg.get("runtime") if isinstance(cfg.get("runtime"), dict) else {}
     payload = build_create_live_execute_once_direct(
         create_execute_artifact=create_execute,
-        create_live_payload_adapter_scaffold_artifact=scaffold if isinstance(scaffold, dict) else {},
         policy=policy,
         runtime=runtime,
         db_path=db_path,

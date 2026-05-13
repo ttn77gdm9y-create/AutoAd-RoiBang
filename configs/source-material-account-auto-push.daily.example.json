@@ -1,0 +1,85 @@
+{
+  "source_material_account_auto_push": {
+    "product": "勇者突进",
+    "source_advertiser_id": "1856647522964490",
+    "organization_id": "1851650746645060",
+    "timezone": "Asia/Shanghai",
+    "date_range": {
+      "mode": "yesterday"
+    },
+    "source_account_sync": {
+      "enabled": true,
+      "page_size": 100,
+      "max_pages": 80,
+      "mark_absent_inactive": false,
+      "retry_api_codes": [40100],
+      "max_api_retries": 1,
+      "retry_sleep_seconds": 20
+    },
+    "material_source": {
+      "from": "material_daily_metrics",
+      "min_stat_cost": 0,
+      "max_materials": 500,
+      "max_video_ids_per_call": 50
+    },
+    "material_detail_fetch": {
+      "enabled": true,
+      "page_size": 100,
+      "max_pages": 1,
+      "retry_api_codes": [40100],
+      "max_api_retries": 1,
+      "retry_sleep_seconds": 20
+    },
+    "openapi_http": {
+      "enabled": true,
+      "token_store": {
+        "enabled": true,
+        "store_file": "data/secrets/oceanengine-tokens.local.json",
+        "user_id": "default",
+        "credentials_file": "data/secrets/oceanengine-app.local.json",
+        "auto_refresh": true,
+        "refresh_lead_seconds": 900
+      },
+      "timeout_seconds": 20,
+      "max_retries": 1,
+      "retry_sleep_seconds": 1,
+      "min_interval_seconds": 0.2,
+      "retry_statuses": [429, 500, 502, 503, 504]
+    },
+    "execute": {
+      "enabled": true,
+      "approved": false,
+      "allow_mutation": false,
+      "retry_api_codes": [40100],
+      "max_api_retries": 1,
+      "retry_sleep_seconds": 20,
+      "create_http_transport": {
+        "enabled": true,
+        "allow_mutation": true,
+        "run_id": "source-material-account-auto-push-daily",
+        "operator": "roibang-v2-scheduler",
+        "token_store": {
+          "enabled": true,
+          "store_file": "data/secrets/oceanengine-tokens.local.json",
+          "user_id": "default",
+          "credentials_file": "data/secrets/oceanengine-app.local.json",
+          "auto_refresh": true,
+          "refresh_lead_seconds": 900
+        },
+        "timeout_seconds": 20,
+        "max_retries": 0,
+        "retry_sleep_seconds": 1,
+        "min_interval_seconds_by_operation": {
+          "bind_material": 0.2
+        },
+        "retry_api_codes_by_operation": {
+          "bind_material": [40100]
+        },
+        "base_url": "https://api.oceanengine.com"
+      }
+    },
+    "verify_after_execute": {
+      "enabled": true
+    }
+  }
+}

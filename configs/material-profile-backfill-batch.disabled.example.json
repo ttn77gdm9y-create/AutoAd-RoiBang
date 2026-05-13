@@ -37,8 +37,7 @@
           "enabled": true,
           "store_file": "data/secrets/oceanengine-tokens.local.json",
           "user_id": "default",
-          "app_id_env": "OCEANENGINE_APP_ID",
-          "app_secret_env": "OCEANENGINE_APP_SECRET",
+          "credentials_file": "data/secrets/oceanengine-app.local.json",
           "auto_refresh": true,
           "refresh_lead_seconds": 900
         },

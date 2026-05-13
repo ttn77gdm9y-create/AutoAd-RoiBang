@@ -144,30 +144,6 @@
         "source": "internal_phase1_schema"
       },
       {
-        "internal_field": "budget",
-        "provider_field": "",
-        "purpose": "unit budget",
-        "verified": false,
-        "required": true,
-        "source": "internal_phase1_schema"
-      },
-      {
-        "internal_field": "budget_mode",
-        "provider_field": "",
-        "purpose": "unit budget mode",
-        "verified": false,
-        "required": true,
-        "source": "internal_phase1_schema"
-      },
-      {
-        "internal_field": "roi_goal",
-        "provider_field": "",
-        "purpose": "unit ROI goal",
-        "verified": false,
-        "required": false,
-        "source": "internal_phase1_schema"
-      },
-      {
         "internal_field": "source",
         "provider_field": "",
         "purpose": "unit creative source",

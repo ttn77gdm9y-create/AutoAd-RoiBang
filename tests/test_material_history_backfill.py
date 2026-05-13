@@ -128,6 +128,47 @@ def test_material_history_backfill_preflight_plans_daily_discovery_and_material_
     assert artifact["summary"]["estimated_total_initial_request_count"] == 9
 
 
+def test_material_history_backfill_supports_yesterday_date_range_mode(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    csv_path = tmp_path / "accounts.csv"
+    bootstrap_database(db_path)
+    _write_accounts_csv(csv_path)
+    import_accounts_csv(csv_path, db_path=db_path)
+
+    result = build_material_history_backfill_preflight(
+        {
+            "material_history_backfill": {
+                "account_pool_csv": str(csv_path),
+                "product": "勇者突进",
+                "platforms": ["WECHAT_GAME"],
+                "date_range": {"mode": "yesterday", "base_date": "2026-05-11"},
+                "active_account_discovery": {
+                    "source": "workbench_account_list",
+                    "enabled": True,
+                    "workbench": {"limit": 100},
+                },
+                "material_fetch": {
+                    "source": "openapi_http_execute",
+                    "openapi": {
+                        "endpoints": ["report_custom"],
+                        "report_presets": ["material_daily"],
+                        "page_size": 20,
+                    },
+                },
+            }
+        },
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+    )
+
+    assert result["ok"] is True
+    assert result["date_range"] == {
+        "start": "2026-05-10",
+        "end": "2026-05-10",
+        "dates": ["2026-05-10"],
+    }
+
+
 def test_material_history_backfill_preflight_cli_writes_summary(tmp_path: Path, capsys):
     db_path = tmp_path / "roibang.sqlite3"
     csv_path = tmp_path / "accounts.csv"
@@ -248,12 +289,14 @@ def test_material_daily_execution_imports_only_spending_rows(tmp_path: Path):
     with sqlite3.connect(db_path) as conn:
         rows = conn.execute(
             """
-            SELECT metric_date, advertiser_id, project_id, promotion_id, material_id, stat_cost, show_cnt
+            SELECT
+              metric_date, advertiser_id, project_id, promotion_id, material_id,
+              stat_cost, show_cnt, roi_1day, roi_7days
             FROM material_daily_metrics
             """
         ).fetchall()
     assert rows == [
-        ("2026-02-10", "1858371222574218", "project_1", "promotion_1", "material_1", 1234.5, 1000.0)
+        ("2026-02-10", "1858371222574218", "project_1", "promotion_1", "material_1", 1234.5, 1000.0, 0.12, 0.3)
     ]
 
 

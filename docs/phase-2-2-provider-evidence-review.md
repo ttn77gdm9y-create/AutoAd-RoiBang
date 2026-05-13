@@ -318,7 +318,7 @@ create_project -> bind_material -> lookup_target_material -> create_unit
 当前 runner 的固定脚本入口用途：
 
 ```bash
-PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_live_execute_runner.py --config configs/runtime.example.json --policy policies/strategy.example.json
+PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_live_execute_runner.py --config configs/runtime.example.json --policy policies/create-policy.example.json
 ```
 
 它会读取最新的 `create_execute`、`create_first_live_runbook` 和 `create_live_payload_adapter_scaffold` artifacts（运行产物），输出一个默认 blocked 的复核 artifact；不会调用真实创建接口。
@@ -331,8 +331,8 @@ PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_live_execute
 - 必须显式设置 `allow_mutation=true`，mutation 是变更操作，表示可能创建或修改线上对象。
 - 必须有 `approval_id`，也就是人工批准编号。
 - 只允许四个 endpoint（接口地址）：
-  - `create_project`: `/open_api/2/project/create/`
-  - `create_unit`: `/open_api/2/promotion/create/`
+  - `create_project`: `/open_api/v3.0/project/create/`
+  - `create_unit`: `/open_api/v3.0/promotion/create/`
   - `lookup_target_material`: `/open_api/2/file/video/get/`
   - `bind_material`: `/open_api/2/file/material/bind/`
 - `bind_material` 仍是素材推送绑定，不接收 `project_id` 或 `promotion_id`。
@@ -394,7 +394,7 @@ PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_live_approva
 固定脚本入口：
 
 ```bash
-PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_live_execution_pack.py --config configs/runtime.example.json --policy policies/strategy.example.json
+PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_live_execution_pack.py --config configs/runtime.example.json --policy policies/create-policy.example.json
 ```
 
 当前示例 runtime（运行时配置）和 policy（策略配置）默认关闭真实执行，所以固定脚本会输出 blocked（阻断）状态；这符合预期。`create_live_execution_pack` 现在只是辅助复核包，不是主执行路径的必需输入。
@@ -481,7 +481,7 @@ PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_first_live_p
 固定脚本：
 
 ```bash
-PYTHONPATH=src python3 scripts/run_create_first_live_local_chain.py --config configs/runtime.example.json --preview-config configs/create/yzt-wx-mini-game.preview.local.json --policy policies/strategy.example.json
+PYTHONPATH=src python3 scripts/run_create_first_live_local_chain.py --config configs/runtime.example.json --preview-config configs/create/yzt-wx-mini-game.preview.local.json --policy policies/create-policy.example.json
 ```
 
 安全边界保持不变：

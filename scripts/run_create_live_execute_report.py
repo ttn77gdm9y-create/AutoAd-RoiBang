@@ -72,10 +72,12 @@ def _print_result(result: dict) -> None:
                 "status": result["status"],
                 "message": result["message"],
                 "summary": result["summary"],
+                "batch_summary": result.get("batch_summary", {}),
                 "create_plan_summary": result["create_plan_summary"],
                 "create_plan_contract": result["create_plan_contract"],
                 "db_ledger_summary": result["db_ledger_summary"],
                 "source_artifact_path": result["source_artifact_path"],
+                "source_artifact_paths": result.get("source_artifact_paths", []),
                 "plan_artifact_path": result["plan_artifact_path"],
                 "artifact_path": result["artifact_path"],
             },
@@ -89,7 +91,7 @@ def run_from_args(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Report latest one-shot live create execution result.")
     parser.add_argument("--config", default="configs/runtime.example.json")
     parser.add_argument("--plan", default="")
-    parser.add_argument("--create-live-execute-once-artifact", default="")
+    parser.add_argument("--create-live-execute-once-artifact", action="append", default=[])
     args = parser.parse_args(argv)
 
     config = load_runtime_config(args.config)
@@ -103,17 +105,35 @@ def run_from_args(argv: list[str] | None = None) -> int:
             _print_result(result)
             return 0
     try:
-        source_path = (
-            Path(args.create_live_execute_once_artifact)
-            if str(args.create_live_execute_once_artifact or "").strip()
-            else _latest_artifact(config.runs_dir, "create_live_execute_once")
-        )
-        source = _load_artifact(source_path)
+        source_paths = [
+            Path(value)
+            for value in args.create_live_execute_once_artifact
+            if str(value or "").strip()
+        ]
+        if not source_paths:
+            source_paths = [_latest_artifact(config.runs_dir, "create_live_execute_once")]
+        sources = [_load_artifact(source_path) for source_path in source_paths]
     except FileNotFoundError as exc:
         result = _missing_result(runs_dir=config.runs_dir, message=str(exc))
         _print_result(result)
         return 0
 
+    if len(sources) > 1:
+        result = run_create_live_execute_report_request(
+            {
+                "create_live_execute_report": {
+                    "create_live_execute_once_artifacts": sources,
+                    "source_artifact_paths": [str(source_path) for source_path in source_paths],
+                }
+            },
+            runs_dir=config.runs_dir,
+            db_path=config.database_path,
+        )
+        _print_result(result)
+        return 0
+
+    source_path = source_paths[0]
+    source = sources[0]
     result = run_create_live_execute_report_request(
         {
             "create_live_execute_report": {

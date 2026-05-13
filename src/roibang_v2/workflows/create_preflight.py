@@ -103,13 +103,12 @@ def _candidate_rows(*, db_path: str | Path, request: dict[str, Any]) -> dict[str
         rows = conn.execute(
             """
             SELECT material_id, material_type, review_status
-            FROM product_source_material_candidates
-            WHERE pool_key = ?
-              AND product = ?
+            FROM product_source_materials
+            WHERE product = ?
               AND source_advertiser_id = ?
+              AND is_active = 1
             """,
             (
-                str(request.get("pool_key") or ""),
                 str(request.get("product") or ""),
                 str(request.get("source_advertiser_id") or ""),
             ),
@@ -142,7 +141,6 @@ def _dedupe_scope(*, request: dict[str, Any], policy: dict[str, Any]) -> str:
 def _material_violations(*, request: dict[str, Any], projects: list[dict[str, Any]], policy: dict[str, Any]) -> list[str]:
     violations: list[str] = []
     candidates = _candidate_rows(db_path=policy["_db_path"], request=request)
-    pool_key = str(request.get("pool_key") or "")
     expected_material_type = _expected_material_type(request=request, policy=policy)
     allowed_statuses = _allowed_review_statuses(policy)
     dedupe_scope = _dedupe_scope(request=request, policy=policy)
@@ -162,7 +160,7 @@ def _material_violations(*, request: dict[str, Any], projects: list[dict[str, An
                     violations.append(f"material {material_id} type must be {expected_material_type}, got {material_type}")
                 candidate = candidates.get(material_id)
                 if not candidate:
-                    violations.append(f"material {material_id} is not in candidate pool {pool_key}")
+                    violations.append(f"material {material_id} is not in source material account")
                 elif allowed_statuses and str(candidate.get("review_status") or "") not in allowed_statuses:
                     violations.append(f"material {material_id} review_status is not allowed")
                 if dedupe_scope == "request":
@@ -297,7 +295,6 @@ def build_create_preflight(
             "validate_material_dedupe_scope",
         ],
         "violations": violations,
-        "approved_for_execute": False,
         "actions": [],
     }
 

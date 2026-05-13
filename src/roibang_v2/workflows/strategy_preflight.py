@@ -36,9 +36,6 @@ def _validate_plan_shape(plan: dict[str, Any]) -> list[str]:
     dry_run = plan.get("dry_run") if isinstance(plan.get("dry_run"), dict) else {}
     if _list_value(dry_run.get("payloads")):
         violations.append("dry_run payloads must be empty in phase1")
-    approval = plan.get("approval") if isinstance(plan.get("approval"), dict) else {}
-    if str(approval.get("status") or "") != "disabled_in_phase1":
-        violations.append("approval must be disabled in phase1")
     execute = plan.get("execute") if isinstance(plan.get("execute"), dict) else {}
     if str(execute.get("status") or "") != "disabled_in_phase1":
         violations.append("execute must be disabled in phase1")
@@ -93,7 +90,6 @@ def build_strategy_preflight(strategy_plan_artifact: dict[str, Any]) -> dict[str
             "validate_material_provision_recommendations",
         ],
         "violations": violations,
-        "approved_for_execute": False,
         "actions": [],
     }
 
