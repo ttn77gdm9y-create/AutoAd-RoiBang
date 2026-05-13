@@ -114,6 +114,12 @@ def test_run_create_live_execute_terminal_wraps_fixed_script_with_progress(tmp_p
     policy_path.write_text(json.dumps(policy, ensure_ascii=False), encoding="utf-8")
     plan_path.write_text(json.dumps(_create_plan(), ensure_ascii=False), encoding="utf-8")
     create_execute_path.write_text(json.dumps(_execute_artifact(), ensure_ascii=False), encoding="utf-8")
+    progress_dir = tmp_path / "progress"
+    progress_dir.mkdir()
+    (progress_dir / "events.jsonl").write_text(
+        json.dumps({"operation": "old_run", "status": "completed"}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
 
     script = _load_script("run_create_live_execute_terminal")
     code = script.run_from_args(
@@ -140,6 +146,8 @@ def test_run_create_live_execute_terminal_wraps_fixed_script_with_progress(tmp_p
     assert "final_result（最终结果）:" in output
     assert list((tmp_path / "progress").glob("terminal_*.stdout.log"))
     assert list((tmp_path / "progress").glob("terminal_*.stderr.log"))
+    events_path = tmp_path / "progress" / "events.jsonl"
+    assert not events_path.exists() or "old_run" not in events_path.read_text(encoding="utf-8")
 
 
 def _execute_artifact() -> dict:

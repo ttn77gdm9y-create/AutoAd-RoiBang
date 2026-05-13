@@ -42,6 +42,16 @@ def _write_terminal_progress(progress_dir: Path, payload: dict[str, Any]) -> Non
     )
 
 
+def _reset_terminal_progress(progress_dir: Path) -> None:
+    progress_dir.mkdir(parents=True, exist_ok=True)
+    for name in ("current.json", "events.jsonl"):
+        path = progress_dir / name
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+
+
 def _print_final_json(stdout_log: Path) -> None:
     text = stdout_log.read_text(encoding="utf-8").strip() if stdout_log.exists() else ""
     if not text:
@@ -82,6 +92,7 @@ def run_from_args(argv: list[str] | None = None) -> int:
     if args.check_config_only:
         command.append("--check-config-only")
 
+    _reset_terminal_progress(progress_dir)
     _write_terminal_progress(
         progress_dir,
         {
