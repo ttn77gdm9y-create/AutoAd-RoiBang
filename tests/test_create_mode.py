@@ -12,6 +12,7 @@ def _seed_source_materials(db_path: Path, count: int = 80) -> None:
     with sqlite3.connect(db_path) as conn:
         for index in range(1, count + 1):
             material_id = f"m-{index:03d}"
+            video_id = f"v28033gi0000d7m72bvog65s5f9la{index:03d}"
             conn.execute(
                 """
                 INSERT INTO materials (
@@ -19,7 +20,7 @@ def _seed_source_materials(db_path: Path, count: int = 80) -> None:
                   review_status, cost_lookback, score, source, synced_at
                 ) VALUES (?, ?, 'video', ?, 'APPROVED', ?, ?, 'test', 'now')
                 """,
-                (material_id, f"素材{index:03d}", f"v-{index:03d}", 1000 - index, 1000 - index),
+                (material_id, f"素材{index:03d}", video_id, 1000 - index, 1000 - index),
             )
             conn.execute(
                 """
@@ -29,7 +30,7 @@ def _seed_source_materials(db_path: Path, count: int = 80) -> None:
                   cost_lookback, score, source, synced_at
                 ) VALUES ('勇者突进', '1856647522964490', '1851650746645060', ?, ?, ?, 'video', 'APPROVED', 1, ?, ?, 'test', 'now')
                 """,
-                (material_id, f"v-{index:03d}", f"素材{index:03d}", 1000 - index, 1000 - index),
+                (material_id, video_id, f"素材{index:03d}", 1000 - index, 1000 - index),
             )
             conn.execute(
                 """
@@ -40,7 +41,7 @@ def _seed_source_materials(db_path: Path, count: int = 80) -> None:
                 ) VALUES ('勇者突进', '1856647522964490', '1851650746645060', 'last_60d', 60,
                   '2026-03-15', '2026-05-13', ?, 'video', ?, ?, 'APPROVED', ?, 'test', 'now')
                 """,
-                (material_id, f"v-{index:03d}", f"素材{index:03d}", 1000 - index),
+                (material_id, video_id, f"素材{index:03d}", 1000 - index),
             )
 
 
@@ -290,6 +291,38 @@ def test_create_mode_allows_reuse_without_duplicate_material_inside_one_unit(tmp
     assert material_ids == ["m-001"]
     assert mode_config["material_requirements"]["on_insufficient"] == "allow_reuse"
     assert template_catalog["templates"][mode_config["template_key"]]
+
+
+def test_create_mode_excludes_fixture_source_and_fake_video_ids(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_source_materials(db_path, count=12)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE product_source_materials SET source = 'data/fixtures/product-source-materials.sample.json' WHERE material_id = 'm-001'"
+        )
+        conn.execute("UPDATE product_source_materials SET video_id = 'v001' WHERE material_id = 'm-002'")
+
+    result = run_create_mode_request(
+        {
+            "create_mode": {
+                "mode_key": "wx_pay_general_scale",
+                "target_accounts": ["acc-1"],
+                "target_date": "2026-05-13",
+                "owner": "郭靖",
+            }
+        },
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        policy={"create_strategy_plan": _policy()},
+        template_catalog_path=Path("configs/create-templates/wx-mini-game.json"),
+    )
+
+    assert result["ok"] is True
+    unit = result["create_strategy_plan"]["strategy"]["projects"][0]["units"][0]
+    material_ids = {material["material_id"] for material in unit["materials"]}
+    assert "m-001" not in material_ids
+    assert "m-002" not in material_ids
+    assert all(material["source_video_id"] != "v001" for material in unit["materials"])
 
 
 def test_create_mode_treats_blank_source_material_review_status_as_usable(tmp_path: Path):

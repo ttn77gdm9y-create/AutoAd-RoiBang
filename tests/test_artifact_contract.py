@@ -157,7 +157,6 @@ def test_validate_artifact_contract_can_find_latest_artifact(tmp_path):
 def test_validate_artifact_contract_accepts_main_create_outputs(tmp_path):
     registry = load_job_registry(Path("configs/scheduler/roibang-v2.jobs.example.json"))
     plan_validate = tmp_path / "create_plan_validate.json"
-    first_live = tmp_path / "create_first_live_local_chain.json"
     execute_once = tmp_path / "create_live_execute_once.json"
     execute_report = tmp_path / "create_live_execute_report.json"
 
@@ -172,27 +171,6 @@ def test_validate_artifact_contract_accepts_main_create_outputs(tmp_path):
             "status": "passed",
             "summary": {},
             "source_contract": {},
-            "violations": [],
-            "actions": [],
-        },
-    )
-    _write_json(
-        first_live,
-        {
-            "ok": True,
-            "workflow": "create_first_live_local_chain",
-            "phase": "phase2_preparation",
-            "execution_enabled": False,
-            "external_api_calls": 0,
-            "status": "ready_for_execute_script",
-            "summary": {"ready_for_execute_script": True, "ready_for_live_execute": False},
-            "first_live_scope": {},
-            "scope_guard": {},
-            "chain_steps": [],
-            "artifacts": {},
-            "preparation_check": {},
-            "dry_chain": {},
-            "human_next_steps": [],
             "violations": [],
             "actions": [],
         },
@@ -235,7 +213,6 @@ def test_validate_artifact_contract_accepts_main_create_outputs(tmp_path):
     )
 
     assert validate_artifact_contract(registry, job_id="roibang-create-plan-validate", artifact_path=plan_validate)["ok"] is True
-    assert validate_artifact_contract(registry, job_id="roibang-create-first-live-local-chain", artifact_path=first_live)["ok"] is True
     assert validate_artifact_contract(registry, job_id="roibang-create-live-execute-once", artifact_path=execute_once)["ok"] is True
     assert validate_artifact_contract(registry, job_id="roibang-create-live-execute-report", artifact_path=execute_report)["ok"] is True
 

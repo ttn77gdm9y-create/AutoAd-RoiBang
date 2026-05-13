@@ -12,9 +12,9 @@ def test_scheduler_registry_has_no_ai_execution_prompts():
 
     assert result == {
         "ok": True,
-        "jobs": 18,
+        "jobs": 17,
         "enabled_jobs": 6,
-        "disabled_jobs": 12,
+        "disabled_jobs": 11,
         "violations": [],
     }
 
@@ -24,10 +24,6 @@ def test_scheduler_registry_includes_disabled_fixed_create_chain_jobs():
     jobs = {job["id"]: job for job in registry["jobs"]}
 
     expected = {
-        "roibang-create-first-live-local-chain": (
-            "create_first_live_local_chain",
-            "scripts/run_create_first_live_local_chain.py",
-        ),
         "roibang-create-plan-validate": (
             "create_plan_validate",
             "scripts/run_create_plan_validate.py",
@@ -64,20 +60,9 @@ def test_scheduler_registry_includes_disabled_fixed_create_chain_jobs():
         "roibang-create-chain-final-report",
         "roibang-create-phase1-acceptance-checklist",
         "roibang-create-phase1-baseline-freeze",
+        "roibang-create-first-live-local-chain",
     }
     assert removed_non_main_jobs.isdisjoint(jobs)
-    assert jobs["roibang-create-first-live-local-chain"]["script"]["command"] == [
-        "python3",
-        "scripts/run_create_first_live_local_chain.py",
-        "--config",
-        "configs/runtime.example.json",
-        "--plan",
-        "configs/create-plans/first-live.local.json",
-        "--policy",
-        "policies/create-policy.example.json",
-        "--create-execute-handoff",
-        "data/runs/create_execute/first-live.local.json",
-    ]
     assert jobs["roibang-create-live-execute-once"]["script"]["command"] == [
         "python3",
         "scripts/run_create_live_execute_once.py",
@@ -137,21 +122,10 @@ def test_scheduler_registry_phase1_contracts_pin_safe_execution_values():
     for job_id in [
         "roibang-strategy-preflight",
         "roibang-strategy-dry-run",
-        "roibang-create-first-live-local-chain",
         "roibang-create-live-execute-report",
         "roibang-create-plan-validate",
     ]:
         assert "actions" in jobs[job_id]["result_contract"]["must_be_empty"]
-
-    first_live_contract = jobs["roibang-create-first-live-local-chain"]["result_contract"]
-    assert "first_live_scope" in first_live_contract["must_include"]
-    assert "scope_guard" in first_live_contract["must_include"]
-    assert "preparation_check" in first_live_contract["must_include"]
-    assert "dry_chain" in first_live_contract["must_include"]
-    assert "approved_for_execute" not in first_live_contract["must_include"]
-    assert "approved_for_execute" not in first_live_contract["must_equal"]
-    assert jobs["roibang-create-first-live-local-chain"]["policy"]["plan"] == "configs/create-plans/first-live.local.json"
-    assert jobs["roibang-create-first-live-local-chain"]["policy"]["create_execute_handoff"] == "data/runs/create_execute/first-live.local.json"
 
     live_execute_contract = jobs["roibang-create-live-execute-once"]["result_contract"]
     assert "blocking_reasons" in live_execute_contract["must_include"]

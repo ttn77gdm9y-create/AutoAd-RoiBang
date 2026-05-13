@@ -467,28 +467,17 @@ PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 scripts/run_create_first_live_p
 
 在默认示例配置下，它应该是 `ready_for_human_live_enablement`：意思是本地边界已可交给人核对，但真实执行开关仍未打开，固定脚本不会调用真实接口。
 
-## first live local chain
+## 旧 first live local chain
 
-`create_first_live_local_chain` 是首单真实创建前的本地链路入口。它读取现有 `yzt_create_preview`（勇者突进创建预览配置），但不会修改本地配置文件；运行时会派生一个首单范围：
+`create_first_live_local_chain` 这条旧入口已经从主流程禁用。当前创建主路径改为：
 
-- 只保留 1 个目标账户。
-- 项目数不超过 `first_live_run.max_project_count`（首单最大项目数）。
-- 单元数不超过 `first_live_run.max_unit_count`（首单最大单元数）。
-- 素材数不超过 `first_live_run.max_material_count`（首单最大素材数）。
-
-该入口会继续串起 preparation check（准备检查）和 dry chain（完整本地预演链路），产物状态为 `ready_for_approval_chain` 时，只表示可以进入 approve（批准记录）复核链路，不表示可以真实执行。
-
-固定脚本：
-
-```bash
-PYTHONPATH=src python3 scripts/run_create_first_live_local_chain.py --config configs/runtime.example.json --preview-config configs/create/yzt-wx-mini-game.preview.local.json --policy policies/create-policy.example.json
+```text
+create_mode（创建模式）/ strategy（策略配置）
+-> create_plan（创建计划）
+-> validate（校验）
+-> dry-run（预演）
+-> create_execute（创建执行交接产物）
+-> run_create_live_execute_terminal（带进度窗口的真实执行）
 ```
-
-安全边界保持不变：
-
-- `execution_enabled=false`，执行开关关闭。
-- `external_api_calls=0`，外部接口调用数为 0。
-- `approved_for_execute=false`，不批准执行。
-- `actions=[]`，不生成真实动作。
 
 首单固定脚本入口现在会直接阻断 `.example.json` 示例配置和 `target-advertiser-id` / `source-advertiser-id` 这类占位 ID。首单链路必须读取本地真实配置，例如 `configs/create/yzt-wx-mini-game.preview.local.json`；该文件属于本地私有配置，不提交到 Git。

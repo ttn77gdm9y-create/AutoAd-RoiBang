@@ -3,6 +3,8 @@ import json
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from roibang_v2.db.bootstrap import bootstrap_database
 from roibang_v2.workflows.create_plan_from_strategy import build_create_plans_from_strategy
 
@@ -304,7 +306,7 @@ def test_create_plan_from_strategy_cli_writes_local_plan_files(tmp_path: Path, c
     assert (output_dir / "strategy-20260511-001-wx-pay-general.local.json").exists()
 
 
-def test_create_plan_from_strategy_cli_can_run_local_chain_for_each_plan(tmp_path: Path, capsys):
+def test_create_plan_from_strategy_cli_rejects_removed_local_chain_flag(tmp_path: Path):
     strategy_path = tmp_path / "strategy.local.json"
     template_path = tmp_path / "templates.json"
     output_dir = tmp_path / "create-plans"
@@ -332,40 +334,21 @@ def test_create_plan_from_strategy_cli_can_run_local_chain_for_each_plan(tmp_pat
     policy_path.write_text(json.dumps(_preview_policy(), ensure_ascii=False), encoding="utf-8")
     module = _load_script("run_create_plan_from_strategy")
 
-    exit_code = module.run_from_args(
-        [
-            "--config",
-            str(runtime_path),
-            "--strategy",
-            str(strategy_path),
-            "--policy",
-            str(policy_path),
-            "--template-catalog",
-            str(template_path),
-            "--output-dir",
-            str(output_dir),
-            "--run-local-chain",
-        ]
-    )
+    with pytest.raises(SystemExit) as exc:
+        module.run_from_args(
+            [
+                "--config",
+                str(runtime_path),
+                "--strategy",
+                str(strategy_path),
+                "--policy",
+                str(policy_path),
+                "--template-catalog",
+                str(template_path),
+                "--output-dir",
+                str(output_dir),
+                "--run-local-chain",
+            ]
+        )
 
-    output = json.loads(capsys.readouterr().out)
-    assert exit_code == 0
-    assert output["ok"] is True
-    assert output["summary"]["create_plan_count"] == 1
-    assert output["summary"]["ready_for_execute_script_count"] == 1
-    assert output["local_chain_results"][0]["status"] == "ready_for_execute_script"
-    assert output["live_execute_commands"] == [
-        {
-            "plan_id": "strategy-20260511-001-preview",
-            "plan_path": str(output_dir / "strategy-20260511-001-preview.local.json"),
-            "create_execute_artifact": output["local_chain_results"][0]["artifacts"]["create_execute"],
-            "command": (
-                "PYTHONPATH=src python3 scripts/run_create_live_execute_once.py "
-                "--config configs/runtime.create-live.local.json "
-                "--policy policies/create-live-execute.local.json "
-                f"--plan {output_dir / 'strategy-20260511-001-preview.local.json'} "
-                f"--create-execute-artifact {output['local_chain_results'][0]['artifacts']['create_execute']}"
-            ),
-        }
-    ]
-    assert output["external_api_calls"] == 0
+    assert exc.value.code == 2

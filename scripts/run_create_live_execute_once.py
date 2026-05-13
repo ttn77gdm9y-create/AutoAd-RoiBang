@@ -10,15 +10,35 @@ from typing import Any
 from roibang_v2.config import load_json, load_runtime_config
 from roibang_v2.integrations.oceanengine.tokens import token_health
 from roibang_v2.runs import write_run_artifact
+from roibang_v2.workflows.create_dry_run import build_create_dry_run
+from roibang_v2.workflows.create_execute import build_create_execute_from_dry_run
 from roibang_v2.workflows.create_http_transport import CREATE_ENDPOINT_ALLOWLIST, build_create_http_transport
+from roibang_v2.workflows.create_lineage import create_ref
 from roibang_v2.workflows.create_live_execute_once import run_create_live_execute_once_request
 from roibang_v2.workflows.create_plan_contract import validate_create_plan
+
+
+DEFAULT_DIRECT_CREATE_DRY_RUN_POLICY = {
+    "max_projects_per_dry_run": 500,
+    "max_units_per_dry_run": 5000,
+    "provider_adapter": {
+        "provider": "oceanengine",
+        "field_mapping_version": "phase2.oceanengine.create_payload.prep.v1",
+        "mapping_verified": True,
+    },
+    "provider_field_map_path": "configs/provider-field-maps/oceanengine.create.phase2-prep.example.json",
+}
 
 
 def _load_artifact(path: Path) -> dict:
     artifact = load_json(path)
     artifact["artifact_path"] = str(path)
     return artifact
+
+
+def _create_plan_artifact(artifact: dict) -> dict:
+    nested = artifact.get("create_strategy_plan") if isinstance(artifact.get("create_strategy_plan"), dict) else None
+    return nested if nested is not None else artifact
 
 
 def _runner_policy(policy: dict) -> dict:
@@ -271,14 +291,64 @@ def _create_execute_summary(create_execute: dict) -> dict:
     return dict(value) if isinstance(value, dict) else {}
 
 
-def _plan_blocking_reasons(*, create_plan: dict, create_execute: dict, policy: dict, db_path: Path) -> tuple[list[str], dict]:
+def _create_execute_payload_drafts(create_execute: dict) -> list[dict]:
+    drafts = create_execute.get("provider_payload_drafts")
+    if isinstance(drafts, list) and drafts:
+        return [row for row in drafts if isinstance(row, dict)]
+    drafts = create_execute.get("resolved_provider_payload_drafts")
+    return [row for row in drafts if isinstance(row, dict)] if isinstance(drafts, list) else []
+
+
+def _plan_blocking_reasons(*, create_plan: dict, create_execute: dict | None, policy: dict, db_path: Path) -> tuple[list[str], dict]:
     validation = validate_create_plan(create_plan, policy=policy, db_path=db_path)
     reasons = [str(item) for item in validation.get("violations") or []]
     plan_id = str(create_plan.get("plan_id") or "")
-    execute_plan_id = str(_create_execute_summary(create_execute).get("plan_id") or "")
+    execute_plan_id = str(_create_execute_summary(create_execute or {}).get("plan_id") or "")
     if plan_id and execute_plan_id and plan_id != execute_plan_id:
         reasons.append("create_plan.plan_id must match create_execute.summary.plan_id")
     return reasons, validation
+
+
+def _synthetic_preflight_artifact(create_plan: dict) -> dict:
+    plan_ref = create_ref(workflow="create_strategy_plan", artifact=create_plan)
+    return {
+        "ok": True,
+        "workflow": "create_preflight",
+        "phase": "phase1",
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "status": "passed",
+        "summary": {
+            "plan_id": plan_ref["plan_id"],
+            "request_id": plan_ref["request_id"],
+            "target_date": plan_ref["target_date"],
+        },
+        "lineage": {"create_strategy_plan": plan_ref},
+        "violations": [],
+        "actions": [],
+    }
+
+
+def _direct_dry_run_policy(policy: dict) -> dict:
+    cfg = policy.get("create_dry_run") if isinstance(policy.get("create_dry_run"), dict) else {}
+    return {**DEFAULT_DIRECT_CREATE_DRY_RUN_POLICY, **cfg}
+
+
+def _build_internal_create_execute(*, create_plan: dict, policy: dict, db_path: Path) -> dict:
+    dry_run = build_create_dry_run(
+        create_strategy_plan_artifact=create_plan,
+        create_preflight_artifact=_synthetic_preflight_artifact(create_plan),
+        policy=_direct_dry_run_policy(policy),
+    )
+    create_execute = build_create_execute_from_dry_run(
+        create_dry_run_artifact=dry_run,
+        policy={},
+        db_path=db_path,
+    )
+    if not create_execute.get("resolved_provider_payload_drafts") and dry_run.get("provider_payload_drafts"):
+        create_execute["provider_payload_drafts"] = list(dry_run["provider_payload_drafts"])
+    create_execute["generated_from_create_plan"] = True
+    return create_execute
 
 
 def _print_result(result: dict) -> None:
@@ -311,11 +381,11 @@ def _persist_result_update(result: dict) -> None:
 
 
 def run_from_args(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Run one-shot live create from create_plan JSON and create_execute artifact.")
+    parser = argparse.ArgumentParser(description="Run one-shot live create from create_plan JSON.")
     parser.add_argument("--config", default="configs/runtime.example.json")
     parser.add_argument("--policy", default="policies/create-policy.example.json")
     parser.add_argument("--plan", required=True)
-    parser.add_argument("--create-execute-artifact", required=True)
+    parser.add_argument("--create-execute-artifact", default="")
     parser.add_argument("--check-config-only", action="store_true")
     args = parser.parse_args(argv)
 
@@ -327,7 +397,7 @@ def run_from_args(argv: list[str] | None = None) -> int:
         runtime_external_api=config.external_api_enabled,
     )
     try:
-        create_plan = load_json(args.plan)
+        create_plan = _create_plan_artifact(load_json(args.plan))
     except FileNotFoundError as exc:
         result = _blocked_plan_result(
             runs_dir=config.runs_dir,
@@ -336,16 +406,18 @@ def run_from_args(argv: list[str] | None = None) -> int:
         )
         _print_result(result)
         return 0
-    try:
-        create_execute = _load_artifact(Path(args.create_execute_artifact))
-    except FileNotFoundError as exc:
-        result = _blocked_missing_artifact(
-            runs_dir=config.runs_dir,
-            message=str(exc),
-            local_config_readiness=local_config_readiness,
-        )
-        _print_result(result)
-        return 0
+    create_execute = None
+    if str(args.create_execute_artifact or "").strip():
+        try:
+            create_execute = _load_artifact(Path(args.create_execute_artifact))
+        except FileNotFoundError as exc:
+            result = _blocked_missing_artifact(
+                runs_dir=config.runs_dir,
+                message=str(exc),
+                local_config_readiness=local_config_readiness,
+            )
+            _print_result(result)
+            return 0
     reasons, validation = _plan_blocking_reasons(
         create_plan=create_plan,
         create_execute=create_execute,
@@ -373,6 +445,21 @@ def run_from_args(argv: list[str] | None = None) -> int:
         result = _blocked_plan_result(
             runs_dir=config.runs_dir,
             blocking_reasons=[str(local_config_readiness.get("plain_language") or "本地真实执行配置未就绪。")],
+            create_plan_validation=validation,
+            local_config_readiness=local_config_readiness,
+        )
+        _print_result(result)
+        return 0
+    if create_execute is None:
+        create_execute = _build_internal_create_execute(
+            create_plan=create_plan,
+            policy=policy,
+            db_path=config.database_path,
+        )
+    if not _create_execute_payload_drafts(create_execute):
+        result = _blocked_plan_result(
+            runs_dir=config.runs_dir,
+            blocking_reasons=["create_plan did not produce provider payload drafts; use a create_mode artifact or create_strategy_plan artifact"],
             create_plan_validation=validation,
             local_config_readiness=local_config_readiness,
         )

@@ -16,12 +16,14 @@ PROJECT_STATUS_UPDATE_ENDPOINT = "/open_api/v3.0/project/status/update/"
 PROJECT_BUDGET_UPDATE_ENDPOINT = "/open_api/v3.0/project/budget/update/"
 PROJECT_CPA_BID_UPDATE_ENDPOINT = "/open_api/v3.0/project/cpa_bid/update/"
 PROJECT_ROI_GOAL_UPDATE_ENDPOINT = "/open_api/v3.0/project/roigoal/update/"
+PROJECT_DELETE_ENDPOINT = "/open_api/v3.0/project/delete/"
 FULL_SCHEDULE_TIME = "1" * (48 * 7)
 MANAGEMENT_ACTION_OPERATIONS = {
     "status_update": ("update_project_status", PROJECT_STATUS_UPDATE_ENDPOINT),
     "budget_update": ("update_project_budget", PROJECT_BUDGET_UPDATE_ENDPOINT),
     "bid_update": ("update_project_cpa_bid", PROJECT_CPA_BID_UPDATE_ENDPOINT),
     "roi_coeff_update": ("update_project_roi_goal", PROJECT_ROI_GOAL_UPDATE_ENDPOINT),
+    "delete_project": ("delete_project", PROJECT_DELETE_ENDPOINT),
 }
 
 
@@ -167,6 +169,16 @@ def _update_request(advertiser_id: str, rows: list[dict[str, Any]]) -> dict[str,
 
 def _management_update_request(action_type: str, advertiser_id: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
     operation, endpoint = MANAGEMENT_ACTION_OPERATIONS[action_type]
+    if action_type == "delete_project":
+        return {
+            "operation": operation,
+            "method": "POST",
+            "endpoint": endpoint,
+            "payload": {
+                "advertiser_id": _wire_id(advertiser_id),
+                "project_ids": [_wire_id(row.get("project_id")) for row in rows if _text(row.get("project_id"))],
+            },
+        }
     return {
         "operation": operation,
         "method": "POST",
@@ -399,6 +411,8 @@ def _management_payload_row(action: dict[str, Any]) -> dict[str, Any]:
         return {"project_id": project_id, "cpa_bid": action.get("cpa_bid")}
     if action_type == "roi_coeff_update":
         return {"project_id": project_id, "roi_goal": action.get("roi_goal")}
+    if action_type == "delete_project":
+        return {"project_id": project_id}
     raise ValueError(f"unsupported project management action_type: {action_type}")
 
 
@@ -451,26 +465,12 @@ def run_project_update_execute_request(
         if not project_update_path:
             raise ValueError("project update execute requires project_update or project_update_path")
         project_update = json.loads(Path(project_update_path).read_text(encoding="utf-8"))
-    preflight = cfg.get("preflight_artifact")
-    preflight_artifact_path = _text(cfg.get("preflight_artifact_path"))
-    if not isinstance(preflight, dict):
-        if not preflight_artifact_path:
-            raise ValueError("project update execute requires preflight_artifact or preflight_artifact_path")
-        preflight = json.loads(Path(preflight_artifact_path).read_text(encoding="utf-8"))
-    if not _preflight_passed(preflight, project_update):
-        return _blocked_payload(
-            project_update,
-            runs_dir=runs_dir,
-            project_update_path=project_update_path,
-            preflight_artifact_path=preflight_artifact_path,
-            reasons=["project update preflight must pass before execute"],
-        )
     if not bool(cfg.get("execute_enabled", False)) or not bool(cfg.get("approved", False)):
         return _blocked_payload(
             project_update,
             runs_dir=runs_dir,
             project_update_path=project_update_path,
-            preflight_artifact_path=preflight_artifact_path,
+            preflight_artifact_path=_text(cfg.get("preflight_artifact_path")),
             reasons=["project update execute requires execute_enabled=true and approved=true"],
         )
     if transport is None:
@@ -478,8 +478,20 @@ def run_project_update_execute_request(
             project_update,
             runs_dir=runs_dir,
             project_update_path=project_update_path,
-            preflight_artifact_path=preflight_artifact_path,
+            preflight_artifact_path=_text(cfg.get("preflight_artifact_path")),
             reasons=["project update execute requires explicit transport"],
+        )
+    preflight = cfg.get("preflight_artifact")
+    preflight_artifact_path = _text(cfg.get("preflight_artifact_path"))
+    if not isinstance(preflight, dict) and preflight_artifact_path:
+        preflight = json.loads(Path(preflight_artifact_path).read_text(encoding="utf-8"))
+    if isinstance(preflight, dict) and not _preflight_passed(preflight, project_update):
+        return _blocked_payload(
+            project_update,
+            runs_dir=runs_dir,
+            project_update_path=project_update_path,
+            preflight_artifact_path=preflight_artifact_path,
+            reasons=["project update preflight artifact is invalid"],
         )
 
     schedule_scene = _text(cfg.get("schedule_scene") or "REALTIME")

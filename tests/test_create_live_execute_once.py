@@ -298,6 +298,78 @@ def _create_plan(*, plan_id: str = "plan-1") -> dict:
     }
 
 
+def _create_strategy_plan(*, plan_id: str = "plan-1") -> dict:
+    raw = _create_plan(plan_id=plan_id)
+    return {
+        "ok": True,
+        "workflow": "create_strategy_plan",
+        "phase": "phase1",
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "status": "planned",
+        "plan_id": raw["plan_id"],
+        "request_id": "req-1",
+        "target_date": "2026-05-13",
+        "request": {
+            **raw,
+            "request_id": "req-1",
+            "target_date": "2026-05-13",
+            "template_parameters": {
+                "product_name": "勇者突进",
+                "fixed_video_cover_id": "cover-1",
+                "title_pool": ["勇者突进测试"],
+                "cta_pool": ["立即下载"],
+            },
+        },
+        "strategy": {
+            "source_advertiser_id": raw["source_advertiser_id"],
+            "projects": [
+                {
+                    "project_key": "target-1-p001",
+                    "advertiser_id": "target-1",
+                    "project_index": 1,
+                    "project_name": "首单项目",
+                    "project_type": "微小每付通投",
+                    "daily_budget": 1000,
+                    "operation": "ENABLE",
+                    "field_defaults": {
+                        "landing_type": "MICRO_GAME",
+                        "pricing": "PRICING_OCPM",
+                        "inventory_type": "INVENTORY_FEED",
+                    },
+                    "units": [
+                        {
+                            "unit_key": "target-1-p001-u01",
+                            "unit_index": 1,
+                            "promotion_name": "首单单元",
+                            "operation": "ENABLE",
+                            "materials": [
+                                {
+                                    "material_id": "material-1",
+                                    "material_type": "video",
+                                    "source_video_id": "video-1",
+                                    "name": "Material 1",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        },
+        "summary": {
+            "plan_id": raw["plan_id"],
+            "request_id": "req-1",
+            "target_date": "2026-05-13",
+            "planned_project_count": 1,
+            "planned_unit_count": 1,
+            "planned_material_count": 1,
+            "violation_count": 0,
+        },
+        "violations": [],
+        "actions": [],
+    }
+
+
 def _write_token_store(path: Path, *, access: str = "access-secret", refresh: str = "refresh-secret", expires_in: int = 3600) -> None:
     now = datetime(2026, 5, 7, 2, 0, tzinfo=timezone.utc)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -743,6 +815,202 @@ def test_create_live_execute_once_returns_failure_artifact_for_transport_error(t
         "code": -1,
     }
     assert Path(result["artifact_path"]).exists()
+
+
+def test_create_live_execute_once_skips_account_after_material_bind_failure_and_continues(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+    artifact = _execute_artifact()
+    artifact["summary"] = {
+        **artifact["summary"],
+        "project_count": 2,
+        "unit_count": 2,
+        "material_count": 2,
+    }
+    artifact["resolved_provider_payload_drafts"] = [
+        {
+            "operation": "create_project",
+            "payload": {"advertiser_id": "target-1", "name": "项目1"},
+            "executable": False,
+            "live_api_payload": False,
+        },
+        {
+            "operation": "create_project",
+            "payload": {"advertiser_id": "target-2", "name": "项目2"},
+            "executable": False,
+            "live_api_payload": False,
+        },
+        {
+            "operation": "bind_material",
+            "payload": {
+                "source_advertiser_id": "source-1",
+                "target_advertiser_ids": ["target-1"],
+                "source_video_ids": ["video-1"],
+            },
+            "executable": False,
+            "live_api_payload": False,
+        },
+        {
+            "operation": "bind_material",
+            "payload": {
+                "source_advertiser_id": "source-1",
+                "target_advertiser_ids": ["target-2"],
+                "source_video_ids": ["video-2"],
+            },
+            "executable": False,
+            "live_api_payload": False,
+        },
+        {
+            "operation": "lookup_target_material",
+            "payload": {
+                "target_advertiser_id": "target-1",
+                "source_video_id": "video-1",
+                "material_id": "material-1",
+            },
+            "executable": False,
+            "live_api_payload": False,
+        },
+        {
+            "operation": "lookup_target_material",
+            "payload": {
+                "target_advertiser_id": "target-2",
+                "source_video_id": "video-2",
+                "material_id": "material-2",
+            },
+            "executable": False,
+            "live_api_payload": False,
+        },
+        {
+            "operation": "create_unit",
+            "payload": {
+                "advertiser_id": "target-1",
+                "project_id": "<lookup:target-1-p001>",
+                "promotion_materials": {
+                    "video_material_list": [
+                        {
+                            "video_id": "<lookup:target_video:target-1:video-1>",
+                            "video_cover_id": "<lookup:target_video_cover:target-1:video-1>",
+                        }
+                    ]
+                },
+            },
+            "executable": False,
+            "live_api_payload": False,
+        },
+        {
+            "operation": "create_unit",
+            "payload": {
+                "advertiser_id": "target-2",
+                "project_id": "<lookup:target-2-p001>",
+                "promotion_materials": {
+                    "video_material_list": [
+                        {
+                            "video_id": "<lookup:target_video:target-2:video-2>",
+                            "video_cover_id": "<lookup:target_video_cover:target-2:video-2>",
+                        }
+                    ]
+                },
+            },
+            "executable": False,
+            "live_api_payload": False,
+        },
+    ]
+    artifact["provider_id_ledger_requirements"] = {
+        "produced_by_create_project": [
+            {"local_key": "target-1-p001", "advertiser_id": "target-1", "parent_local_key": ""},
+            {"local_key": "target-2-p001", "advertiser_id": "target-2", "parent_local_key": ""},
+        ],
+        "produced_by_create_unit": [
+            {"local_key": "target-1-p001-u01", "advertiser_id": "target-1", "parent_local_key": "target-1-p001"},
+            {"local_key": "target-2-p001-u01", "advertiser_id": "target-2", "parent_local_key": "target-2-p001"},
+        ],
+        "required_before_create_unit": [
+            {"entity_type": "project", "local_key": "target-1-p001"},
+            {"entity_type": "project", "local_key": "target-2-p001"},
+            {"entity_type": "target_video", "local_key": "target_video:target-1:video-1"},
+            {"entity_type": "target_video_cover", "local_key": "target_video_cover:target-1:video-1"},
+            {"entity_type": "target_video", "local_key": "target_video:target-2:video-2"},
+            {"entity_type": "target_video_cover", "local_key": "target_video_cover:target-2:video-2"},
+        ],
+        "required_before_bind_material": [
+            {"local_key": "target-1-p001-u01"},
+            {"local_key": "target-2-p001-u01"},
+        ],
+    }
+    calls: list[dict] = []
+    bound_targets: set[str] = set()
+
+    def fake_transport(call: dict) -> dict:
+        calls.append(call)
+        operation = call["operation"]
+        payload = call["payload"]
+        if operation == "create_project":
+            return {"code": 0, "data": {"project_id": f"project-{payload['advertiser_id']}"}}
+        if operation == "bind_material":
+            target_id = payload["target_advertiser_ids"][0]
+            if target_id == "target-2":
+                return {"code": 40000, "message": "部分视频无权限或不存在"}
+            bound_targets.add(target_id)
+            return {"code": 0, "data": {"task_id": f"bind-{target_id}"}}
+        if operation == "lookup_target_material":
+            target_id = str(payload.get("target_advertiser_id") or payload.get("advertiser_id") or "")
+            if target_id not in bound_targets:
+                return {"code": 0, "data": {"list": []}}
+            return {
+                "code": 0,
+                "data": {
+                    "list": [
+                        {
+                            "material_id": "material-1",
+                            "video_id": "target-video-1",
+                            "video_cover_id": "target-cover-1",
+                        }
+                    ]
+                },
+            }
+        if operation == "create_unit":
+            assert payload["advertiser_id"] == "target-1"
+            return {"code": 0, "data": {"promotion_id": "promotion-target-1"}}
+        raise AssertionError(operation)
+
+    result = run_create_live_execute_once_request(
+        {
+            "create_live_execute_once": {
+                "create_execute_artifact": artifact,
+                "policy": _policy(),
+                "runtime": {"execution_enabled": True, "external_api_enabled": True},
+            }
+        },
+        runs_dir=tmp_path / "runs",
+        db_path=db_path,
+        transport=fake_transport,
+    )
+
+    assert result["ok"] is True
+    assert result["status"] == "create_http_completed"
+    assert result["skipped_accounts"] == [
+        {
+            "operation": "bind_material",
+            "index": 1,
+            "advertiser_id": "target-2",
+            "status": "skipped_account_after_live_step_failure",
+            "code": 40000,
+            "message": "部分视频无权限或不存在",
+        },
+        {
+            "operation": "lookup_target_material",
+            "index": 1,
+            "advertiser_id": "target-2",
+            "status": "skipped_account_after_create_project_failure",
+        },
+        {
+            "operation": "create_unit",
+            "index": 1,
+            "advertiser_id": "target-2",
+            "status": "skipped_account_after_create_project_failure",
+        },
+    ]
+    assert [call["operation"] for call in calls].count("create_unit") == 1
 
 
 def test_create_live_execute_once_retries_create_project_after_lookup_confirms_missing(tmp_path: Path):
@@ -1481,6 +1749,58 @@ def test_create_live_execute_once_fixed_script_check_config_only_never_executes(
     assert "secret-token" not in captured
 
 
+def test_create_live_execute_once_fixed_script_check_config_only_does_not_require_create_execute_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys,
+):
+    monkeypatch.setenv("ROIBANG_TEST_ACCESS_TOKEN", "secret-token")
+    runtime_path = _runtime_config(tmp_path, execution_enabled=True, external_api_enabled=True)
+    _seed_plan_sources(tmp_path / "roibang.sqlite3")
+    policy_path = tmp_path / "policy.json"
+    plan_path = tmp_path / "create-plan.json"
+    policy_path.write_text(json.dumps(_policy(), ensure_ascii=False), encoding="utf-8")
+    plan_path.write_text(json.dumps(_create_plan(), ensure_ascii=False), encoding="utf-8")
+    module = _load_script("run_create_live_execute_once")
+
+    exit_code = module.run_from_args(
+        [
+            "--config",
+            str(runtime_path),
+            "--policy",
+            str(policy_path),
+            "--plan",
+            str(plan_path),
+            "--check-config-only",
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert output["ok"] is True
+    assert output["status"] == "config_ready"
+    assert output["external_api_calls"] == 0
+
+
+def test_create_live_execute_once_fixed_script_can_build_internal_create_execute_from_plan(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_plan_sources(db_path)
+    plan = _create_strategy_plan()
+    module = _load_script("run_create_live_execute_once")
+
+    create_execute = module._build_internal_create_execute(
+        create_plan=plan,
+        policy=_policy(),
+        db_path=db_path,
+    )
+
+    assert create_execute["ok"] is True
+    assert create_execute["summary"]["plan_id"] == "plan-1"
+    assert create_execute["summary"]["request_id"] == "req-1"
+    assert create_execute["generated_from_create_plan"] is True
+    assert create_execute["resolved_provider_payload_drafts"]
+
+
 def test_create_live_execute_once_fixed_script_blocks_disallowed_target_account(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1668,7 +1988,7 @@ def test_create_live_execute_once_fixed_script_blocks_plan_mismatch(tmp_path: Pa
     assert artifact["actions"] == []
 
 
-def test_create_live_execute_once_fixed_script_requires_explicit_plan_and_create_execute_artifact(tmp_path: Path):
+def test_create_live_execute_once_fixed_script_requires_explicit_plan(tmp_path: Path):
     runtime_path = _runtime_config(tmp_path)
     policy_path = tmp_path / "policy.json"
     policy_path.write_text(json.dumps(_policy(), ensure_ascii=False), encoding="utf-8")

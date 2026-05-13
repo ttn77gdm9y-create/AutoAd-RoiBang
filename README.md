@@ -5,7 +5,7 @@ RoiBang-v2 是一个“固定脚本 + JSON 配置 + JSON 结果”的广告投�
 核心方向：
 
 ```text
-数据同步 -> 配置/模式生成计划 -> preflight（预演前检查） -> dry-run（预演） -> 人工确认 -> execute（执行） -> report（汇报）
+数据同步 -> 配置/模式生成计划 -> 人工确认 -> execute（执行） -> report（汇报）
 ```
 
 AI（人工智能）只负责写代码、修脚本、看数据生成配置、复盘结果。真实业务动作只能由固定脚本读取 JSON 配置后执行，不能由 AI 临场猜账户、猜素材、猜预算、猜项目或改参数。
@@ -16,7 +16,7 @@ AI（人工智能）只负责写代码、修脚本、看数据生成配置、复
 
 - 创建链路：`create_project（创建项目） -> bind_material（素材推送） -> lookup_target_material（目标账户素材回查） -> create_unit（创建单元）`。
 - 创建模式：用固定 `create-modes（创建模式）` 替代每次手写大 JSON。
-- 项目管理：项目状态、预算、出价、ROI 系数、投放时段都走固定配置、预演和执行脚本。
+- 项目管理：项目状态、预算、出价、ROI 系数、投放时段都走固定配置和执行脚本。
 - 源素材账户：不再使用“源素材候选池”概念，统一从源素材账户同步和补材。
 - 定时任务：`scheduler（定时任务）` 直接写固定 `script.command（脚本命令）`，不依赖 prompt（提示词）解释业务流程。
 - 结果契约：脚本输出固定 JSON，包括 `ok`、`workflow（流程名）`、`summary（摘要）`、`blocking_reasons（阻断原因）`、`artifact_path（结果文件路径）`、`external_api_calls（外部接口调用数）`。
@@ -78,6 +78,8 @@ PYTHONPATH=src python3 scripts/run_create_mode.py \
   --policy policies/create-policy.example.json
 ```
 
+素材选择会自动排除 `fixtures（测试样例）` 来源，以及明显无效的 `video_id（视频 ID）`，例如 `v001`。
+
 ## 创建执行
 
 创建真实执行仍走固定脚本，真实执行前必须由用户明确说“确认执行”。
@@ -105,7 +107,7 @@ create_project（创建项目）
 PYTHONPATH=src python3 scripts/run_create_live_execute_once.py \
   --config configs/runtime.create-live.local.json \
   --policy policies/create-live-execute.local.json \
-  --create-execute-artifact <create_execute 产物路径>
+  --plan <create_mode 或 create_strategy_plan 计划产物路径>
 ```
 
 终端执行入口：
@@ -114,9 +116,13 @@ PYTHONPATH=src python3 scripts/run_create_live_execute_once.py \
 PYTHONPATH=src python3 scripts/run_create_live_execute_terminal.py \
   --config configs/runtime.create-live.local.json \
   --policy policies/create-live-execute.local.json \
-  --plan <create_plan 计划文件路径> \
-  --create-execute-artifact <create_execute 产物路径>
+  --plan <create_mode 或 create_strategy_plan 计划产物路径> \
+  --open-progress-window
 ```
+
+`--check-config-only` 是轻量检查，只确认本地真实执行配置、token（令牌）指针、接口地址和计划基础字段，不生成预演产物，也不调用外部接口。`--create-execute-artifact` 仍兼容旧产物，但不再是主路径必填项。
+
+`--open-progress-window` 会打开 Terminal.app（macOS 终端）显示本次执行进度，只读本地 `progress（进度）` 文件。
 
 这个入口会拉起固定执行脚本，同时在当前终端显示：
 
@@ -164,7 +170,7 @@ PYTHONPATH=src python3 scripts/watch_create_live_progress.py --clear --recent-ev
 项目更新类动作统一走：
 
 ```text
-项目控制配置文件 -> preflight（预演前检查） -> 用户确认 -> execute（执行） -> JSON 汇报
+项目控制配置文件 -> 用户确认 -> execute（执行） -> JSON 汇报
 ```
 
 固定入口：
@@ -173,9 +179,22 @@ PYTHONPATH=src python3 scripts/watch_create_live_progress.py --clear --recent-ev
 - `scripts/run_project_budget_update.py`：项目预算调整。
 - `scripts/run_project_bid_update.py`：项目出价调整。
 - `scripts/run_project_roi_coeff_update.py`：7R 项目 ROI 系数调整。
-- `scripts/run_project_update_preflight.py`：项目更新预演。
+- `scripts/run_project_delete.py`：项目删除。
+- `scripts/run_project_management_update_config.py`：按账户和项目名称查询后生成项目管理配置。
 - `scripts/run_project_update_execute.py`：项目更新执行。
 - `scripts/run_project_schedule_restore_due.py`：到期时段恢复。
+
+调试入口：
+
+- `scripts/run_project_update_preflight.py`：项目更新本地检查，不在主流程里使用；真实接口问题以执行结果为准。
+
+按名称生成配置的固定入口：
+
+- `scripts/run_project_status_update_config.py`：按名称生成开启/关停配置。
+- `scripts/run_project_budget_update_config.py`：按名称生成预算调整配置。
+- `scripts/run_project_bid_update_config.py`：按名称生成出价调整配置。
+- `scripts/run_project_roi_coeff_update_config.py`：按名称生成 ROI 系数调整配置。
+- `scripts/run_project_delete_config.py`：按名称生成删除项目配置，默认只查 `PROJECT_STATUS_DISABLE（已关闭）` 项目。
 
 项目时段更新已经是固定脚本能力；当天拉空后，恢复逻辑固定在脚本和定时任务里，不靠 AI 记忆。
 

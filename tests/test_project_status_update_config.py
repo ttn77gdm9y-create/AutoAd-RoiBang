@@ -106,6 +106,74 @@ def test_project_status_update_config_filters_projects_by_name_contains():
     }
 
 
+def test_project_management_update_config_builds_budget_actions_by_name():
+    def transport(_request: dict) -> dict:
+        return {
+            "code": 0,
+            "data": {
+                "list": [
+                    {"project_id": "p-1", "name": "0513_郭靖_勇者突进_放量"},
+                    {"project_id": "p-2", "name": "0512_郭靖_勇者突进_放量"},
+                ]
+            },
+        }
+
+    result = build_project_status_update_config(
+        {
+            "project_update_id": "budget-0513-001",
+            "advertiser_ids": ["adv-1"],
+            "action_type": "budget_update",
+            "budget_mode": "BUDGET_MODE_DAY",
+            "budget": 88888,
+            "name_contains": ["0513"],
+        },
+        transport=transport,
+    )
+
+    assert result["workflow"] == "project_management_update_config"
+    assert result["summary"]["action_type"] == "budget_update"
+    assert result["summary"]["action_count"] == 1
+    assert result["project_update"]["actions"] == [
+        {
+            "action_type": "budget_update",
+            "advertiser_id": "adv-1",
+            "entity_type": "project",
+            "project_id": "p-1",
+            "project_name": "0513_郭靖_勇者突进_放量",
+            "budget_mode": "BUDGET_MODE_DAY",
+            "budget": 88888,
+        }
+    ]
+
+
+def test_project_management_update_config_builds_delete_actions_from_disabled_projects():
+    calls: list[dict] = []
+
+    def transport(request: dict) -> dict:
+        calls.append(request)
+        return {"code": 0, "data": {"list": [{"project_id": "p-closed", "name": "0513_郭靖_旧项目"}]}}
+
+    result = build_project_status_update_config(
+        {
+            "project_update_id": "delete-0513-001",
+            "advertiser_ids": ["adv-1"],
+            "action_type": "delete_project",
+            "name_contains": ["0513"],
+        },
+        transport=transport,
+    )
+
+    assert result["summary"]["action_type"] == "delete_project"
+    assert result["project_update"]["actions"][0] == {
+        "action_type": "delete_project",
+        "advertiser_id": "adv-1",
+        "entity_type": "project",
+        "project_id": "p-closed",
+        "project_name": "0513_郭靖_旧项目",
+    }
+    assert calls[0]["payload"]["filtering"] == {"status_first": "PROJECT_STATUS_DISABLE", "name": "0513"}
+
+
 def test_run_project_status_update_config_writes_project_update_json(tmp_path: Path):
     def transport(_request: dict) -> dict:
         return {"code": 0, "data": {"list": [{"project_id": "p-1", "name": "勇者突进"}]}}

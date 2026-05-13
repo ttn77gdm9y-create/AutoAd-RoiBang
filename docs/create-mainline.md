@@ -12,15 +12,37 @@
 ## 主路径
 
 ```text
-strategy.json（策略配置）
+mode request（创建模式请求）或 strategy.json（策略配置）
 -> create_plan（创建计划）
--> validate（校验）
--> local_chain（本地预演链路）
+-> check-config-only（只检查配置）
+-> 用户确认
 -> live_execute_once（一次性真实创建）
 -> live_execute_report（执行结果汇报）
 ```
 
-## 1. 策略生成创建计划
+## 1. 创建模式生成创建计划
+
+输入：
+
+- `configs/create-mode-requests/<name>.local.json`
+- `configs/create-modes/*.example.json`
+- `configs/create-templates/wx-mini-game.json`
+
+命令：
+
+```bash
+PYTHONPATH=src python3 scripts/run_create_mode.py \
+  --config configs/runtime.example.json \
+  --request configs/create-mode-requests/<name>.local.json \
+  --policy policies/create-policy.example.json \
+  --template-catalog configs/create-templates/wx-mini-game.json
+```
+
+输出：
+
+- `data/runs/create_mode/*.json`
+
+## 2. 策略生成创建计划
 
 输入：
 
@@ -36,17 +58,15 @@ PYTHONPATH=src python3 scripts/run_create_plan_from_strategy.py \
   --strategy configs/strategies/<name>.local.json \
   --policy policies/create-policy.example.json \
   --template-catalog configs/create-templates/wx-mini-game.json \
-  --output-dir configs/create-plans \
-  --run-local-chain
+  --output-dir configs/create-plans
 ```
 
 输出：
 
 - `configs/create-plans/<plan_id>.local.json`
 - `data/runs/create_plan_from_strategy/*.json`
-- 如果 `--run-local-chain` 成功，会在输出 JSON 里给出 `live_execute_commands`（真实执行命令）。
 
-## 2. 单独校验创建计划
+## 3. 单独校验创建计划
 
 命令：
 
@@ -61,26 +81,9 @@ PYTHONPATH=src python3 scripts/run_create_plan_validate.py \
 
 - `data/runs/create_plan_validate/*.json`
 
-## 3. 本地预演链路
+## 4. 只检查配置
 
-通常第 1 步加 `--run-local-chain` 已经会跑。需要单独跑时：
-
-```bash
-PYTHONPATH=src python3 scripts/run_create_first_live_local_chain.py \
-  --config configs/runtime.example.json \
-  --plan configs/create-plans/<plan_id>.local.json \
-  --policy policies/create-policy.example.json \
-  --create-execute-handoff data/runs/create_execute/<plan_id>.json
-```
-
-输出：
-
-- `data/runs/create_first_live_local_chain/*.json`
-- `data/runs/create_execute/<plan_id>.json`
-
-## 4. 真实创建
-
-只在人工确认后运行第 1 步输出里的 `live_execute_commands`。
+`check-config-only（只检查配置）` 只看本地执行配置、token（令牌）指针、接口地址、账户准允许名单和计划基础字段，不调用外部接口，不生成真实 payload（接口载荷），也不执行创建。
 
 命令形态：
 
@@ -88,8 +91,26 @@ PYTHONPATH=src python3 scripts/run_create_first_live_local_chain.py \
 PYTHONPATH=src python3 scripts/run_create_live_execute_once.py \
   --config configs/runtime.create-live.local.json \
   --policy policies/create-live-execute.local.json \
-  --plan configs/create-plans/<plan_id>.local.json \
-  --create-execute-artifact data/runs/create_execute/<plan_id>.json
+  --plan data/runs/create_mode/<artifact>.json \
+  --check-config-only
+```
+
+输出：
+
+- `data/runs/create_live_execute_once/*.json`
+
+## 5. 真实创建
+
+只在人工确认后运行。需要可见进度时，使用 `run_create_live_execute_terminal.py`（带终端进度的真实执行入口）。
+
+命令形态：
+
+```bash
+PYTHONPATH=src python3 scripts/run_create_live_execute_terminal.py \
+  --config configs/runtime.create-live.local.json \
+  --policy policies/create-live-execute.local.json \
+  --plan data/runs/create_mode/<artifact>.json \
+  --open-progress-window
 ```
 
 输出：
@@ -100,12 +121,15 @@ PYTHONPATH=src python3 scripts/run_create_live_execute_once.py \
 
 ```text
 create_project（创建项目）
--> bind_material（素材推送/绑定）
+-> lookup_target_material（创建前查目标账户素材库）
+-> bind_material（仅推送目标账户没有的素材）
 -> lookup_target_material（目标账户素材回查）
 -> create_unit（创建单元）
 ```
 
-## 5. 执行结果汇报
+`run_create_live_execute_once.py` 会从 `create_mode（创建模式）` 或 `create_strategy_plan（创建策略计划）` 产物内部生成本次执行所需的接口草稿。`--create-execute-artifact` 只保留给旧产物兼容，不再是主路径必填项。
+
+## 6. 执行结果汇报
 
 命令：
 
@@ -126,3 +150,12 @@ PYTHONPATH=src python3 scripts/run_create_live_execute_report.py \
 - 不新增飞书交互。
 - 不新增审批包、准备包、执行包。
 - 不让 AI 临场拼真实业务参数。
+
+## 兼容调试入口
+
+以下脚本只作为本地调试或旧产物兼容，不属于创建主路径：
+
+- `scripts/run_create_preflight.py`：preflight（预演前检查）。
+- `scripts/run_create_provider_field_map_check.py`：provider field map check（平台字段映射检查）。
+- `scripts/run_create_dry_run.py`：dry-run（预演）。
+- `scripts/run_create_execute.py`：create_execute（创建执行交接产物）。

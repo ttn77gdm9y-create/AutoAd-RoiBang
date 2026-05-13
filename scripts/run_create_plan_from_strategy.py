@@ -21,8 +21,6 @@ def _print_result(result: dict) -> None:
                 "strategy_id": result["strategy_id"],
                 "summary": result["summary"],
                 "plan_file_paths": result["plan_file_paths"],
-                "local_chain_results": result["local_chain_results"],
-                "live_execute_commands": result["live_execute_commands"],
                 "violations": result["violations"],
                 "artifact_path": result["artifact_path"],
             },
@@ -39,7 +37,6 @@ def run_from_args(argv: list[str] | None = None) -> int:
     parser.add_argument("--policy", default="policies/create-policy.example.json")
     parser.add_argument("--template-catalog", default="configs/create-templates/wx-mini-game.json")
     parser.add_argument("--output-dir", default="")
-    parser.add_argument("--run-local-chain", action="store_true")
     args = parser.parse_args(argv)
 
     config = load_runtime_config(args.config)
@@ -54,7 +51,6 @@ def run_from_args(argv: list[str] | None = None) -> int:
         policy=policy,
         db_path=config.database_path,
         output_dir=args.output_dir or None,
-        run_local_chain=args.run_local_chain,
     )
     _print_result(result)
     return 0 if result["ok"] else 1

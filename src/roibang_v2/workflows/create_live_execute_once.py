@@ -436,6 +436,29 @@ def _is_skip_account_create_project_failure(operation: str, response: dict[str, 
     return _is_project_cap_failure(operation, response)
 
 
+def _is_skip_account_live_step_failure(operation: str, response: dict[str, Any]) -> bool:
+    if operation not in {"bind_material", "lookup_target_material", "create_unit"}:
+        return False
+    return _response_code(response) != 0
+
+
+def _skip_account_record(
+    *,
+    operation: str,
+    index: int,
+    advertiser_id: str,
+    response: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "operation": operation,
+        "index": index,
+        "advertiser_id": advertiser_id,
+        "status": "skipped_account_after_live_step_failure",
+        "code": _response_code(response),
+        "message": _response_message(response),
+    }
+
+
 def _is_project_cap_failure(operation: str, response: dict[str, Any]) -> bool:
     if operation != "create_project":
         return False
@@ -1515,6 +1538,7 @@ def _resumable_create_http_run(
                 continue
             create_retry_count = 0
             max_create_retry_count = int(_runner_policy(policy).get("recover_create_after_lookup_max_retries") or 1)
+            skipped_current_account = False
             while True:
                 call = {
                     "sequence": sequence,
@@ -1577,6 +1601,32 @@ def _resumable_create_http_run(
                         create_retry_count += 1
                         continue
                     else:
+                        if _is_skip_account_live_step_failure(operation, failure_response):
+                            if advertiser_id:
+                                skipped_account_ids.add(advertiser_id)
+                            skipped_account_records.append(
+                                _skip_account_record(
+                                    operation=operation,
+                                    index=original_index,
+                                    advertiser_id=advertiser_id,
+                                    response=failure_response,
+                                )
+                            )
+                            operation_skipped_account_count += 1
+                            operation_done_count += 1
+                            _write_progress(
+                                policy,
+                                status="skipped_account",
+                                operation=operation,
+                                done=operation_done_count,
+                                total=len(drafts),
+                                transport_call_count=transport_call_count,
+                                advertiser_id=advertiser_id,
+                                index=original_index,
+                                message=str(exc),
+                            )
+                            skipped_current_account = True
+                            break
                         return {
                             "ok": False,
                             "status": "create_http_failed",
@@ -1646,6 +1696,8 @@ def _resumable_create_http_run(
                             create_retry_count += 1
                             continue
                 break
+            if skipped_current_account:
+                continue
             if _response_code(response) != 0 and _is_project_cap_failure(operation, response):
                 cleanup_result, sequence, cleanup_call_count = _cleanup_closed_projects_for_project_cap(
                     advertiser_id=advertiser_id,
@@ -1704,6 +1756,31 @@ def _resumable_create_http_run(
                         "deleted_and_retried" if _response_code(response) == 0 else "deleted_retry_failed"
                     )
             if _response_code(response) != 0:
+                if _is_skip_account_live_step_failure(operation, response):
+                    if advertiser_id:
+                        skipped_account_ids.add(advertiser_id)
+                    skipped_account_records.append(
+                        _skip_account_record(
+                            operation=operation,
+                            index=original_index,
+                            advertiser_id=advertiser_id,
+                            response=response,
+                        )
+                    )
+                    operation_skipped_account_count += 1
+                    operation_done_count += 1
+                    _write_progress(
+                        policy,
+                        status="skipped_account",
+                        operation=operation,
+                        done=operation_done_count,
+                        total=len(drafts),
+                        transport_call_count=transport_call_count,
+                        advertiser_id=advertiser_id,
+                        index=original_index,
+                        message=_response_message(response),
+                    )
+                    continue
                 if _is_skip_account_create_project_failure(operation, response):
                     if advertiser_id:
                         skipped_account_ids.add(advertiser_id)

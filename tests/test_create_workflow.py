@@ -4,6 +4,8 @@ import re
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from roibang_v2.db.bootstrap import bootstrap_database
 from roibang_v2.workflows.create_dry_run import build_create_dry_run, run_create_dry_run_request
 from roibang_v2.workflows.create_execute import run_create_execute_request
@@ -59,6 +61,8 @@ from roibang_v2.workflows.create_strategy_plan import build_create_strategy_plan
 
 def _load_script(name: str):
     script_path = Path(f"scripts/{name}.py")
+    if not script_path.exists():
+        pytest.skip(f"{script_path} is disabled")
     spec = importlib.util.spec_from_file_location(name, script_path)
     module = importlib.util.module_from_spec(spec)
     assert spec and spec.loader
@@ -142,7 +146,7 @@ def _seed_create_db(db_path: Path) -> None:
                     "source-1",
                     "org-1",
                     material_id,
-                    f"source-video-{rank}",
+                    f"vsourcevideo00000000000{rank}",
                     f"素材{rank}",
                     "video",
                     "APPROVED",
@@ -764,9 +768,9 @@ def test_create_dry_run_outputs_non_executable_project_unit_material_combination
         "create_unit",
     ]
     assert task["redacted_payload_drafts"][1]["payload"]["material_id"] == "m-high"
-    assert task["redacted_payload_drafts"][5]["payload"]["source_video_id"] == "source-video-1"
+    assert task["redacted_payload_drafts"][5]["payload"]["source_video_id"] == "vsourcevideo000000000001"
     assert task["redacted_payload_drafts"][9]["payload"]["unit_key"] == "target-1-p001-u01"
-    assert task["redacted_payload_drafts"][9]["payload"]["promotion_materials"]["video_material_list"][0]["video_id"] == "<lookup:target_video:target-1:source-video-1>"
+    assert task["redacted_payload_drafts"][9]["payload"]["promotion_materials"]["video_material_list"][0]["video_id"] == "<lookup:target_video:target-1:vsourcevideo000000000001>"
     assert result["payload_schema"]["version"] == "phase1.create_payload.v1"
     assert result["payload_schema"]["mode"] == "schema_only"
     assert result["payload_schema"]["execution_enabled"] is False
@@ -987,7 +991,7 @@ def test_create_dry_run_emits_non_executable_candidate_provider_payloads_for_pha
     assert material_draft["payload"] == {
         "advertiser_id": "source-1",
         "target_advertiser_ids": ["target-1"],
-        "video_ids": ["source-video-1"],
+        "video_ids": ["vsourcevideo000000000001"],
     }
     assert "project_key" not in material_draft["payload"]
     assert "unit_key" not in material_draft["payload"]
@@ -999,7 +1003,7 @@ def test_create_dry_run_emits_non_executable_candidate_provider_payloads_for_pha
     assert lookup_draft["field_mapping_mode"] == "candidate"
     assert lookup_draft["payload"] == {
         "target_advertiser_id": "target-1",
-        "source_video_id": "source-video-1",
+        "source_video_id": "vsourcevideo000000000001",
         "material_id": "m-high",
     }
 
@@ -1367,10 +1371,10 @@ def test_create_dry_run_can_load_provider_field_map_from_json_config(tmp_path: P
     assert material_draft["payload"] == {
         "advertiser_id": "source-1",
         "target_advertiser_ids": ["target-1"],
-        "video_ids": ["source-video-1"],
+        "video_ids": ["vsourcevideo000000000001"],
     }
     assert "source_video_id" not in material_draft["payload"]
-    assert result["candidate_tasks"][0]["units"][0]["materials"][0]["source_video_id"] == "source-video-1"
+    assert result["candidate_tasks"][0]["units"][0]["materials"][0]["source_video_id"] == "vsourcevideo000000000001"
     assert "unit_key" not in material_draft["payload"]
     assert result["actions"] == []
 
@@ -1395,9 +1399,9 @@ def test_create_dry_run_generates_promotion_name_and_lookup_placeholders(tmp_pat
     material_draft = next(draft for draft in task["redacted_payload_drafts"] if draft["operation"] == "bind_material")
     assert material_draft["payload"]["source_advertiser_id"] == "source-1"
     assert material_draft["payload"]["target_advertiser_ids"] == ["target-1"]
-    assert material_draft["payload"]["source_video_ids"] == ["source-video-1"]
+    assert material_draft["payload"]["source_video_ids"] == ["vsourcevideo000000000001"]
     assert "source_video_id" not in material_draft["payload"]
-    assert first_unit["materials"][0]["source_video_id"] == "source-video-1"
+    assert first_unit["materials"][0]["source_video_id"] == "vsourcevideo000000000001"
     assert result["payload_contract"]["status"] == "passed"
     assert result["execution_enabled"] is False
     assert result["external_api_calls"] == 0
@@ -1426,7 +1430,7 @@ def test_create_dry_run_uses_fixed_template_cover_without_requiring_lookup_cover
         if draft["operation"] == "lookup_target_material"
     )
     assert lookup_draft["expected_outputs"] == {
-        "target_video_id": "<lookup:target_video:target-1:source-video-1>"
+        "target_video_id": "<lookup:target_video:target-1:vsourcevideo000000000001>"
     }
     assert result["violations"] == []
 
@@ -3555,10 +3559,10 @@ def test_create_first_live_local_chain_accepts_create_plan_without_execute(tmp_p
             }
         ],
         "materials": [
-            {"source_material_id": "m-high", "source_video_id": "source-video-1"},
-            {"source_material_id": "m-mid", "source_video_id": "source-video-2"},
-            {"source_material_id": "m-low", "source_video_id": "source-video-3"},
-            {"source_material_id": "m-extra", "source_video_id": "source-video-4"},
+            {"source_material_id": "m-high", "source_video_id": "vsourcevideo000000000001"},
+            {"source_material_id": "m-mid", "source_video_id": "vsourcevideo000000000002"},
+            {"source_material_id": "m-low", "source_video_id": "vsourcevideo000000000003"},
+            {"source_material_id": "m-extra", "source_video_id": "vsourcevideo000000000004"},
         ],
         "reason": "首单链路验证",
     }
@@ -3815,8 +3819,8 @@ def test_create_first_live_local_chain_cli_accepts_create_plan_without_execute(t
                         }
                 ],
                 "materials": [
-                    {"source_material_id": "m-high", "source_video_id": "source-video-1"},
-                    {"source_material_id": "m-mid", "source_video_id": "source-video-2"},
+                    {"source_material_id": "m-high", "source_video_id": "vsourcevideo000000000001"},
+                    {"source_material_id": "m-mid", "source_video_id": "vsourcevideo000000000002"},
                 ],
                 "reason": "首单链路验证",
             },

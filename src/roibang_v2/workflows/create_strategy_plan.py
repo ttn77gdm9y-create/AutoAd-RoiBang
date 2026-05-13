@@ -13,6 +13,7 @@ from roibang_v2.runs import write_run_artifact
 from roibang_v2.workflows.create_lineage import create_ref, create_request_payload
 
 _INVALID_PROJECT_NAME_CHARS = re.compile(r'[\\/:*?"<>|\r\n\t]+')
+_VALID_SOURCE_VIDEO_ID = re.compile(r"^v[0-9A-Za-z]{12,}$")
 
 
 def _now_iso() -> str:
@@ -71,6 +72,19 @@ def _normalized_review_status(value: Any) -> str:
     return {"3": "APPROVED"}.get(raw, raw)
 
 
+def _source_video_id(row: dict[str, Any]) -> str:
+    return str(row.get("source_video_id") or row.get("video_id") or "").strip()
+
+
+def _looks_like_real_source_video_id(value: Any) -> bool:
+    return bool(_VALID_SOURCE_VIDEO_ID.fullmatch(str(value or "").strip()))
+
+
+def _is_fixture_source(value: Any) -> bool:
+    normalized = str(value or "").strip().lower().replace("\\", "/")
+    return "fixtures" in normalized
+
+
 def _filter_candidate_rows(rows: list[dict[str, Any]], *, policy: dict[str, Any]) -> list[dict[str, Any]]:
     filters = _candidate_filters(policy)
     allowed_statuses = _allowed_review_statuses(filters)
@@ -78,6 +92,10 @@ def _filter_candidate_rows(rows: list[dict[str, Any]], *, policy: dict[str, Any]
     min_stat_cost = _float_value(filters.get("min_candidate_stat_cost"), 0)
     filtered: list[dict[str, Any]] = []
     for row in rows:
+        if _is_fixture_source(row.get("source")):
+            continue
+        if not _looks_like_real_source_video_id(_source_video_id(row)):
+            continue
         review_status = _normalized_review_status(row.get("review_status"))
         if allowed_statuses and review_status and review_status not in allowed_statuses:
             continue
@@ -172,6 +190,7 @@ def _candidate_rows(*, db_path: str | Path, request: dict[str, Any], policy: dic
               psm.video_id AS source_video_id,
               psm.name,
               psm.review_status,
+              psm.source,
               COALESCE(MAX(CASE WHEN psmr.window_days = ? THEN psmr.stat_cost END), MAX(psmr.stat_cost), psm.cost_lookback, 0) AS stat_cost,
               psm.score,
               psm.create_time,
@@ -187,7 +206,7 @@ def _candidate_rows(*, db_path: str | Path, request: dict[str, Any], policy: dic
               AND psm.is_active = 1
             GROUP BY
               psm.material_id, psm.material_type, psm.video_id, psm.name,
-              psm.review_status, psm.cost_lookback, psm.score, psm.create_time, psm.first_seen_at
+              psm.review_status, psm.source, psm.cost_lookback, psm.score, psm.create_time, psm.first_seen_at
             """,
             (
                 lookback_days,
@@ -315,15 +334,18 @@ def _project_name_entry(
 
 
 def _material_entry(row: dict[str, Any]) -> dict[str, Any]:
-    return {
+    entry = {
         "material_id": str(row.get("material_id") or ""),
         "material_type": str(row.get("material_type") or "video"),
-        "source_video_id": str(row.get("source_video_id") or ""),
+        "source_video_id": _source_video_id(row),
         "name": str(row.get("name") or ""),
         "rank": int(row.get("rank") or 0),
         "score": float(row.get("score") or 0),
         "stat_cost": float(row.get("stat_cost") or 0),
     }
+    if str(row.get("source") or "").strip():
+        entry["source"] = str(row.get("source") or "").strip()
+    return entry
 
 
 def _usable_source_material_count(

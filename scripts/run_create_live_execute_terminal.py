@@ -15,6 +15,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from watch_create_live_progress import _render
+from open_create_live_progress_terminal import open_progress_terminal
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -66,11 +67,12 @@ def run_from_args(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", default="configs/runtime.create-live.local.json")
     parser.add_argument("--policy", default="policies/create-live-execute.local.json")
     parser.add_argument("--plan", required=True)
-    parser.add_argument("--create-execute-artifact", required=True)
+    parser.add_argument("--create-execute-artifact", default="")
     parser.add_argument("--check-config-only", action="store_true")
     parser.add_argument("--interval", type=float, default=1.0)
     parser.add_argument("--recent-events", type=int, default=5)
     parser.add_argument("--clear", action="store_true")
+    parser.add_argument("--open-progress-window", action="store_true")
     args = parser.parse_args(argv)
 
     progress_dir = _progress_dir(Path(args.policy))
@@ -86,9 +88,9 @@ def run_from_args(argv: list[str] | None = None) -> int:
         args.policy,
         "--plan",
         args.plan,
-        "--create-execute-artifact",
-        args.create_execute_artifact,
     ]
+    if str(args.create_execute_artifact or "").strip():
+        command.extend(["--create-execute-artifact", args.create_execute_artifact])
     if args.check_config_only:
         command.append("--check-config-only")
 
@@ -111,6 +113,18 @@ def run_from_args(argv: list[str] | None = None) -> int:
     print(f"stdout_log（标准输出日志）={stdout_log}", flush=True)
     print(f"stderr_log（标准错误日志）={stderr_log}", flush=True)
     print("")
+    if args.open_progress_window and not args.check_config_only:
+        try:
+            open_progress_terminal(
+                cwd=Path.cwd(),
+                progress_dir=progress_dir,
+                interval=float(args.interval),
+                recent_events=int(args.recent_events),
+                clear=bool(args.clear),
+            )
+            print("progress_window（进度窗口）=opened", flush=True)
+        except Exception as exc:
+            print(f"progress_window（进度窗口）=failed reason（原因）={exc}", flush=True)
 
     with stdout_log.open("w", encoding="utf-8") as stdout_handle, stderr_log.open("w", encoding="utf-8") as stderr_handle:
         process = subprocess.Popen(command, stdout=stdout_handle, stderr=stderr_handle)

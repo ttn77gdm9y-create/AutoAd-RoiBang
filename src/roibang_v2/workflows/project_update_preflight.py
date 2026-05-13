@@ -207,6 +207,8 @@ def _validate_management_action(action: dict[str, Any]) -> list[str]:
         roi_goal = _number(action.get("roi_goal"))
         if roi_goal is None or roi_goal < 0.01 or roi_goal > 5:
             violations.append(f"roi_coeff_update roi_goal must be between 0.01 and 5: {key}")
+    elif action_type == "delete_project":
+        pass
     else:
         violations.append(f"invalid project update action: {key}")
     return violations
@@ -229,6 +231,8 @@ def _planned_management_change(action: dict[str, Any]) -> dict[str, Any]:
         change["cpa_bid"] = action.get("cpa_bid")
     elif action_type == "roi_coeff_update":
         change["roi_goal"] = action.get("roi_goal")
+    elif action_type == "delete_project":
+        change["project_name"] = _text(action.get("project_name"))
     return change
 
 
@@ -264,7 +268,7 @@ def build_project_update_preflight(project_update: dict[str, Any], *, db_path: s
             action_type = _text(action.get("action_type"))
             advertiser_id = _text(action.get("advertiser_id"))
             project_id = _text(action.get("project_id"))
-            if action_type in {"status_update", "budget_update", "bid_update", "roi_coeff_update"}:
+            if action_type in {"status_update", "budget_update", "bid_update", "roi_coeff_update", "delete_project"}:
                 management_action_count += 1
                 action_violations = _validate_management_action(action)
                 if action_violations:

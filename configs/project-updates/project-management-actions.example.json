@@ -43,6 +43,14 @@
       "project_name": "example project",
       "roi_goal": 0.41,
       "reason": "调整7R项目ROI系数"
+    },
+    {
+      "action_type": "delete_project",
+      "advertiser_id": "1856647533952138",
+      "entity_type": "project",
+      "project_id": "example_project_id",
+      "project_name": "example closed project",
+      "reason": "删除关闭状态项目"
     }
   ],
   "restore_actions": []

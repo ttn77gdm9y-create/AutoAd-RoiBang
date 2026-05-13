@@ -5,6 +5,7 @@ from pathlib import Path
 
 from roibang_v2.workflows.project_update_execute import PROJECT_BUDGET_UPDATE_ENDPOINT
 from roibang_v2.workflows.project_update_execute import PROJECT_CPA_BID_UPDATE_ENDPOINT
+from roibang_v2.workflows.project_update_execute import PROJECT_DELETE_ENDPOINT
 from roibang_v2.workflows.project_update_execute import PROJECT_ROI_GOAL_UPDATE_ENDPOINT
 from roibang_v2.workflows.project_update_execute import PROJECT_STATUS_UPDATE_ENDPOINT
 from roibang_v2.workflows.project_update_execute import run_project_update_execute_request
@@ -224,6 +225,78 @@ def test_project_update_execute_batches_project_management_actions(tmp_path: Pat
     assert calls[2]["payload"]["data"] == [{"project_id": "p-bid", "cpa_bid": 103}]
     assert calls[3]["payload"]["data"] == [{"project_id": "p-roi", "roi_goal": 0.41}]
     assert Path(result["artifact_path"]).exists()
+
+
+def test_project_update_execute_can_delete_projects(tmp_path: Path):
+    calls: list[dict] = []
+
+    def transport(request: dict) -> dict:
+        calls.append(request)
+        return {"code": 0, "message": "OK", "data": {}}
+
+    result = run_project_update_execute_request(
+        {
+            "project_update": {
+                "project_update_id": "project-management-001",
+                "actions": [
+                    {
+                        "action_type": "delete_project",
+                        "advertiser_id": "adv-1",
+                        "entity_type": "project",
+                        "project_id": "p-delete",
+                    }
+                ],
+            },
+            "preflight_artifact": _preflight(),
+            "execute_enabled": True,
+            "approved": True,
+        },
+        runs_dir=tmp_path / "runs",
+        transport=transport,
+    )
+
+    assert result["ok"] is True
+    assert result["external_api_calls"] == 1
+    assert calls == [
+        {
+            "operation": "delete_project",
+            "method": "POST",
+            "endpoint": PROJECT_DELETE_ENDPOINT,
+            "payload": {"advertiser_id": "adv-1", "project_ids": ["p-delete"]},
+        }
+    ]
+
+
+def test_project_update_execute_can_run_management_action_without_preflight(tmp_path: Path):
+    calls: list[dict] = []
+
+    def transport(request: dict) -> dict:
+        calls.append(request)
+        return {"code": 0, "message": "OK", "data": {}}
+
+    result = run_project_update_execute_request(
+        {
+            "project_update": {
+                "project_update_id": "project-management-001",
+                "actions": [
+                    {
+                        "action_type": "delete_project",
+                        "advertiser_id": "adv-1",
+                        "entity_type": "project",
+                        "project_id": "p-delete",
+                    }
+                ],
+            },
+            "execute_enabled": True,
+            "approved": True,
+        },
+        runs_dir=tmp_path / "runs",
+        transport=transport,
+    )
+
+    assert result["ok"] is True
+    assert result["preflight_artifact_path"] == ""
+    assert [call["operation"] for call in calls] == ["delete_project"]
 
 
 def test_project_update_execute_splits_management_actions_into_ten_item_batches(tmp_path: Path):

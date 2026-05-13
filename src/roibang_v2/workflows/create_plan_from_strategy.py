@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Any
 
 from roibang_v2.runs import write_run_artifact
-from roibang_v2.workflows.create_first_live_local_chain import run_create_first_live_local_chain_request
 from roibang_v2.workflows.create_plan_contract import validate_create_plan
 
 
@@ -326,48 +325,6 @@ def write_create_plan_files(create_plans: list[dict[str, Any]], output_dir: str 
     return paths
 
 
-def _live_execute_commands(
-    *,
-    create_plans: list[dict[str, Any]],
-    plan_file_paths: list[str],
-    local_chain_results: list[dict[str, Any]],
-) -> list[dict[str, str]]:
-    by_plan_id = {
-        str(row.get("plan_id") or ""): row
-        for row in local_chain_results
-        if str(row.get("status") or "") == "ready_for_execute_script"
-    }
-    commands: list[dict[str, str]] = []
-    for index, plan in enumerate(create_plans):
-        plan_id = _text(plan.get("plan_id"))
-        chain = by_plan_id.get(plan_id)
-        if not chain:
-            continue
-        artifacts = chain.get("artifacts") if isinstance(chain.get("artifacts"), dict) else {}
-        create_execute_artifact = _text(artifacts.get("create_execute"))
-        if not create_execute_artifact:
-            continue
-        plan_path = plan_file_paths[index] if index < len(plan_file_paths) else ""
-        if not plan_path:
-            continue
-        command = (
-            "PYTHONPATH=src python3 scripts/run_create_live_execute_once.py "
-            "--config configs/runtime.create-live.local.json "
-            "--policy policies/create-live-execute.local.json "
-            f"--plan {plan_path} "
-            f"--create-execute-artifact {create_execute_artifact}"
-        )
-        commands.append(
-            {
-                "plan_id": plan_id,
-                "plan_path": plan_path,
-                "create_execute_artifact": create_execute_artifact,
-                "command": command,
-            }
-        )
-    return commands
-
-
 def run_create_plan_from_strategy_request(
     request: dict[str, Any],
     *,
@@ -376,7 +333,6 @@ def run_create_plan_from_strategy_request(
     policy: dict[str, Any] | None = None,
     db_path: str | Path | None = None,
     output_dir: str | Path | None = None,
-    run_local_chain: bool = False,
 ) -> dict[str, Any]:
     result = build_create_plans_from_strategy(
         request,
@@ -387,57 +343,9 @@ def run_create_plan_from_strategy_request(
     plan_file_paths: list[str] = []
     if result["ok"] and output_dir:
         plan_file_paths = write_create_plan_files(result["create_plans"], output_dir)
-    local_chain_results: list[dict[str, Any]] = []
-    if result["ok"] and run_local_chain:
-        for plan in result["create_plans"]:
-            local_chain = run_create_first_live_local_chain_request(
-                {
-                    "create_first_live_local_chain": {
-                        "create_plan": plan,
-                        "preview_config_path": str(output_dir or "strategy.json"),
-                        "policy": policy or {},
-                    }
-                },
-                db_path=db_path or "",
-                runs_dir=runs_dir,
-            )
-            local_chain_results.append(
-                {
-                    "ok": bool(local_chain.get("ok")),
-                    "workflow": str(local_chain.get("workflow") or ""),
-                    "status": str(local_chain.get("status") or ""),
-                    "plan_id": str(plan.get("plan_id") or ""),
-                    "summary": dict(local_chain.get("summary")) if isinstance(local_chain.get("summary"), dict) else {},
-                    "artifacts": dict(local_chain.get("artifacts")) if isinstance(local_chain.get("artifacts"), dict) else {},
-                    "artifact_path": str(local_chain.get("artifact_path") or ""),
-                    "violations": [str(item) for item in local_chain.get("violations") or []],
-                }
-            )
-    live_execute_commands = _live_execute_commands(
-        create_plans=result["create_plans"],
-        plan_file_paths=plan_file_paths,
-        local_chain_results=local_chain_results,
-    )
     payload = {
         **result,
-        "summary": {
-            **result["summary"],
-            "ready_for_execute_script_count": sum(
-                1 for row in local_chain_results if str(row.get("status") or "") == "ready_for_execute_script"
-            ),
-            "live_execute_command_count": len(live_execute_commands),
-        },
         "plan_file_paths": plan_file_paths,
-        "local_chain_results": local_chain_results,
-        "live_execute_commands": live_execute_commands,
     }
-    if local_chain_results and not all(bool(row.get("ok")) for row in local_chain_results):
-        payload["ok"] = False
-        payload["status"] = "blocked"
-        payload["violations"] = [
-            f"{row.get('plan_id')}: {item}"
-            for row in local_chain_results
-            for item in row.get("violations") or []
-        ]
     artifact_path = write_run_artifact(runs_dir, "create_plan_from_strategy", payload)
     return {**payload, "artifact_path": str(artifact_path)}

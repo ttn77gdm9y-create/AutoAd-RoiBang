@@ -9,6 +9,7 @@ from roibang_v2.workflows.project_update_execute import PROJECT_LIST_ENDPOINT
 
 
 Transport = Callable[[dict[str, Any]], dict[str, Any]]
+MANAGEMENT_ACTION_TYPES = {"status_update", "budget_update", "bid_update", "roi_coeff_update", "delete_project"}
 
 
 def _text(value: Any) -> str:
@@ -82,10 +83,21 @@ def _advertiser_ids(cfg: dict[str, Any]) -> list[str]:
     return result
 
 
-def _default_filtering(opt_status: str) -> dict[str, Any]:
-    if opt_status == "DISABLE":
+def _action_type(cfg: dict[str, Any]) -> str:
+    action_type = _text(cfg.get("action_type") or "status_update")
+    if action_type not in MANAGEMENT_ACTION_TYPES:
+        raise ValueError(f"project management config action_type must be one of {sorted(MANAGEMENT_ACTION_TYPES)}")
+    return action_type
+
+
+def _default_filtering(action_type: str, opt_status: str) -> dict[str, Any]:
+    if action_type == "status_update" and opt_status == "DISABLE":
         return {"status_first": "PROJECT_STATUS_ENABLE"}
-    return {"status_first": "PROJECT_STATUS_DISABLE", "status_second": "PROJECT_STATUS_STOP"}
+    if action_type == "status_update" and opt_status == "ENABLE":
+        return {"status_first": "PROJECT_STATUS_DISABLE", "status_second": "PROJECT_STATUS_STOP"}
+    if action_type == "delete_project":
+        return {"status_first": "PROJECT_STATUS_DISABLE"}
+    return {"status_first": "PROJECT_STATUS_ENABLE"}
 
 
 def _name_contains(cfg: dict[str, Any]) -> list[str]:
@@ -105,8 +117,8 @@ def _name_contains(cfg: dict[str, Any]) -> list[str]:
     return result
 
 
-def _filtering_with_name(cfg: dict[str, Any], opt_status: str, keywords: list[str]) -> dict[str, Any]:
-    filtering = dict(cfg.get("filtering")) if isinstance(cfg.get("filtering"), dict) else _default_filtering(opt_status)
+def _filtering_with_name(cfg: dict[str, Any], action_type: str, opt_status: str, keywords: list[str]) -> dict[str, Any]:
+    filtering = dict(cfg.get("filtering")) if isinstance(cfg.get("filtering"), dict) else _default_filtering(action_type, opt_status)
     if keywords and not _text(filtering.get("name")):
         filtering["name"] = keywords[0]
     return filtering
@@ -158,6 +170,77 @@ def _fetch_projects(
     return projects, calls
 
 
+def _number(value: Any, key: str) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"project management config requires numeric {key}")
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"project management config requires numeric {key}") from exc
+
+
+def _action_extra_fields(cfg: dict[str, Any], action_type: str) -> dict[str, Any]:
+    if action_type == "status_update":
+        opt_status = _required_text(cfg, "opt_status")
+        if opt_status not in {"ENABLE", "DISABLE"}:
+            raise ValueError("project status update config opt_status must be ENABLE or DISABLE")
+        return {"opt_status": opt_status}
+    if action_type == "budget_update":
+        budget_mode = _text(cfg.get("budget_mode") or "BUDGET_MODE_DAY")
+        if budget_mode not in {"BUDGET_MODE_DAY", "BUDGET_MODE_INFINITE"}:
+            raise ValueError("project budget update config budget_mode must be BUDGET_MODE_DAY or BUDGET_MODE_INFINITE")
+        fields: dict[str, Any] = {"budget_mode": budget_mode}
+        if budget_mode == "BUDGET_MODE_DAY":
+            budget = _number(cfg.get("budget"), "budget")
+            if budget <= 0:
+                raise ValueError("project budget update config budget must be greater than 0")
+            fields["budget"] = int(budget) if budget.is_integer() else budget
+        return fields
+    if action_type == "bid_update":
+        cpa_bid = _number(cfg.get("cpa_bid"), "cpa_bid")
+        if cpa_bid <= 0:
+            raise ValueError("project bid update config cpa_bid must be greater than 0")
+        return {"cpa_bid": int(cpa_bid) if cpa_bid.is_integer() else cpa_bid}
+    if action_type == "roi_coeff_update":
+        roi_goal = _number(cfg.get("roi_goal"), "roi_goal")
+        if roi_goal < 0.01 or roi_goal > 5:
+            raise ValueError("project roi coeff update config roi_goal must be between 0.01 and 5")
+        return {"roi_goal": roi_goal}
+    if action_type == "delete_project":
+        return {}
+    raise ValueError(f"unsupported project management action_type: {action_type}")
+
+
+def _workflow_name(cfg: dict[str, Any], action_type: str) -> str:
+    explicit = _text(cfg.get("workflow"))
+    if explicit:
+        return explicit
+    if action_type == "status_update":
+        return "project_status_update_config"
+    return "project_management_update_config"
+
+
+def _build_action(
+    *,
+    action_type: str,
+    advertiser_id: str,
+    project: dict[str, Any],
+    fields: dict[str, Any],
+    reason: str,
+) -> dict[str, Any]:
+    action = {
+        "action_type": action_type,
+        "advertiser_id": advertiser_id,
+        "entity_type": "project",
+        "project_id": _text(project.get("project_id")),
+        "project_name": _text(project.get("name")),
+    }
+    action.update(fields)
+    if reason:
+        action["reason"] = reason
+    return action
+
+
 def build_project_status_update_config(
     request: dict[str, Any] | None,
     *,
@@ -165,16 +248,17 @@ def build_project_status_update_config(
 ) -> dict[str, Any]:
     cfg = dict(request or {})
     project_update_id = _required_text(cfg, "project_update_id")
-    opt_status = _required_text(cfg, "opt_status")
-    if opt_status not in {"ENABLE", "DISABLE"}:
-        raise ValueError("project status update config opt_status must be ENABLE or DISABLE")
+    action_type = _action_type(cfg)
+    fields = _action_extra_fields(cfg, action_type)
+    opt_status = _text(fields.get("opt_status"))
     advertiser_ids = _advertiser_ids(cfg)
     if not advertiser_ids:
         raise ValueError("project status update config requires advertiser_ids")
     name_keywords = _name_contains(cfg)
-    filtering = _filtering_with_name(cfg, opt_status, name_keywords)
+    filtering = _filtering_with_name(cfg, action_type, opt_status, name_keywords)
     page_size = int(cfg.get("page_size") or 100)
     reason = _text(cfg.get("reason"))
+    workflow_name = _workflow_name(cfg, action_type)
 
     actions: list[dict[str, Any]] = []
     skipped_duration_project_count = 0
@@ -196,23 +280,21 @@ def build_project_status_update_config(
             if _text(project.get("delivery_type")) == "DURATION":
                 skipped_duration_project_count += 1
                 continue
-            action = {
-                "action_type": "status_update",
-                "advertiser_id": advertiser_id,
-                "entity_type": "project",
-                "project_id": project_id,
-                "project_name": _text(project.get("name")),
-                "opt_status": opt_status,
-            }
-            if reason:
-                action["reason"] = reason
-            actions.append(action)
+            actions.append(
+                _build_action(
+                    action_type=action_type,
+                    advertiser_id=advertiser_id,
+                    project=project,
+                    fields=fields,
+                    reason=reason,
+                )
+            )
 
     project_update = {
         "project_update_id": project_update_id,
         "operator": _text(cfg.get("operator")),
         "source": {
-            "workflow": "project_status_update_config",
+            "workflow": workflow_name,
             "request": "account_project_status_control",
         },
         "allowed_target_accounts_path": _text(cfg.get("allowed_target_accounts_path")),
@@ -222,7 +304,7 @@ def build_project_status_update_config(
     }
     return {
         "ok": True,
-        "workflow": "project_status_update_config",
+        "workflow": workflow_name,
         "phase": "control_config",
         "status": "completed",
         "execution_enabled": False,
@@ -232,6 +314,7 @@ def build_project_status_update_config(
             "target_account_count": len(advertiser_ids),
             "action_count": len(actions),
             "skipped_duration_project_count": skipped_duration_project_count,
+            "action_type": action_type,
             "opt_status": opt_status,
             "name_contains": name_keywords,
         },
@@ -251,5 +334,5 @@ def run_project_status_update_config_request(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(result["project_update"], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     result["project_update_path"] = str(output_path)
-    result["artifact_path"] = str(write_run_artifact(runs_dir, "project_status_update_config", result))
+    result["artifact_path"] = str(write_run_artifact(runs_dir, _text(result.get("workflow")) or "project_status_update_config", result))
     return result

@@ -24,9 +24,9 @@ def _transport_config(runtime: dict) -> dict:
 
 
 def run_from_args(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Execute project_update.json schedule changes after preflight.")
+    parser = argparse.ArgumentParser(description="Execute project_update.json changes after explicit approval.")
     parser.add_argument("--project-update", required=True)
-    parser.add_argument("--preflight-artifact", required=True)
+    parser.add_argument("--preflight-artifact", default="")
     parser.add_argument("--config", default="")
     parser.add_argument("--runs-dir", default="data/runs")
     parser.add_argument("--schedule-scene", default="REALTIME")
