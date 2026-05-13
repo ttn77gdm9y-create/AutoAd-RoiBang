@@ -16,6 +16,7 @@ from roibang_v2.workflows.create_http_transport import CREATE_ENDPOINT_ALLOWLIST
 from roibang_v2.workflows.create_lineage import create_ref
 from roibang_v2.workflows.create_live_execute_once import run_create_live_execute_once_request
 from roibang_v2.workflows.create_plan_contract import validate_create_plan
+from roibang_v2.workflows.create_provider_id_ledger import archive_create_provider_ids
 
 
 DEFAULT_DIRECT_CREATE_DRY_RUN_POLICY = {
@@ -334,7 +335,23 @@ def _direct_dry_run_policy(policy: dict) -> dict:
     return {**DEFAULT_DIRECT_CREATE_DRY_RUN_POLICY, **cfg}
 
 
+def _archive_plan_project_unit_ledger(*, create_plan: dict, db_path: Path, stage: str) -> dict:
+    plan_ref = create_ref(workflow="create_strategy_plan", artifact=create_plan)
+    result = archive_create_provider_ids(
+        db_path=db_path,
+        plan_id=str(plan_ref.get("plan_id") or ""),
+        request_id=str(plan_ref.get("request_id") or ""),
+        entity_types=("project", "promotion"),
+    )
+    return {"stage": stage, **result}
+
+
 def _build_internal_create_execute(*, create_plan: dict, policy: dict, db_path: Path) -> dict:
+    ledger_archive = _archive_plan_project_unit_ledger(
+        create_plan=create_plan,
+        db_path=db_path,
+        stage="before_internal_create_execute",
+    )
     dry_run = build_create_dry_run(
         create_strategy_plan_artifact=create_plan,
         create_preflight_artifact=_synthetic_preflight_artifact(create_plan),
@@ -348,6 +365,7 @@ def _build_internal_create_execute(*, create_plan: dict, policy: dict, db_path: 
     if not create_execute.get("resolved_provider_payload_drafts") and dry_run.get("provider_payload_drafts"):
         create_execute["provider_payload_drafts"] = list(dry_run["provider_payload_drafts"])
     create_execute["generated_from_create_plan"] = True
+    create_execute["pre_create_execute_ledger_archive"] = ledger_archive
     return create_execute
 
 
@@ -368,6 +386,8 @@ def _print_result(result: dict) -> None:
     }
     if "local_config_readiness" in result:
         output["local_config_readiness"] = result["local_config_readiness"]
+    if "pre_create_execute_ledger_archive" in result:
+        output["pre_create_execute_ledger_archive"] = result["pre_create_execute_ledger_archive"]
     if "create_plan_validation" in result:
         validation = result["create_plan_validation"] if isinstance(result["create_plan_validation"], dict) else {}
         output["allowed_account_contract"] = validation.get("allowed_account_contract", {})
@@ -500,6 +520,8 @@ def run_from_args(argv: list[str] | None = None) -> int:
         transport=transport,
     )
     result["local_config_readiness"] = local_config_readiness
+    if isinstance(create_execute.get("pre_create_execute_ledger_archive"), dict):
+        result["pre_create_execute_ledger_archive"] = create_execute["pre_create_execute_ledger_archive"]
     _persist_result_update(result)
     _print_result(result)
     return 0 if result["ok"] else 1

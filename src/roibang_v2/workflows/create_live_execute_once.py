@@ -13,12 +13,14 @@ from roibang_v2.workflows.create_material_bind_ledger import (
     record_create_material_bind_from_payload,
 )
 from roibang_v2.workflows.create_provider_id_ledger import (
+    archive_create_provider_ids,
     record_create_provider_id,
     resolve_provider_payload_drafts,
 )
 
 Transport = Callable[[dict[str, Any]], dict[str, Any]]
 OPERATION_ORDER = ["create_project", "bind_material", "lookup_target_material", "create_unit"]
+TRANSIENT_POST_RUN_RETRY_CODES = {50000}
 RECOVERY_ENDPOINTS = {
     "lookup_existing_project": "/open_api/v3.0/project/list/",
     "lookup_existing_unit": "/open_api/v3.0/promotion/list/",
@@ -104,6 +106,8 @@ def _blocked_result(
             "skipped_material_bind_records": [],
         },
         "material_bind_records": [],
+        "post_run_retry": _default_post_run_retry(),
+        "ledger_archive": [],
         "project_cap_cleanup": _project_cap_cleanup_summary([]),
         "runner_result": None,
         "failure": None,
@@ -456,6 +460,204 @@ def _skip_account_record(
         "status": "skipped_account_after_live_step_failure",
         "code": _response_code(response),
         "message": _response_message(response),
+    }
+
+
+def _default_post_run_retry() -> dict[str, Any]:
+    return {
+        "status": "not_triggered",
+        "attempted_count": 0,
+        "recovered_count": 0,
+        "failed_count": 0,
+        "external_api_calls": 0,
+        "records": [],
+    }
+
+
+def _archive_round_project_unit_ids(
+    *,
+    db_path: str | Path,
+    create_execute_artifact: dict[str, Any],
+    stage: str,
+) -> dict[str, Any]:
+    summary = _summary(create_execute_artifact)
+    archive_result = archive_create_provider_ids(
+        db_path=db_path,
+        plan_id=str(summary.get("plan_id") or ""),
+        request_id=str(summary.get("request_id") or ""),
+        entity_types=("project", "promotion"),
+    )
+    return {"stage": stage, **archive_result}
+
+
+def _post_run_retry_transient_create_units(
+    *,
+    create_execute_artifact: dict[str, Any],
+    policy: dict[str, Any],
+    db_path: str | Path,
+    endpoints: dict[str, str],
+    transport: Transport,
+    skipped_account_records: list[dict[str, Any]],
+    sequence: int,
+    transport_call_count: int,
+) -> dict[str, Any]:
+    retry_account_ids = {
+        str(row.get("advertiser_id") or "")
+        for row in skipped_account_records
+        if str(row.get("operation") or "") == "create_unit"
+        and str(row.get("status") or "") == "skipped_account_after_live_step_failure"
+        and int(row.get("code") or 0) in TRANSIENT_POST_RUN_RETRY_CODES
+    }
+    retry_account_ids.discard("")
+    if not retry_account_ids:
+        return {**_default_post_run_retry(), "sequence": sequence, "transport_call_count": transport_call_count}
+
+    pending: list[tuple[int, dict[str, Any]]] = []
+    for index, draft in enumerate(_drafts_for_operation(create_execute_artifact, "create_unit")):
+        payload = draft.get("payload") if isinstance(draft.get("payload"), dict) else {}
+        advertiser_id = _advertiser_id_from_payload(payload)
+        if advertiser_id not in retry_account_ids:
+            continue
+        record = _record_for_operation(create_execute_artifact, "create_unit", index)
+        local_key = str(record.get("local_key") or "")
+        if _existing_provider_id(db_path=db_path, entity_type="promotion", local_key=local_key):
+            continue
+        pending.append((index, draft))
+
+    if not pending:
+        return {
+            **_default_post_run_retry(),
+            "status": "nothing_missing",
+            "sequence": sequence,
+            "transport_call_count": transport_call_count,
+        }
+
+    resolution = resolve_provider_payload_drafts(
+        db_path=db_path,
+        provider_payload_drafts=[draft for _index, draft in pending],
+    )
+    if int(resolution.get("unresolved_count") or 0):
+        return {
+            "status": "blocked_unresolved_lookup",
+            "attempted_count": 0,
+            "recovered_count": 0,
+            "failed_count": len(pending),
+            "external_api_calls": 0,
+            "records": _rows(resolution.get("unresolved_lookups")),
+            "sequence": sequence,
+            "transport_call_count": transport_call_count,
+        }
+
+    records: list[dict[str, Any]] = []
+    provider_id_records: list[dict[str, Any]] = []
+    recovered_count = 0
+    failed_count = 0
+    retry_call_count = 0
+    resolved_drafts = _rows(resolution.get("resolved_provider_payload_drafts"))
+    for offset, draft in enumerate(resolved_drafts):
+        original_index = pending[offset][0]
+        payload = draft.get("payload") if isinstance(draft.get("payload"), dict) else {}
+        advertiser_id = _advertiser_id_from_payload(payload)
+        call = {
+            "sequence": sequence,
+            "operation": "create_unit",
+            "endpoint": endpoints.get("create_unit", ""),
+            "payload": payload,
+            "transport_mode": "create_http",
+            "retry_stage": "post_run_transient_retry",
+        }
+        _write_progress(
+            policy,
+            status="retrying",
+            operation="create_unit",
+            done=retry_call_count,
+            total=len(resolved_drafts),
+            transport_call_count=transport_call_count,
+            advertiser_id=advertiser_id,
+            index=original_index,
+            message="post_run_transient_retry",
+        )
+        try:
+            response = transport(call)
+        except RuntimeError as exc:
+            response = {"code": -1, "message": str(exc)}
+        sequence += 1
+        retry_call_count += 1
+        transport_call_count += 1
+        if _response_code(response) == 0:
+            record_result = _record_provider_id(
+                db_path=db_path,
+                create_execute_artifact=create_execute_artifact,
+                operation="create_unit",
+                index=original_index,
+                response=response,
+                request_payload=payload,
+            )
+            created_records = (
+                record_result
+                if isinstance(record_result, list)
+                else [record_result]
+                if record_result is not None
+                else []
+            )
+            if created_records and all(str(row.get("status") or "") == "recorded" for row in created_records):
+                recovered_count += 1
+                provider_id_records.extend(created_records)
+                records.append(
+                    {
+                        "operation": "create_unit",
+                        "index": original_index,
+                        "advertiser_id": advertiser_id,
+                        "status": "recovered",
+                        "code": 0,
+                        "provider_id_records": created_records,
+                    }
+                )
+            else:
+                failed_count += 1
+                records.append(
+                    {
+                        "operation": "create_unit",
+                        "index": original_index,
+                        "advertiser_id": advertiser_id,
+                        "status": "record_failed",
+                        "code": 0,
+                        "provider_id_records": created_records,
+                    }
+                )
+        else:
+            failed_count += 1
+            records.append(
+                {
+                    "operation": "create_unit",
+                    "index": original_index,
+                    "advertiser_id": advertiser_id,
+                    "status": "retry_failed",
+                    "code": _response_code(response),
+                    "message": _response_message(response),
+                }
+            )
+        _write_progress(
+            policy,
+            status="retrying" if retry_call_count < len(resolved_drafts) else "completed",
+            operation="create_unit",
+            done=retry_call_count,
+            total=len(resolved_drafts),
+            transport_call_count=transport_call_count,
+            advertiser_id=advertiser_id,
+            index=original_index,
+        )
+
+    return {
+        "status": "completed" if failed_count == 0 else "completed_with_failures",
+        "attempted_count": len(resolved_drafts),
+        "recovered_count": recovered_count,
+        "failed_count": failed_count,
+        "external_api_calls": retry_call_count,
+        "records": records,
+        "provider_id_records": provider_id_records,
+        "sequence": sequence,
+        "transport_call_count": transport_call_count,
     }
 
 
@@ -1342,6 +1544,13 @@ def _resumable_create_http_run(
     skipped_account_records: list[dict[str, Any]] = []
     skipped_account_ids: set[str] = set()
     project_cap_cleanup_records: list[dict[str, Any]] = []
+    ledger_archive_records: list[dict[str, Any]] = [
+        _archive_round_project_unit_ids(
+            db_path=db_path,
+            create_execute_artifact=create_execute_artifact,
+            stage="before_run",
+        )
+    ]
     ordered_steps: list[dict[str, Any]] = []
     transport_call_count = 0
     sequence = 0
@@ -1900,6 +2109,27 @@ def _resumable_create_http_run(
             step["skipped_account_count"] = operation_skipped_account_count
         ordered_steps.append(step)
 
+    post_run_retry = _post_run_retry_transient_create_units(
+        create_execute_artifact=create_execute_artifact,
+        policy=policy,
+        db_path=db_path,
+        endpoints=endpoints,
+        transport=transport,
+        skipped_account_records=skipped_account_records,
+        sequence=sequence,
+        transport_call_count=transport_call_count,
+    )
+    sequence = int(post_run_retry.get("sequence") or sequence)
+    transport_call_count = int(post_run_retry.get("transport_call_count") or transport_call_count)
+    provider_id_records.extend(_rows(post_run_retry.get("provider_id_records")))
+    ledger_archive_records.append(
+        _archive_round_project_unit_ids(
+            db_path=db_path,
+            create_execute_artifact=create_execute_artifact,
+            stage="after_run",
+        )
+    )
+
     return {
         "ok": True,
         "status": "create_http_completed",
@@ -1911,6 +2141,8 @@ def _resumable_create_http_run(
         "external_api_calls": transport_call_count,
         "failure": None,
         "skipped_accounts": skipped_account_records,
+        "post_run_retry": post_run_retry,
+        "ledger_archive": ledger_archive_records,
         "project_cap_cleanup": _project_cap_cleanup_summary(project_cap_cleanup_records),
         "idempotency": _idempotency_summary(
             skipped_provider_id_records=skipped_provider_id_records,
@@ -1997,6 +2229,10 @@ def build_create_live_execute_once_direct(
         "provider_id_records": list(runner_result.get("provider_id_records") or []),
         "material_bind_records": list(runner_result.get("material_bind_records") or []),
         "skipped_accounts": list(runner_result.get("skipped_accounts") or []),
+        "post_run_retry": runner_result.get("post_run_retry")
+        if isinstance(runner_result.get("post_run_retry"), dict)
+        else _default_post_run_retry(),
+        "ledger_archive": list(runner_result.get("ledger_archive") or []),
         "project_cap_cleanup": runner_result.get("project_cap_cleanup")
         if isinstance(runner_result.get("project_cap_cleanup"), dict)
         else _project_cap_cleanup_summary([]),

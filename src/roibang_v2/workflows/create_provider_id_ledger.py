@@ -130,6 +130,62 @@ def record_create_provider_id(
     }
 
 
+def archive_create_provider_ids(
+    *,
+    db_path: str | Path,
+    plan_id: str = "",
+    request_id: str = "",
+    entity_types: tuple[str, ...] = ("project", "promotion"),
+) -> dict[str, Any]:
+    normalized_plan_id = str(plan_id or "").strip()
+    normalized_request_id = str(request_id or "").strip()
+    normalized_entity_types = tuple(str(item).strip() for item in entity_types if str(item).strip())
+    if not normalized_entity_types or (not normalized_plan_id and not normalized_request_id):
+        return {
+            "status": "skipped",
+            "archived_count": 0,
+            "plan_id": normalized_plan_id,
+            "request_id": normalized_request_id,
+            "entity_types": list(normalized_entity_types),
+            "execution_enabled": False,
+            "external_api_calls": 0,
+            "actions": [],
+        }
+    where = ["status = 'active'"]
+    params: list[str] = []
+    if normalized_plan_id:
+        where.append("plan_id = ?")
+        params.append(normalized_plan_id)
+    elif normalized_request_id:
+        where.append("request_id = ?")
+        params.append(normalized_request_id)
+    placeholders = ",".join("?" for _ in normalized_entity_types)
+    where.append(f"entity_type IN ({placeholders})")
+    params.extend(normalized_entity_types)
+    now = _now_iso()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            f"""
+            UPDATE create_provider_id_ledger
+            SET status = 'archived',
+                last_seen_at = ?
+            WHERE {" AND ".join(where)}
+            """,
+            [now, *params],
+        )
+        archived_count = int(conn.execute("SELECT changes()").fetchone()[0] or 0)
+    return {
+        "status": "archived" if archived_count else "no_active_records",
+        "archived_count": archived_count,
+        "plan_id": normalized_plan_id,
+        "request_id": normalized_request_id,
+        "entity_types": list(normalized_entity_types),
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "actions": [],
+    }
+
+
 def resolve_create_lookup_placeholders(*, db_path: str | Path, payload: dict[str, Any]) -> dict[str, Any]:
     unresolved: list[dict[str, str]] = []
     lookup_count = 0
