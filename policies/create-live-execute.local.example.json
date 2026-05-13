@@ -41,14 +41,18 @@
       "base_url": "https://api.oceanengine.com",
       "token_env": "OCEANENGINE_ACCESS_TOKEN",
       "timeout_seconds": 20,
-      "max_retries": 0,
-      "retry_sleep_seconds": 120,
-      "min_interval_seconds": 3,
+      "max_retries": 1,
+      "retry_sleep_seconds": 5,
+      "retry_sleep_seconds_by_operation": {
+        "bind_material": 5,
+        "lookup_target_material": 3
+      },
+      "min_interval_seconds": 1,
       "min_interval_seconds_by_operation": {
-        "create_project": 8,
-        "bind_material": 3,
-        "lookup_target_material": 3,
-        "create_unit": 20
+        "create_project": 2,
+        "bind_material": 0.5,
+        "lookup_target_material": 0.5,
+        "create_unit": 8
       },
       "retry_api_codes_by_operation": {
         "bind_material": [40100],
@@ -59,6 +63,12 @@
         "lookup_target_material"
       ],
       "response_audit_dir": "data/runs/create_live_execute_once/audit"
+    },
+    "progress": {
+      "enabled": true,
+      "dir": "data/runs/create_live_execute_once/progress",
+      "append_jsonl": true,
+      "stderr": true
     }
   }
 }

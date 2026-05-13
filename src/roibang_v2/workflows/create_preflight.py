@@ -124,6 +124,11 @@ def _allowed_review_statuses(policy: dict[str, Any]) -> set[str]:
     return {str(item).strip() for item in value if str(item).strip()}
 
 
+def _normalized_review_status(value: Any) -> str:
+    raw = str(value or "").strip()
+    return {"3": "APPROVED"}.get(raw, raw)
+
+
 def _expected_material_type(*, request: dict[str, Any], policy: dict[str, Any]) -> str:
     if str(policy.get("material_type") or "").strip():
         return str(policy.get("material_type") or "").strip()
@@ -136,6 +141,11 @@ def _dedupe_scope(*, request: dict[str, Any], policy: dict[str, Any]) -> str:
         return str(policy.get("dedupe_scope") or "").strip()
     requirements = request.get("material_requirements") if isinstance(request.get("material_requirements"), dict) else {}
     return str(requirements.get("dedupe_scope") or "request")
+
+
+def _allow_insufficient_materials(request: dict[str, Any]) -> bool:
+    requirements = request.get("material_requirements") if isinstance(request.get("material_requirements"), dict) else {}
+    return bool(requirements.get("allow_reuse_across_accounts", False)) or str(requirements.get("on_insufficient") or "") == "allow_reuse"
 
 
 def _material_violations(*, request: dict[str, Any], projects: list[dict[str, Any]], policy: dict[str, Any]) -> list[str]:
@@ -161,8 +171,10 @@ def _material_violations(*, request: dict[str, Any], projects: list[dict[str, An
                 candidate = candidates.get(material_id)
                 if not candidate:
                     violations.append(f"material {material_id} is not in source material account")
-                elif allowed_statuses and str(candidate.get("review_status") or "") not in allowed_statuses:
-                    violations.append(f"material {material_id} review_status is not allowed")
+                else:
+                    review_status = _normalized_review_status(candidate.get("review_status"))
+                    if allowed_statuses and review_status and review_status not in allowed_statuses:
+                        violations.append(f"material {material_id} review_status is not allowed")
                 if dedupe_scope == "request":
                     if material_id in seen_request_material_ids:
                         violations.append(f"material {material_id} is duplicated in request scope")
@@ -191,6 +203,7 @@ def _project_violations(*, request: dict[str, Any], projects: list[dict[str, Any
         ),
         0,
     )
+    allow_insufficient_materials = _allow_insufficient_materials(request)
     product = str(request.get("product") or "")
     platform = str(request.get("platform") or "")
     seen_project_names_by_account: dict[str, set[str]] = {}
@@ -239,6 +252,8 @@ def _project_violations(*, request: dict[str, Any], projects: list[dict[str, Any
             if not isinstance(unit, dict):
                 continue
             materials = unit.get("materials") if isinstance(unit.get("materials"), list) else []
+            if allow_insufficient_materials and len(materials) > 0:
+                continue
             if len(materials) != expected_material_count:
                 violations.append(
                     f"unit {unit.get('unit_key')} has {len(materials)} materials, expected {expected_material_count}"

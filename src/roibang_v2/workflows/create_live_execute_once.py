@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
 import sqlite3
+import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -22,7 +25,7 @@ RECOVERY_ENDPOINTS = {
 }
 PROJECT_CAP_CLEANUP_ENDPOINTS = {
     "lookup_disabled_projects": "/open_api/v3.0/project/list/",
-    "delete_project": "/open_api/2/project/delete/",
+    "delete_project": "/open_api/v3.0/project/delete/",
 }
 ACTIVE_STATUS_VALUES = {
     "ACTIVE",
@@ -148,6 +151,67 @@ def _project_cap_cleanup_policy(policy: dict[str, Any]) -> dict[str, Any]:
         "page_size": max(int(data.get("page_size") or 100), delete_count, 1),
         "disabled_status_values": statuses,
     }
+
+
+def _progress_policy(policy: dict[str, Any]) -> dict[str, Any]:
+    value = _runner_policy(policy).get("progress")
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _write_progress(
+    policy: dict[str, Any],
+    *,
+    status: str,
+    operation: str,
+    done: int,
+    total: int,
+    transport_call_count: int,
+    advertiser_id: str = "",
+    index: int | None = None,
+    message: str = "",
+) -> None:
+    config = _progress_policy(policy)
+    if not bool(config.get("enabled", False)):
+        return
+    payload: dict[str, Any] = {
+        "ok": status != "failed",
+        "workflow": "create_live_execute_once",
+        "status": status,
+        "operation": operation,
+        "done": done,
+        "total": total,
+        "transport_call_count": transport_call_count,
+        "external_api_calls": transport_call_count,
+        "advertiser_id": advertiser_id,
+        "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    if index is not None:
+        payload["index"] = index
+    if message:
+        payload["message"] = message
+
+    progress_dir = Path(str(config.get("dir") or "data/runs/create_live_execute_once/progress"))
+    progress_dir.mkdir(parents=True, exist_ok=True)
+    (progress_dir / "current.json").write_text(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    if bool(config.get("append_jsonl", True)):
+        with (progress_dir / "events.jsonl").open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+    if bool(config.get("stderr", True)):
+        bits = [
+            "[create_live_execute_once]",
+            f"operation={operation}",
+            f"done={done}/{total}",
+            f"status={status}",
+            f"calls={transport_call_count}",
+        ]
+        if advertiser_id:
+            bits.append(f"account={advertiser_id}")
+        if message:
+            bits.append(f"message={message}")
+        print(" ".join(bits), file=sys.stderr, flush=True)
 
 
 def _endpoints(policy: dict[str, Any]) -> dict[str, str]:
@@ -441,7 +505,9 @@ def _project_cap_lookup_payload(advertiser_id: str, page_size: int) -> dict[str,
 
 
 def _project_delete_payload(advertiser_id: str, project_id: str) -> dict[str, Any]:
-    return {"advertiser_id": advertiser_id, "project_id": project_id}
+    advertiser_value: int | str = int(advertiser_id) if str(advertiser_id).isdigit() else advertiser_id
+    project_value: int | str = int(project_id) if str(project_id).isdigit() else project_id
+    return {"advertiser_id": advertiser_value, "project_ids": [project_value]}
 
 
 def _project_cap_cleanup_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
@@ -607,7 +673,9 @@ def _target_material_item_for_lookup(response: dict[str, Any], lookup_item: dict
             return row
         if source_video_id and row_video_id == source_video_id:
             return row
-    return rows[0]
+    if not material_id and not source_video_id and len(rows) == 1:
+        return rows[0]
+    return {}
 
 
 def _target_video_id_from_item(item: dict[str, Any]) -> str:
@@ -1044,6 +1112,198 @@ def _batch_target_material_lookup_drafts(
     return batches, batch_drafts
 
 
+def _payload_list(payload: dict[str, Any], *names: str) -> list[str]:
+    for name in names:
+        value = payload.get(name)
+        if isinstance(value, list):
+            return [str(item) for item in value if str(item or "").strip()]
+    return []
+
+
+def _lookup_items_by_target_and_video(create_execute_artifact: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
+    items: dict[tuple[str, str], dict[str, Any]] = {}
+    for draft in _drafts_for_operation(create_execute_artifact, "lookup_target_material"):
+        payload = draft.get("payload") if isinstance(draft.get("payload"), dict) else {}
+        target_advertiser_id = str(payload.get("target_advertiser_id") or payload.get("advertiser_id") or "")
+        source_video_id = str(payload.get("source_video_id") or "")
+        if not target_advertiser_id or not source_video_id:
+            continue
+        items[(target_advertiser_id, source_video_id)] = {
+            "target_advertiser_id": target_advertiser_id,
+            "source_video_id": source_video_id,
+            "material_id": str(payload.get("material_id") or ""),
+        }
+    return items
+
+
+def _target_material_local_keys(target_advertiser_id: str, source_video_id: str) -> dict[str, str]:
+    return {
+        "target_video": f"target_video:{target_advertiser_id}:{source_video_id}",
+        "target_video_cover": f"target_video_cover:{target_advertiser_id}:{source_video_id}",
+    }
+
+
+def _target_material_pair_exists(
+    *,
+    db_path: str | Path,
+    target_advertiser_id: str,
+    source_video_id: str,
+) -> bool:
+    keys = _target_material_local_keys(target_advertiser_id, source_video_id)
+    return bool(
+        _existing_provider_id(db_path=db_path, entity_type="target_video", local_key=keys["target_video"])
+        and _existing_provider_id(db_path=db_path, entity_type="target_video_cover", local_key=keys["target_video_cover"])
+    )
+
+
+def _record_existing_target_material_lookup(
+    *,
+    db_path: str | Path,
+    create_execute_artifact: dict[str, Any],
+    response: dict[str, Any],
+    lookup_items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    record_result = _record_provider_id(
+        db_path=db_path,
+        create_execute_artifact=create_execute_artifact,
+        operation="lookup_target_material",
+        index=0,
+        response=response,
+        request_payload={"lookup_items": lookup_items},
+    )
+    records = record_result if isinstance(record_result, list) else [record_result] if record_result else []
+    return [record for record in records if str(record.get("status") or "") == "recorded"]
+
+
+def _precheck_existing_target_materials_for_bind(
+    *,
+    db_path: str | Path,
+    create_execute_artifact: dict[str, Any],
+    pending: list[tuple[int, dict[str, Any]]],
+    endpoints: dict[str, str],
+    transport: Transport,
+    sequence: int,
+) -> dict[str, Any]:
+    lookup_items_by_key = _lookup_items_by_target_and_video(create_execute_artifact)
+    pending_after_precheck: list[tuple[int, dict[str, Any]]] = []
+    skipped: list[dict[str, Any]] = []
+    material_bind_records: list[dict[str, Any]] = []
+    provider_id_records: list[dict[str, Any]] = []
+    call_count = 0
+
+    for original_index, draft in pending:
+        payload = draft.get("payload") if isinstance(draft.get("payload"), dict) else {}
+        target_advertiser_ids = _payload_list(payload, "target_advertiser_ids")
+        source_video_ids = _payload_list(payload, "source_video_ids", "video_ids")
+        if not target_advertiser_ids or not source_video_ids:
+            pending_after_precheck.append((original_index, draft))
+            continue
+
+        lookup_items: list[dict[str, Any]] = []
+        for target_advertiser_id in target_advertiser_ids:
+            for source_video_id in source_video_ids:
+                item = lookup_items_by_key.get((target_advertiser_id, source_video_id)) or {
+                    "target_advertiser_id": target_advertiser_id,
+                    "source_video_id": source_video_id,
+                    "material_id": "",
+                }
+                lookup_items.append(dict(item))
+
+        if not lookup_items:
+            pending_after_precheck.append((original_index, draft))
+            continue
+
+        material_ids = [str(item.get("material_id") or "") for item in lookup_items if str(item.get("material_id") or "")]
+        source_video_id_filters = [
+            str(item.get("source_video_id") or "") for item in lookup_items if str(item.get("source_video_id") or "")
+        ]
+        lookup_payload: dict[str, Any] = {
+            "target_advertiser_id": target_advertiser_ids[0],
+            "advertiser_id": target_advertiser_ids[0],
+            "lookup_items": lookup_items,
+        }
+        if material_ids:
+            lookup_payload["material_ids"] = material_ids
+        if source_video_id_filters:
+            lookup_payload["source_video_ids"] = source_video_id_filters
+        lookup_call = {
+            "sequence": sequence,
+            "operation": "lookup_target_material",
+            "endpoint": endpoints.get("lookup_target_material", ""),
+            "payload": lookup_payload,
+            "transport_mode": "create_http",
+        }
+        try:
+            lookup_response = transport(lookup_call)
+        except RuntimeError:
+            sequence += 1
+            call_count += 1
+            pending_after_precheck.append((original_index, draft))
+            continue
+        sequence += 1
+        call_count += 1
+        if _response_code(lookup_response) != 0:
+            pending_after_precheck.append((original_index, draft))
+            continue
+
+        provider_id_records.extend(
+            _record_existing_target_material_lookup(
+                db_path=db_path,
+                create_execute_artifact=create_execute_artifact,
+                response=lookup_response,
+                lookup_items=lookup_items,
+            )
+        )
+        existing_source_video_ids = [
+            source_video_id
+            for source_video_id in source_video_ids
+            if all(
+                _target_material_pair_exists(
+                    db_path=db_path,
+                    target_advertiser_id=target_advertiser_id,
+                    source_video_id=source_video_id,
+                )
+                for target_advertiser_id in target_advertiser_ids
+            )
+        ]
+        missing_source_video_ids = [item for item in source_video_ids if item not in set(existing_source_video_ids)]
+        if existing_source_video_ids:
+            existing_payload = {
+                **payload,
+                "source_video_ids": existing_source_video_ids,
+                "video_ids": existing_source_video_ids,
+            }
+            material_bind_records.append(
+                _record_material_bind(
+                    db_path=db_path,
+                    create_execute_artifact=create_execute_artifact,
+                    payload=existing_payload,
+                    response={"code": 0, "message": "existing_target_material", "data": {"task_id": "existing_target_material"}},
+                )
+            )
+            skipped.append(
+                {
+                    "operation": "bind_material",
+                    "index": original_index,
+                    "target_advertiser_ids": target_advertiser_ids,
+                    "source_video_ids": existing_source_video_ids,
+                    "status": "skipped_existing_target_material",
+                }
+            )
+        if missing_source_video_ids:
+            next_payload = {**payload, "source_video_ids": missing_source_video_ids, "video_ids": missing_source_video_ids}
+            pending_after_precheck.append((original_index, {**draft, "payload": next_payload}))
+
+    return {
+        "pending": pending_after_precheck,
+        "skipped": skipped,
+        "material_bind_records": material_bind_records,
+        "provider_id_records": provider_id_records,
+        "transport_call_count": call_count,
+        "sequence": sequence,
+    }
+
+
 def _resumable_create_http_run(
     *,
     create_execute_artifact: dict[str, Any],
@@ -1067,6 +1327,7 @@ def _resumable_create_http_run(
         drafts = _drafts_for_operation(create_execute_artifact, operation)
         if not drafts:
             continue
+        operation_call_count = 0
         if operation == "bind_material":
             pending, skipped_binds = _split_existing_material_binds(db_path=db_path, drafts=drafts)
             skipped_material_bind_records.extend(skipped_binds)
@@ -1090,6 +1351,15 @@ def _resumable_create_http_run(
             skipped_provider_id_records.extend(skipped)
             skipped_status = "skipped_existing_provider_id"
         if drafts and not pending:
+            _write_progress(
+                policy,
+                status=skipped_status,
+                operation=operation,
+                done=len(drafts),
+                total=len(drafts),
+                transport_call_count=transport_call_count,
+                message=f"skipped={len(skipped)}",
+            )
             ordered_steps.append(
                 {
                     "operation": operation,
@@ -1120,6 +1390,15 @@ def _resumable_create_http_run(
                 filtered_pending.append((original_index, draft))
             pending = filtered_pending
             if drafts and not pending:
+                _write_progress(
+                    policy,
+                    status="completed_with_skipped_accounts",
+                    operation=operation,
+                    done=len(drafts),
+                    total=len(drafts),
+                    transport_call_count=transport_call_count,
+                    message=f"skipped_accounts={operation_skipped_account_count}",
+                )
                 ordered_steps.append(
                     {
                         "operation": operation,
@@ -1127,6 +1406,45 @@ def _resumable_create_http_run(
                         "status": "completed_with_skipped_accounts",
                         "test_transport_call_count": 0,
                         "skipped_account_count": operation_skipped_account_count,
+                    }
+                )
+                continue
+
+        if operation == "bind_material" and pending:
+            precheck = _precheck_existing_target_materials_for_bind(
+                db_path=db_path,
+                create_execute_artifact=create_execute_artifact,
+                pending=pending,
+                endpoints=endpoints,
+                transport=transport,
+                sequence=sequence,
+            )
+            pending = precheck["pending"]
+            sequence = int(precheck["sequence"])
+            precheck_call_count = int(precheck["transport_call_count"])
+            transport_call_count += precheck_call_count
+            operation_call_count += precheck_call_count
+            precheck_skipped = _rows(precheck.get("skipped"))
+            skipped.extend(precheck_skipped)
+            skipped_material_bind_records.extend(precheck_skipped)
+            material_bind_records.extend(_rows(precheck.get("material_bind_records")))
+            provider_id_records.extend(_rows(precheck.get("provider_id_records")))
+            if drafts and not pending:
+                _write_progress(
+                    policy,
+                    status="skipped_existing_target_material",
+                    operation=operation,
+                    done=len(drafts),
+                    total=len(drafts),
+                    transport_call_count=transport_call_count,
+                    message=f"skipped={len(skipped)}",
+                )
+                ordered_steps.append(
+                    {
+                        "operation": operation,
+                        "planned_count": len(drafts),
+                        "status": "skipped_existing_target_material",
+                        "test_transport_call_count": operation_call_count,
                     }
                 )
                 continue
@@ -1159,7 +1477,16 @@ def _resumable_create_http_run(
         resolved_drafts = _rows(resolution.get("resolved_provider_payload_drafts"))
         if operation == "lookup_target_material":
             pending, resolved_drafts = _batch_target_material_lookup_drafts(pending, resolved_drafts)
-        operation_call_count = 0
+        operation_done_count = len(skipped)
+        _write_progress(
+            policy,
+            status="running",
+            operation=operation,
+            done=operation_done_count,
+            total=len(drafts),
+            transport_call_count=transport_call_count,
+            message=f"pending={len(resolved_drafts)} skipped={len(skipped)}",
+        )
         for offset, draft in enumerate(resolved_drafts):
             original_index = pending[offset][0]
             payload = draft.get("payload") if isinstance(draft.get("payload"), dict) else {}
@@ -1173,6 +1500,17 @@ def _resumable_create_http_run(
                         "advertiser_id": advertiser_id,
                         "status": "skipped_account_after_create_project_failure",
                     }
+                )
+                operation_done_count += 1
+                _write_progress(
+                    policy,
+                    status="skipped_account",
+                    operation=operation,
+                    done=operation_done_count,
+                    total=len(drafts),
+                    transport_call_count=transport_call_count,
+                    advertiser_id=advertiser_id,
+                    index=original_index,
                 )
                 continue
             create_retry_count = 0
@@ -1380,7 +1718,30 @@ def _resumable_create_http_run(
                         }
                     )
                     operation_skipped_account_count += 1
+                    operation_done_count += 1
+                    _write_progress(
+                        policy,
+                        status="skipped_account",
+                        operation=operation,
+                        done=operation_done_count,
+                        total=len(drafts),
+                        transport_call_count=transport_call_count,
+                        advertiser_id=advertiser_id,
+                        index=original_index,
+                        message=_response_message(response),
+                    )
                     continue
+                _write_progress(
+                    policy,
+                    status="failed",
+                    operation=operation,
+                    done=operation_done_count,
+                    total=len(drafts),
+                    transport_call_count=transport_call_count,
+                    advertiser_id=advertiser_id,
+                    index=original_index,
+                    message=_response_message(response),
+                )
                 return {
                     "ok": False,
                     "status": "create_http_failed",
@@ -1441,6 +1802,17 @@ def _resumable_create_http_run(
                         response=response,
                     )
                 )
+            operation_done_count += 1
+            _write_progress(
+                policy,
+                status="running" if operation_done_count < len(drafts) else "completed",
+                operation=operation,
+                done=operation_done_count,
+                total=len(drafts),
+                transport_call_count=transport_call_count,
+                advertiser_id=advertiser_id,
+                index=original_index,
+            )
         step = {
             "operation": operation,
             "planned_count": len(drafts),
@@ -1501,7 +1873,6 @@ def _direct_blocking_reasons(
         reasons.append("create_execute payload drafts must not contain live payload flags")
     if not bool(payload_safety["lookup_placeholders_chain_resolvable"]):
         reasons.append("create_execute payloads contain lookup placeholders that cannot be produced by this fixed chain")
-    reasons.extend(_active_launch_violations(create_execute_artifact))
     return reasons
 
 

@@ -87,10 +87,15 @@ def _token_pointer_status(transport_cfg: dict) -> dict[str, Any]:
                     "user_id": str(token_store.get("user_id") or "default"),
                     "error_type": type(exc).__name__,
                 }
+        auto_refresh_ready = (
+            bool(token_store.get("auto_refresh", False))
+            and bool(health.get("refresh_token_present"))
+            and int(health.get("refresh_token_expires_in_seconds") or 0) > 0
+        )
         return {
             "source": "token_store",
             "pointer_ready": bool(token_store_file),
-            "value_ready": bool(health.get("ok")),
+            "value_ready": bool(health.get("ok")) or auto_refresh_ready,
             "token_health": health,
         }
     token_env = str(transport_cfg.get("token_env") or "").strip()

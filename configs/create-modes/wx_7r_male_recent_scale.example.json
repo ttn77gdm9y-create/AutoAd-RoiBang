@@ -1,15 +1,16 @@
 {
-  "mode_key": "wx_pay_male_scale",
-  "display_name": "每付男历史放量",
+  "mode_key": "wx_7r_male_recent_scale",
+  "display_name": "7R 男近期放量",
   "product": "勇者突进",
   "platform": "WECHAT_GAME",
-  "template_key": "wx_pay_male",
-  "template_name_suffix": "历史放量",
+  "template_key": "wx_7r_male",
+  "template_name_suffix": "近期放量",
   "source_advertiser_id": "1856647522964490",
   "organization_id": "1851650746645060",
   "defaults": {
     "daily_budget": 88888,
     "cpa_bid": 103,
+    "roi_coefficient": 0.419,
     "project_count": 5,
     "units_per_project": 1
   },
@@ -23,7 +24,7 @@
   },
   "material_selection": {
     "source_scope": "source_material_account",
-    "lookback_days": 30,
+    "lookback_days": 7,
     "selection_type": "high_spend",
     "min_stat_cost": 1000,
     "sort_by": "stat_cost_desc",

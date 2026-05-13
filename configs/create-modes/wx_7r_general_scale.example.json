@@ -1,10 +1,10 @@
 {
   "mode_key": "wx_7r_general_scale",
-  "display_name": "7R 通投放量",
+  "display_name": "7R 通投历史放量",
   "product": "勇者突进",
   "platform": "WECHAT_GAME",
   "template_key": "wx_7r_general",
-  "template_name_suffix": "放量",
+  "template_name_suffix": "历史放量",
   "source_advertiser_id": "1856647522964490",
   "organization_id": "1851650746645060",
   "defaults": {
@@ -24,7 +24,7 @@
   },
   "material_selection": {
     "source_scope": "source_material_account",
-    "lookback_days": 60,
+    "lookback_days": 30,
     "selection_type": "high_spend",
     "min_stat_cost": 1000,
     "sort_by": "stat_cost_desc",

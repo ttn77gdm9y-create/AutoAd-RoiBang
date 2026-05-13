@@ -12,7 +12,11 @@ from roibang_v2.workflows.create_material_bind_ledger import (
     record_create_material_bind_result,
 )
 from roibang_v2.workflows.create_provider_id_ledger import record_create_provider_id
-from roibang_v2.workflows.create_live_execute_once import run_create_live_execute_once_request
+from roibang_v2.workflows.create_live_execute_once import (
+    _project_delete_payload,
+    _target_material_item_for_lookup,
+    run_create_live_execute_once_request,
+)
 
 
 def _load_script(name: str):
@@ -42,6 +46,100 @@ def _runtime_config(tmp_path: Path, *, execution_enabled: bool = False, external
         encoding="utf-8",
     )
     return path
+
+
+def test_target_material_lookup_matches_exact_material_id_without_first_row_fallback():
+    response = {
+        "code": 0,
+        "data": {
+            "list": [
+                {"id": "target-video-a", "material_id": 111},
+                {"id": "target-video-b", "material_id": 222},
+            ]
+        },
+    }
+
+    assert _target_material_item_for_lookup(response, {"material_id": "222"})["id"] == "target-video-b"
+    assert _target_material_item_for_lookup(response, {"material_id": "333"}) == {}
+
+
+def test_project_delete_payload_casts_numeric_ids_to_ints():
+    assert _project_delete_payload("1856647530917899", "7638636431363719210") == {
+        "advertiser_id": 1856647530917899,
+        "project_ids": [7638636431363719210],
+    }
+
+
+def test_watch_create_live_progress_cli_prints_current_progress(tmp_path: Path, capsys):
+    progress_dir = tmp_path / "progress"
+    progress_dir.mkdir()
+    (progress_dir / "current.json").write_text(
+        json.dumps(
+            {
+                "operation": "create_unit",
+                "status": "running",
+                "done": 3,
+                "total": 8,
+                "external_api_calls": 12,
+                "advertiser_id": "target-1",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    script = _load_script("watch_create_live_progress")
+    code = script.run_from_args(["--progress-dir", str(progress_dir), "--once"])
+
+    assert code == 0
+    output = capsys.readouterr().out
+    assert "operation（操作）=create_unit" in output
+    assert "progress（进度）=3/8" in output
+    assert "external_api_calls（外部接口调用）=12" in output
+
+
+def test_run_create_live_execute_terminal_wraps_fixed_script_with_progress(tmp_path: Path, capsys):
+    runtime_path = _runtime_config(tmp_path)
+    _seed_plan_sources(tmp_path / "roibang.sqlite3")
+    policy = _policy()
+    policy["create_live_execute_once"]["progress"] = {
+        "enabled": True,
+        "dir": str(tmp_path / "progress"),
+        "append_jsonl": True,
+        "stderr": False,
+    }
+    policy_path = tmp_path / "policy.json"
+    plan_path = tmp_path / "create-plan.json"
+    create_execute_path = tmp_path / "create-execute.json"
+    policy_path.write_text(json.dumps(policy, ensure_ascii=False), encoding="utf-8")
+    plan_path.write_text(json.dumps(_create_plan(), ensure_ascii=False), encoding="utf-8")
+    create_execute_path.write_text(json.dumps(_execute_artifact(), ensure_ascii=False), encoding="utf-8")
+
+    script = _load_script("run_create_live_execute_terminal")
+    code = script.run_from_args(
+        [
+            "--config",
+            str(runtime_path),
+            "--policy",
+            str(policy_path),
+            "--plan",
+            str(plan_path),
+            "--create-execute-artifact",
+            str(create_execute_path),
+            "--interval",
+            "0.2",
+            "--recent-events",
+            "1",
+        ]
+    )
+
+    output = capsys.readouterr().out
+    assert code == 0
+    assert "terminal_runner（终端执行器）=started" in output
+    assert "terminal_runner（终端执行器）=finished exit_code（退出码）=0" in output
+    assert "final_result（最终结果）:" in output
+    assert list((tmp_path / "progress").glob("terminal_*.stdout.log"))
+    assert list((tmp_path / "progress").glob("terminal_*.stderr.log"))
 
 
 def _execute_artifact() -> dict:
@@ -339,13 +437,13 @@ def test_create_live_execute_once_direct_mode_runs_fixed_sequence_with_transport
     assert "source_execution_pack_status" not in result
     assert result["execution_enabled"] is True
     assert result["live_execute_enabled"] is True
-    assert result["external_api_calls"] == 4
+    assert result["external_api_calls"] == 3
     assert [call["operation"] for call in calls] == [
         "create_project",
-        "bind_material",
         "lookup_target_material",
         "create_unit",
     ]
+    assert result["ordered_steps"][1]["status"] == "skipped_existing_target_material"
 
 
 def test_create_live_execute_once_deletes_closed_projects_and_retries_when_project_cap_is_hit(tmp_path: Path):
@@ -374,7 +472,7 @@ def test_create_live_execute_once_deletes_closed_projects_and_retries_when_proje
             }
         if call["operation"] == "delete_project":
             assert call["payload"]["advertiser_id"] == "target-1"
-            return {"code": 0, "data": {"project_id": call["payload"]["project_id"]}}
+            return {"code": 0, "data": {"project_ids": call["payload"]["project_ids"]}}
         if call["operation"] == "bind_material":
             return {"code": 0, "data": {"task_id": "bind-001"}}
         if call["operation"] == "lookup_target_material":
@@ -399,17 +497,16 @@ def test_create_live_execute_once_deletes_closed_projects_and_retries_when_proje
 
     assert result["ok"] is True
     assert result["status"] == "create_http_completed"
-    assert result["external_api_calls"] == 16
+    assert result["external_api_calls"] == 15
     assert [call["operation"] for call in calls] == [
         "create_project",
         "lookup_disabled_projects",
         *["delete_project"] * 10,
         "create_project",
-        "bind_material",
         "lookup_target_material",
         "create_unit",
     ]
-    assert [call["payload"]["project_id"] for call in calls if call["operation"] == "delete_project"] == [
+    assert [call["payload"]["project_ids"][0] for call in calls if call["operation"] == "delete_project"] == [
         f"closed-{index:02d}" for index in range(1, 11)
     ]
     assert result["project_cap_cleanup"]["attempted_count"] == 1
@@ -453,7 +550,6 @@ def test_create_live_execute_once_direct_mode_allows_chain_resolvable_lookups(tm
     assert result["status"] == "create_http_completed"
     assert [call["operation"] for call in calls] == [
         "create_project",
-        "bind_material",
         "lookup_target_material",
         "create_unit",
     ]
@@ -486,7 +582,7 @@ def test_create_live_execute_once_direct_mode_blocks_unproducible_lookup(tmp_pat
     )
 
 
-def test_create_live_execute_once_direct_mode_blocks_active_create_payload(tmp_path: Path):
+def test_create_live_execute_once_direct_mode_allows_active_create_payload(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     bootstrap_database(db_path)
     create_execute = json.loads(json.dumps(_execute_artifact(), ensure_ascii=False))
@@ -506,8 +602,9 @@ def test_create_live_execute_once_direct_mode_blocks_active_create_payload(tmp_p
     )
 
     assert result["ok"] is False
-    assert result["external_api_calls"] == 0
-    assert "create_project.status must not be ACTIVE during create" in result["blocking_reasons"]
+    assert result["external_api_calls"] > 0
+    assert result["blocking_reasons"] == []
+    assert "create_project.status must not be ACTIVE during create" not in result["blocking_reasons"]
 
 
 def test_create_live_execute_once_runs_create_http_transport_in_order(tmp_path: Path):
@@ -545,22 +642,26 @@ def test_create_live_execute_once_runs_create_http_transport_in_order(tmp_path: 
     assert result["status"] == "create_http_completed"
     assert result["execution_enabled"] is True
     assert result["live_execute_enabled"] is True
-    assert result["external_api_calls"] == 4
-    assert result["transport_call_count"] == 4
+    assert result["external_api_calls"] == 3
+    assert result["transport_call_count"] == 3
     assert [call["operation"] for call in calls] == [
         "create_project",
-        "bind_material",
         "lookup_target_material",
         "create_unit",
     ]
     assert result["ordered_steps"] == [
         {"operation": "create_project", "planned_count": 1, "status": "completed", "test_transport_call_count": 1},
-        {"operation": "bind_material", "planned_count": 1, "status": "completed", "test_transport_call_count": 1},
+        {
+            "operation": "bind_material",
+            "planned_count": 1,
+            "status": "skipped_existing_target_material",
+            "test_transport_call_count": 1,
+        },
         {
             "operation": "lookup_target_material",
             "planned_count": 1,
-            "status": "completed",
-            "test_transport_call_count": 1,
+            "status": "skipped_existing_provider_id",
+            "test_transport_call_count": 0,
         },
         {"operation": "create_unit", "planned_count": 1, "status": "completed", "test_transport_call_count": 1},
     ]
@@ -593,7 +694,7 @@ def test_create_live_execute_once_runs_create_http_transport_in_order(tmp_path: 
             """
         ).fetchall()
     assert bind_rows == [
-        ("source-1", '["target-1"]', '["video-1"]', "bind-001", "active"),
+        ("source-1", '["target-1"]', '["video-1"]', "existing_target_material", "active"),
     ]
 
 
@@ -679,11 +780,10 @@ def test_create_live_execute_once_retries_create_project_after_lookup_confirms_m
         "create_project",
         "lookup_existing_project",
         "create_project",
-        "bind_material",
         "lookup_target_material",
         "create_unit",
     ]
-    assert result["external_api_calls"] == 6
+    assert result["external_api_calls"] == 5
 
 
 def test_create_live_execute_once_returns_failure_when_recovery_lookup_fails(tmp_path: Path):
@@ -764,7 +864,6 @@ def test_create_live_execute_once_records_existing_unit_after_transient_create_e
     assert result["ok"] is True
     assert [call["operation"] for call in calls] == [
         "create_project",
-        "bind_material",
         "lookup_target_material",
         "create_unit",
         "lookup_existing_unit",
@@ -811,6 +910,8 @@ def test_create_live_execute_once_batches_target_material_lookup_by_account(tmp_
         if call["operation"] == "bind_material":
             return {"code": 0, "data": {"task_id": "bind-001"}}
         if call["operation"] == "lookup_target_material":
+            if call["payload"]["material_ids"] == ["material-1"]:
+                return {"code": 0, "data": {"list": []}}
             assert call["payload"]["material_ids"] == ["material-1", "material-2"]
             return {
                 "code": 0,
@@ -841,6 +942,7 @@ def test_create_live_execute_once_batches_target_material_lookup_by_account(tmp_
     assert result["ok"] is True
     assert [call["operation"] for call in calls] == [
         "create_project",
+        "lookup_target_material",
         "bind_material",
         "lookup_target_material",
         "create_unit",
@@ -905,9 +1007,9 @@ def test_create_live_execute_once_skips_existing_project_and_resumes_unit(tmp_pa
 
     assert result["ok"] is True
     assert result["status"] == "create_http_completed"
-    assert result["external_api_calls"] == 3
-    assert [call["operation"] for call in calls] == ["bind_material", "lookup_target_material", "create_unit"]
-    assert result["idempotency"]["skipped_existing_provider_id_count"] == 1
+    assert result["external_api_calls"] == 2
+    assert [call["operation"] for call in calls] == ["lookup_target_material", "create_unit"]
+    assert result["idempotency"]["skipped_existing_provider_id_count"] == 3
     assert result["ordered_steps"][0] == {
         "operation": "create_project",
         "planned_count": 1,
@@ -986,11 +1088,10 @@ def test_create_live_execute_once_ignores_mock_provider_ids_during_live_run(tmp_
     assert result["ok"] is True
     assert [call["operation"] for call in calls] == [
         "create_project",
-        "bind_material",
         "lookup_target_material",
         "create_unit",
     ]
-    assert result["idempotency"]["skipped_existing_provider_id_count"] == 0
+    assert result["idempotency"]["skipped_existing_provider_id_count"] == 2
     with sqlite3.connect(db_path) as conn:
         rows = conn.execute(
             """
@@ -1093,13 +1194,13 @@ def test_create_live_execute_once_skips_existing_project_and_unit_then_binds_mat
     )
 
     assert result["ok"] is True
-    assert result["external_api_calls"] == 2
-    assert [call["operation"] for call in calls] == ["bind_material", "lookup_target_material"]
-    assert result["idempotency"]["skipped_existing_provider_id_count"] == 2
+    assert result["external_api_calls"] == 1
+    assert [call["operation"] for call in calls] == ["lookup_target_material"]
+    assert result["idempotency"]["skipped_existing_provider_id_count"] == 4
     assert [step["status"] for step in result["ordered_steps"]] == [
         "skipped_existing_provider_id",
-        "completed",
-        "completed",
+        "skipped_existing_target_material",
+        "skipped_existing_provider_id",
         "skipped_existing_provider_id",
     ]
 

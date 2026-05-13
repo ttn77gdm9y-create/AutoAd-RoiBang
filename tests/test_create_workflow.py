@@ -597,6 +597,28 @@ def test_create_preflight_fails_closed_for_missing_account_and_short_materials(t
     assert "unit missing-account-p001-u03 has 0 materials, expected 2" in result["violations"]
     assert "approved_for_execute" not in result
 
+
+def test_create_preflight_allows_short_materials_when_mode_allows_reuse(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    request = _create_request()["create_request"]
+    request["material_requirements"]["materials_per_unit"] = 3
+    request["material_requirements"]["dedupe_scope"] = "max_account_overlap"
+    request["material_requirements"]["allow_reuse_across_accounts"] = True
+    request["material_requirements"]["on_insufficient"] = "allow_reuse"
+    plan = build_create_strategy_plan(request=request, db_path=db_path, policy={})
+
+    result = build_create_preflight(
+        create_strategy_plan_artifact=plan,
+        db_path=db_path,
+        policy={"require_account_pool": True, "min_daily_budget": 100},
+    )
+
+    assert result["ok"] is True
+    assert result["status"] == "passed"
+    assert not any("materials, expected" in item for item in result["violations"])
+
+
 def test_create_preflight_validates_material_candidate_source_type_status_and_dedupe(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     _seed_create_db(db_path)

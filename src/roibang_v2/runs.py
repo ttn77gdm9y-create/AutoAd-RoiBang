@@ -13,9 +13,15 @@ def utc_timestamp() -> str:
 def write_run_artifact(runs_dir: str | Path, workflow: str, payload: dict[str, Any]) -> Path:
     target_dir = Path(runs_dir) / workflow
     target_dir.mkdir(parents=True, exist_ok=True)
-    target = target_dir / f"{utc_timestamp()}.json"
-    target.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    return target
+    timestamp = utc_timestamp()
+    content = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    for index in range(1000):
+        suffix = "" if index == 0 else f"-{index:03d}"
+        target = target_dir / f"{timestamp}{suffix}.json"
+        try:
+            with target.open("x", encoding="utf-8") as handle:
+                handle.write(content)
+            return target
+        except FileExistsError:
+            continue
+    raise RuntimeError(f"cannot allocate run artifact path for workflow {workflow}: {timestamp}")

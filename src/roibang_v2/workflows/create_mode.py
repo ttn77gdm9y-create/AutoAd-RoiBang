@@ -11,20 +11,28 @@ from roibang_v2.runs import write_run_artifact
 from roibang_v2.workflows.create_strategy_plan import build_create_strategy_plan
 
 MODE_ALIASES = {
-    "7r通投放量": "wx_7r_general_scale",
+    "7r通投历史放量": "wx_7r_general_scale",
+    "7r通投近期放量": "wx_7r_general_recent_scale",
     "7r通投测新": "wx_7r_general_test_new",
-    "7r男放量": "wx_7r_male_scale",
+    "7r男历史放量": "wx_7r_male_scale",
+    "7r男近期放量": "wx_7r_male_recent_scale",
     "7r男测新": "wx_7r_male_test_new",
-    "每付通投放量": "wx_pay_general_scale",
+    "每付通投历史放量": "wx_pay_general_scale",
+    "每付通投近期放量": "wx_pay_general_recent_scale",
     "每付通投测新": "wx_pay_general_test_new",
-    "每付男放量": "wx_pay_male_scale",
+    "每付男历史放量": "wx_pay_male_scale",
+    "每付男近期放量": "wx_pay_male_recent_scale",
     "每付男测新": "wx_pay_male_test_new",
 }
 
 AMBIGUOUS_MODE_ALIASES = {
-    "7r放量": "7R 放量需要指定通投或男，例如 7R 通投放量 / 7R 男放量",
+    "7r放量": "7R 放量需要指定通投或男，并指定历史/近期，例如 7R 通投历史放量 / 7R 通投近期放量",
+    "7r通投放量": "7R 通投放量需要指定历史/近期，例如 7R 通投历史放量 / 7R 通投近期放量",
+    "7r男放量": "7R 男放量需要指定历史/近期，例如 7R 男历史放量 / 7R 男近期放量",
     "7r测新": "7R 测新需要指定通投或男，例如 7R 通投测新 / 7R 男测新",
-    "每付放量": "每付放量需要指定通投或男，例如 每付通投放量 / 每付男放量",
+    "每付放量": "每付放量需要指定通投或男，并指定历史/近期，例如 每付通投历史放量 / 每付通投近期放量",
+    "每付通投放量": "每付通投放量需要指定历史/近期，例如 每付通投历史放量 / 每付通投近期放量",
+    "每付男放量": "每付男放量需要指定历史/近期，例如 每付男历史放量 / 每付男近期放量",
     "每付测新": "每付测新需要指定通投或男，例如 每付通投测新 / 每付男测新",
 }
 

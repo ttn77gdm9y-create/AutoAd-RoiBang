@@ -67,11 +67,11 @@ def _load_script(name: str):
 def test_create_mode_builds_scale_create_request_from_mode_config():
     mode = {
         "mode_key": "wx_7r_general_scale",
-        "display_name": "7R 放量",
+        "display_name": "7R 历史放量",
         "product": "勇者突进",
         "platform": "WECHAT_GAME",
         "template_key": "wx_7r_general",
-        "template_name_suffix": "放量",
+        "template_name_suffix": "历史放量",
         "source_advertiser_id": "1856647522964490",
         "organization_id": "1851650746645060",
         "defaults": {
@@ -88,7 +88,7 @@ def test_create_mode_builds_scale_create_request_from_mode_config():
             "max_cross_account_overlap_ratio": 0.3,
             "on_insufficient": "allow_reuse",
         },
-        "material_selection": {"lookback_days": 60, "selection_type": "high_spend"},
+        "material_selection": {"lookback_days": 30, "selection_type": "high_spend"},
         "initial_status": {"project_operation": "ENABLE", "unit_operation": "ENABLE"},
     }
     template_catalog = json.loads(Path("configs/create-templates/wx-mini-game.json").read_text(encoding="utf-8"))
@@ -105,7 +105,7 @@ def test_create_mode_builds_scale_create_request_from_mode_config():
     )
 
     assert request["template_key"] == "wx_7r_general"
-    assert request["project_template_name"] == "微小每付7R通投放量"
+    assert request["project_template_name"] == "微小每付7R通投历史放量"
     assert request["target_accounts"] == [
         {"advertiser_id": "acc-1", "project_count": 5, "units_per_project": 1, "daily_budget": 88888},
         {"advertiser_id": "acc-2", "project_count": 5, "units_per_project": 1, "daily_budget": 88888},
@@ -115,6 +115,7 @@ def test_create_mode_builds_scale_create_request_from_mode_config():
     assert request["material_requirements"]["materials_per_unit"] == 5
     assert request["material_requirements"]["max_cross_account_overlap_ratio"] == 0.3
     assert request["material_selection"]["source_scope"] == "source_material_account"
+    assert request["material_selection"]["lookback_days"] == 30
     assert request["material_selection"]["min_stat_cost"] == 1000
     assert request["material_selection"]["sort_by"] == "stat_cost_desc"
     assert request["material_selection"]["random_shuffle"] is True
@@ -125,16 +126,20 @@ def test_create_mode_builds_scale_create_request_from_mode_config():
 def test_bundled_create_modes_cover_7r_and_pay_scale_and_test_new():
     template_catalog = json.loads(Path("configs/create-templates/wx-mini-game.json").read_text(encoding="utf-8"))
     expected = {
-        "wx_7r_general_scale": ("wx_7r_general", "微小每付7R通投放量", 0.419, "7R 通投放量"),
-        "wx_7r_general_test_new": ("wx_7r_general", "微小每付7R通投测新", 0.41, "7R 通投测新"),
-        "wx_7r_male_scale": ("wx_7r_male", "微小每付7R男放量", 0.419, "7R 男放量"),
-        "wx_7r_male_test_new": ("wx_7r_male", "微小每付7R男测新", 0.41, "7R 男测新"),
-        "wx_pay_general_scale": ("wx_pay_general", "微小每付通投放量", None, "每付通投放量"),
-        "wx_pay_general_test_new": ("wx_pay_general", "微小每付通投测新", None, "每付通投测新"),
-        "wx_pay_male_scale": ("wx_pay_male", "微小每付男放量", None, "每付男放量"),
-        "wx_pay_male_test_new": ("wx_pay_male", "微小每付男测新", None, "每付男测新"),
+        "wx_7r_general_scale": ("wx_7r_general", "微小每付7R通投历史放量", 0.419, "7R 通投历史放量", 30),
+        "wx_7r_general_recent_scale": ("wx_7r_general", "微小每付7R通投近期放量", 0.419, "7R 通投近期放量", 7),
+        "wx_7r_general_test_new": ("wx_7r_general", "微小每付7R通投测新", 0.41, "7R 通投测新", 30),
+        "wx_7r_male_scale": ("wx_7r_male", "微小每付7R男历史放量", 0.419, "7R 男历史放量", 30),
+        "wx_7r_male_recent_scale": ("wx_7r_male", "微小每付7R男近期放量", 0.419, "7R 男近期放量", 7),
+        "wx_7r_male_test_new": ("wx_7r_male", "微小每付7R男测新", 0.41, "7R 男测新", 30),
+        "wx_pay_general_scale": ("wx_pay_general", "微小每付通投历史放量", None, "每付通投历史放量", 30),
+        "wx_pay_general_recent_scale": ("wx_pay_general", "微小每付通投近期放量", None, "每付通投近期放量", 7),
+        "wx_pay_general_test_new": ("wx_pay_general", "微小每付通投测新", None, "每付通投测新", 30),
+        "wx_pay_male_scale": ("wx_pay_male", "微小每付男历史放量", None, "每付男历史放量", 30),
+        "wx_pay_male_recent_scale": ("wx_pay_male", "微小每付男近期放量", None, "每付男近期放量", 7),
+        "wx_pay_male_test_new": ("wx_pay_male", "微小每付男测新", None, "每付男测新", 30),
     }
-    for mode_key, (template_key, project_template_name, roi_goal, display_name) in expected.items():
+    for mode_key, (template_key, project_template_name, roi_goal, display_name, lookback_days) in expected.items():
         mode_config = json.loads(Path(f"configs/create-modes/{mode_key}.example.json").read_text(encoding="utf-8"))
         assert mode_config["display_name"] == display_name
         request = build_create_mode_request(
@@ -150,6 +155,7 @@ def test_bundled_create_modes_cover_7r_and_pay_scale_and_test_new():
 
         assert request["template_key"] == template_key
         assert request["project_template_name"] == project_template_name
+        assert request["material_selection"]["lookback_days"] == lookback_days
         assert request["material_selection"]["source_scope"] == "source_material_account"
         assert request["material_selection"]["exclude_recent_used_days"] == 0
         assert request["material_requirements"]["dedupe_scope"] == "max_account_overlap"
@@ -169,9 +175,10 @@ def test_bundled_create_modes_cover_7r_and_pay_scale_and_test_new():
 
 
 def test_create_mode_resolves_complete_chinese_aliases_and_rejects_ambiguous_names():
-    assert load_create_mode_config({"mode_key": "7R 通投放量"})["mode_key"] == "wx_7r_general_scale"
+    assert load_create_mode_config({"mode_key": "7R 通投历史放量"})["mode_key"] == "wx_7r_general_scale"
+    assert load_create_mode_config({"mode_key": "7R 通投近期放量"})["mode_key"] == "wx_7r_general_recent_scale"
     assert load_create_mode_config({"mode_key": "7R 男测新"})["mode_key"] == "wx_7r_male_test_new"
-    assert load_create_mode_config({"mode_key": "每付男放量"})["mode_key"] == "wx_pay_male_scale"
+    assert load_create_mode_config({"mode_key": "每付男近期放量"})["mode_key"] == "wx_pay_male_recent_scale"
 
     try:
         load_create_mode_config({"mode_key": "7R 放量"})
@@ -179,6 +186,13 @@ def test_create_mode_resolves_complete_chinese_aliases_and_rejects_ambiguous_nam
         assert "需要指定通投或男" in str(exc)
     else:
         raise AssertionError("7R 放量 must be rejected as ambiguous")
+
+    try:
+        load_create_mode_config({"mode_key": "每付男放量"})
+    except ValueError as exc:
+        assert "需要指定历史/近期" in str(exc)
+    else:
+        raise AssertionError("每付男放量 must be rejected as ambiguous")
 
 
 def test_create_mode_generates_strategy_plan_with_enabled_initial_status_and_overlap_cap(tmp_path: Path):
@@ -244,6 +258,67 @@ def test_create_mode_generates_strategy_plan_with_enabled_initial_status_and_ove
     assert Path(result["artifact_path"]).exists()
 
 
+def test_create_mode_allows_reuse_without_duplicate_material_inside_one_unit(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_source_materials(db_path, count=1)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE product_source_materials SET cost_lookback = 2000, score = 2000 WHERE material_id = 'm-001'")
+        conn.execute("UPDATE product_source_material_metric_rollups SET stat_cost = 2000 WHERE material_id = 'm-001'")
+    mode_config = json.loads(Path("configs/create-modes/wx_pay_general_scale.example.json").read_text(encoding="utf-8"))
+    template_catalog = json.loads(Path("configs/create-templates/wx-mini-game.json").read_text(encoding="utf-8"))
+
+    result = run_create_mode_request(
+        {
+            "create_mode": {
+                "mode_key": "wx_pay_general_scale",
+                "mode_config_path": "configs/create-modes/wx_pay_general_scale.example.json",
+                "target_accounts": ["acc-1"],
+                "target_date": "2026-05-13",
+                "owner": "郭靖",
+            }
+        },
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        policy={"create_strategy_plan": _policy()},
+        template_catalog_path=Path("configs/create-templates/wx-mini-game.json"),
+    )
+
+    assert result["ok"] is True
+    plan = result["create_strategy_plan"]
+    unit = plan["strategy"]["projects"][0]["units"][0]
+    material_ids = [material["material_id"] for material in unit["materials"]]
+    assert material_ids == ["m-001"]
+    assert mode_config["material_requirements"]["on_insufficient"] == "allow_reuse"
+    assert template_catalog["templates"][mode_config["template_key"]]
+
+
+def test_create_mode_treats_blank_source_material_review_status_as_usable(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_source_materials(db_path, count=8)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE product_source_materials SET review_status = ''")
+        conn.execute("UPDATE product_source_material_metric_rollups SET stat_cost = 2000")
+
+    result = run_create_mode_request(
+        {
+            "create_mode": {
+                "mode_key": "wx_pay_general_scale",
+                "target_accounts": ["acc-1"],
+                "target_date": "2026-05-13",
+                "owner": "郭靖",
+            }
+        },
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        policy={"create_strategy_plan": _policy()},
+        template_catalog_path=Path("configs/create-templates/wx-mini-game.json"),
+    )
+
+    assert result["ok"] is True
+    unit = result["create_strategy_plan"]["strategy"]["projects"][0]["units"][0]
+    assert len(unit["materials"]) == 5
+
+
 def test_run_create_mode_cli_prints_json_summary(tmp_path: Path, capsys):
     db_path = tmp_path / "roibang.sqlite3"
     _seed_source_materials(db_path, count=12)
@@ -267,11 +342,11 @@ def test_run_create_mode_cli_prints_json_summary(tmp_path: Path, capsys):
         json.dumps(
             {
                 "mode_key": "wx_7r_general_scale",
-                "display_name": "7R 放量",
+                "display_name": "7R 历史放量",
                 "product": "勇者突进",
                 "platform": "WECHAT_GAME",
                 "template_key": "wx_7r_general",
-                "template_name_suffix": "放量",
+                "template_name_suffix": "历史放量",
                 "source_advertiser_id": "1856647522964490",
                 "organization_id": "1851650746645060",
                 "defaults": {
@@ -282,7 +357,7 @@ def test_run_create_mode_cli_prints_json_summary(tmp_path: Path, capsys):
                     "units_per_project": 1,
                 },
                 "material_requirements": {"material_type": "video", "materials_per_unit": 5, "dedupe_scope": "allow_reuse"},
-                "material_selection": {"lookback_days": 60, "selection_type": "high_spend"},
+                "material_selection": {"lookback_days": 30, "selection_type": "high_spend"},
                 "initial_status": {"project_operation": "ENABLE", "unit_operation": "ENABLE"},
             },
             ensure_ascii=False,

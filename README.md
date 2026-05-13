@@ -23,19 +23,23 @@ AI（人工智能）只负责写代码、修脚本、看数据生成配置、复
 
 ## 创建模式
 
-创建时必须明确模板类型，不能省略“通投/男”。例如 `7R 放量` 是歧义说法，脚本会阻断；必须写成 `7R 通投放量` 或 `7R 男放量`。
+创建时必须明确模板类型，不能省略“通投/男”。放量还要明确“历史/近期”。例如 `7R 放量` 是歧义说法，脚本会阻断；必须写成 `7R 通投历史放量` 或 `7R 通投近期放量`。
 
 当前固定模式：
 
 | 中文模式 | mode_key（模式键） | 模板 |
 | --- | --- | --- |
-| 7R 通投放量 | `wx_7r_general_scale` | `wx_7r_general（微小每付 7R 通投）` |
+| 7R 通投历史放量 | `wx_7r_general_scale` | `wx_7r_general（微小每付 7R 通投）` |
+| 7R 通投近期放量 | `wx_7r_general_recent_scale` | `wx_7r_general（微小每付 7R 通投）` |
 | 7R 通投测新 | `wx_7r_general_test_new` | `wx_7r_general（微小每付 7R 通投）` |
-| 7R 男放量 | `wx_7r_male_scale` | `wx_7r_male（微小每付 7R 男）` |
+| 7R 男历史放量 | `wx_7r_male_scale` | `wx_7r_male（微小每付 7R 男）` |
+| 7R 男近期放量 | `wx_7r_male_recent_scale` | `wx_7r_male（微小每付 7R 男）` |
 | 7R 男测新 | `wx_7r_male_test_new` | `wx_7r_male（微小每付 7R 男）` |
-| 每付通投放量 | `wx_pay_general_scale` | `wx_pay_general（微小每付通投）` |
+| 每付通投历史放量 | `wx_pay_general_scale` | `wx_pay_general（微小每付通投）` |
+| 每付通投近期放量 | `wx_pay_general_recent_scale` | `wx_pay_general（微小每付通投）` |
 | 每付通投测新 | `wx_pay_general_test_new` | `wx_pay_general（微小每付通投）` |
-| 每付男放量 | `wx_pay_male_scale` | `wx_pay_male（微小每付男）` |
+| 每付男历史放量 | `wx_pay_male_scale` | `wx_pay_male（微小每付男）` |
+| 每付男近期放量 | `wx_pay_male_recent_scale` | `wx_pay_male（微小每付男）` |
 | 每付男测新 | `wx_pay_male_test_new` | `wx_pay_male（微小每付男）` |
 
 放量默认：
@@ -44,7 +48,9 @@ AI（人工智能）只负责写代码、修脚本、看数据生成配置、复
 - `cpa_bid（项目出价）`：103
 - `roi_coefficient（ROI 系数）`：7R 模板为 0.419
 - 每账户 5 个项目，每项目 1 个单元，每单元 5 个素材
-- 素材回看 60 天，按高消耗素材选择
+- 历史放量：素材回看 30 天，按高消耗素材选择
+- 近期放量：素材回看 7 天，按高消耗素材选择
+- 禁止旧说法 `7R 通投放量`、`每付男放量` 这类不带历史/近期的放量模式，脚本会阻断
 
 测新默认：
 
@@ -68,7 +74,7 @@ AI（人工智能）只负责写代码、修脚本、看数据生成配置、复
 ```bash
 PYTHONPATH=src python3 scripts/run_create_mode.py \
   --config configs/runtime.example.json \
-  --request configs/create-mode-requests/wx_7r_general_scale.example.json \
+  --request configs/create-mode-requests/wx_7r_general_recent_scale.example.json \
   --policy policies/create-policy.example.json
 ```
 
@@ -80,10 +86,18 @@ PYTHONPATH=src python3 scripts/run_create_mode.py \
 
 ```text
 create_project（创建项目）
--> bind_material（素材从源素材账户推送到目标账户）
+-> lookup_target_material（创建前查目标账户素材库）
+-> bind_material（仅把目标账户没有的素材从源素材账户推送到目标账户）
 -> lookup_target_material（目标账户素材回查）
 -> create_unit（创建单元）
 ```
+
+素材推送规则：
+
+- 创建前先查目标账户素材库。
+- 如果目标账户已经有素材，直接记录目标账户 `video_id（视频 ID）` 和 `video_cover_id（封面 ID）`，跳过素材推送。
+- 如果目标账户没有素材，才从源素材账户推送。
+- 单元创建始终使用目标账户素材 ID 和封面 ID，不使用源素材账户视频 ID。
 
 执行入口：
 
@@ -93,6 +107,50 @@ PYTHONPATH=src python3 scripts/run_create_live_execute_once.py \
   --policy policies/create-live-execute.local.json \
   --create-execute-artifact <create_execute 产物路径>
 ```
+
+终端执行入口：
+
+```bash
+PYTHONPATH=src python3 scripts/run_create_live_execute_terminal.py \
+  --config configs/runtime.create-live.local.json \
+  --policy policies/create-live-execute.local.json \
+  --plan <create_plan 计划文件路径> \
+  --create-execute-artifact <create_execute 产物路径>
+```
+
+这个入口会拉起固定执行脚本，同时在当前终端显示：
+
+- `operation（操作）`
+- `status（状态）`
+- `progress（进度）`
+- `external_api_calls（外部接口调用数）`
+- `account（账户）`
+- `stdout_log（标准输出日志）`
+- `stderr_log（标准错误日志）`
+
+只观察进度：
+
+```bash
+PYTHONPATH=src python3 scripts/watch_create_live_progress.py
+```
+
+需要刷新式界面时：
+
+```bash
+PYTHONPATH=src python3 scripts/watch_create_live_progress.py --clear --recent-events 5
+```
+
+`policies/create-live-execute.local.example.json` 里已经默认打开 `progress（进度输出）`，真实创建时会写：
+
+- `current.json（当前进度）`
+- `events.jsonl（逐行进度日志）`
+- `stderr（终端错误流/实时输出）`
+
+创建效率参数：
+
+- `retry_sleep_seconds_by_operation（按操作重试等待秒数）`：素材推送和素材回查可以分别配置 40100（请求频率超限）后的等待时间。
+- `min_interval_seconds_by_operation（按操作最小调用间隔）`：项目创建、素材推送、素材回查、单元创建可以分别配置调用间隔。
+- 当前 example（示例配置）已把素材推送和素材回查间隔压到 0.5 秒，单元创建间隔从 20 秒降到 8 秒；如果生产环境再出现 40100，可以只调这些 JSON 参数，不改脚本。
 
 创建时如果平台返回“已创建30个项目”，固定脚本会：
 

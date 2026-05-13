@@ -260,6 +260,41 @@ def test_create_http_transport_gets_target_material_lookup_and_redacts_audit(mon
     assert "secret-token" not in json.dumps(audit, ensure_ascii=False)
 
 
+def test_create_http_transport_uses_batch_lookup_page_size(monkeypatch, tmp_path):
+    monkeypatch.setenv("ROIBANG_TEST_ACCESS_TOKEN", "secret-token")
+    calls = []
+
+    def fake_opener(url, body, headers, timeout_seconds, method):
+        calls.append({"url": url, "body": body, "method": method})
+        return HttpResponse(200, {"code": 0, "data": {"list": []}})
+
+    transport = build_create_http_transport(
+        {
+            "enabled": True,
+            "allow_mutation": True,
+            "run_id": "run-001",
+            "token_env": "ROIBANG_TEST_ACCESS_TOKEN",
+        },
+        response_dir=tmp_path,
+        opener=fake_opener,
+    )
+
+    transport(
+        {
+            "operation": "lookup_target_material",
+            "endpoint": "/open_api/2/file/video/get/",
+            "payload": {
+                "target_advertiser_id": "target-1",
+                "material_ids": [str(index) for index in range(20)],
+            },
+        }
+    )
+
+    assert calls[0]["method"] == "GET"
+    assert calls[0]["body"]["page_size"] == 20
+    assert "page_size=20" in calls[0]["url"]
+
+
 def test_create_http_transport_rejects_unknown_or_mismatched_endpoint(monkeypatch, tmp_path):
     monkeypatch.setenv("ROIBANG_TEST_ACCESS_TOKEN", "secret-token")
     transport = build_create_http_transport(
@@ -311,8 +346,8 @@ def test_create_http_transport_supports_project_cap_cleanup_requests(monkeypatch
     transport(
         {
             "operation": "delete_project",
-            "endpoint": "/open_api/2/project/delete/",
-            "payload": {"advertiser_id": "target-1", "project_id": "project-001"},
+            "endpoint": "/open_api/v3.0/project/delete/",
+            "payload": {"advertiser_id": "target-1", "project_ids": ["project-001"]},
         }
     )
 
@@ -324,8 +359,8 @@ def test_create_http_transport_supports_project_cap_cleanup_requests(monkeypatch
         "page_size": 100,
     }
     assert calls[1]["method"] == "POST"
-    assert calls[1]["url"] == "https://api.oceanengine.com/open_api/2/project/delete/"
-    assert calls[1]["body"] == {"advertiser_id": "target-1", "project_id": "project-001"}
+    assert calls[1]["url"] == "https://api.oceanengine.com/open_api/v3.0/project/delete/"
+    assert calls[1]["body"] == {"advertiser_id": "target-1", "project_ids": ["project-001"]}
 
 
 def test_create_http_transport_posts_activate_unit_status_update(monkeypatch, tmp_path):
@@ -501,6 +536,47 @@ def test_create_http_transport_retries_configured_api_code_for_material_bind(mon
     assert calls["count"] == 2
     assert sleeps == [0.5]
     assert [json.loads(line)["attempt"] for line in audit_lines] == [1, 2]
+
+
+def test_create_http_transport_can_retry_sleep_by_operation(monkeypatch, tmp_path):
+    monkeypatch.setenv("ROIBANG_TEST_ACCESS_TOKEN", "secret-token")
+    calls: dict[str, int] = {"bind_material": 0, "lookup_target_material": 0}
+    sleeps = []
+
+    def fake_opener(_url, _body, _headers, _timeout_seconds, _method):
+        operation = "lookup_target_material" if "file/video/get" in _url else "bind_material"
+        calls[operation] += 1
+        if calls[operation] == 1:
+            return HttpResponse(200, {"code": 40100, "message": "系统请求频率超限，请稍后重试。"})
+        return HttpResponse(200, {"code": 0, "data": {"id": "ok"}})
+
+    transport = build_create_http_transport(
+        {
+            "enabled": True,
+            "allow_mutation": True,
+            "run_id": "run-001",
+            "token_env": "ROIBANG_TEST_ACCESS_TOKEN",
+            "max_retries": 1,
+            "retry_sleep_seconds": 9,
+            "retry_sleep_seconds_by_operation": {
+                "bind_material": 2,
+                "lookup_target_material": 0.3,
+            },
+            "retry_api_codes_by_operation": {
+                "bind_material": [40100],
+                "lookup_target_material": [40100],
+            },
+        },
+        response_dir=tmp_path,
+        opener=fake_opener,
+        sleeper=sleeps.append,
+    )
+
+    transport({"operation": "bind_material", "endpoint": "/open_api/2/file/material/bind/", "payload": {}})
+    transport({"operation": "lookup_target_material", "endpoint": "/open_api/2/file/video/get/", "payload": {}})
+
+    assert sleeps == [2, 0.3]
+    assert calls == {"bind_material": 2, "lookup_target_material": 2}
 
 
 def test_create_http_transport_retries_transient_error_for_configured_operation(monkeypatch, tmp_path):

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import ssl
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -32,7 +33,7 @@ CREATE_ENDPOINT_ALLOWLIST = {
     "update_project_cpa_bid": "/open_api/v3.0/project/cpa_bid/update/",
     "update_project_roi_goal": "/open_api/v3.0/project/roigoal/update/",
     "lookup_disabled_projects": "/open_api/v3.0/project/list/",
-    "delete_project": "/open_api/2/project/delete/",
+    "delete_project": "/open_api/v3.0/project/delete/",
 }
 
 
@@ -140,11 +141,17 @@ def _lookup_target_material_payload(payload: dict[str, Any]) -> dict[str, Any]:
         filtering["material_ids"] = [int(material_id)] if material_id.isdigit() else [material_id]
     elif source_video_id:
         filtering["video_ids"] = [source_video_id]
+    requested_page_size = int(payload.get("page_size") or 0)
+    expected_row_count = max(
+        len(filtering.get("material_ids") or []),
+        len(filtering.get("video_ids") or []),
+        10,
+    )
     return {
         "advertiser_id": advertiser_id,
         "filtering": filtering,
         "page": int(payload.get("page") or 1),
-        "page_size": int(payload.get("page_size") or 10),
+        "page_size": max(requested_page_size, expected_row_count),
     }
 
 
@@ -303,6 +310,16 @@ def _retry_transient_operations(config: dict[str, Any]) -> set[str]:
     return {str(item) for item in values if str(item) in CREATE_ENDPOINT_ALLOWLIST}
 
 
+def _retry_sleep_seconds(config: dict[str, Any], operation: str) -> float:
+    by_operation = config.get("retry_sleep_seconds_by_operation")
+    if isinstance(by_operation, dict) and operation in by_operation:
+        try:
+            return float(by_operation[operation])
+        except (TypeError, ValueError):
+            return 0
+    return float(config.get("retry_sleep_seconds") or 1)
+
+
 def _min_interval_seconds(config: dict[str, Any], operation: str) -> float:
     by_operation = config.get("min_interval_seconds_by_operation")
     if isinstance(by_operation, dict) and operation in by_operation:
@@ -311,6 +328,26 @@ def _min_interval_seconds(config: dict[str, Any], operation: str) -> float:
         except (TypeError, ValueError):
             return 0
     return float(config.get("min_interval_seconds") or 0)
+
+
+def _log_retry_to_stderr(
+    config: dict[str, Any],
+    *,
+    operation: str,
+    attempt: int,
+    attempts: int,
+    sleep_seconds: float,
+    reason: str,
+) -> None:
+    if not bool(config.get("log_retries_to_stderr", False)):
+        return
+    print(
+        "[create_http_transport] "
+        f"retry operation={operation} attempt={attempt}/{attempts} "
+        f"sleep_seconds={sleep_seconds:g} reason={reason}",
+        file=sys.stderr,
+        flush=True,
+    )
 
 
 def build_create_http_transport(
@@ -327,7 +364,6 @@ def build_create_http_transport(
     real_sleeper = sleeper or time.sleep
     timeout_seconds = float(config.get("timeout_seconds") or 20)
     max_retries = int(config.get("max_retries") or 0)
-    retry_sleep_seconds = float(config.get("retry_sleep_seconds") or 1)
     base_url = _normalize_base_url(config)
     audit_path = Path(response_dir) / "create_http_responses.jsonl"
     run_id = str(config.get("run_id") or "").strip()
@@ -352,6 +388,7 @@ def build_create_http_transport(
 
         retry_codes = _retry_api_codes(config, operation)
         retry_transient_operations = _retry_transient_operations(config)
+        retry_sleep_seconds = _retry_sleep_seconds(config, operation)
         attempts = max_retries + 1
         response_json: dict[str, Any] | None = None
         for attempt in range(1, attempts + 1):
@@ -363,7 +400,7 @@ def build_create_http_transport(
             except urllib.error.HTTPError as exc:
                 status_code = int(exc.code)
                 response_json = _http_error_json(exc)
-            except (urllib.error.URLError, TimeoutError, ConnectionResetError) as exc:
+            except (urllib.error.URLError, TimeoutError, OSError) as exc:
                 response_json = {"error_type": type(exc).__name__, "error": str(exc)}
                 _append_audit(
                     audit_path,
@@ -379,6 +416,14 @@ def build_create_http_transport(
                     ),
                 )
                 if operation in retry_transient_operations and attempt < attempts:
+                    _log_retry_to_stderr(
+                        config,
+                        operation=operation,
+                        attempt=attempt,
+                        attempts=attempts,
+                        sleep_seconds=retry_sleep_seconds,
+                        reason=type(exc).__name__,
+                    )
                     real_sleeper(retry_sleep_seconds)
                     continue
                 raise RuntimeError(f"create HTTP request failed with transient network error: {exc}") from exc
@@ -397,6 +442,14 @@ def build_create_http_transport(
             )
             if not _should_retry_api_code(response_json, retry_codes) or attempt == attempts:
                 break
+            _log_retry_to_stderr(
+                config,
+                operation=operation,
+                attempt=attempt,
+                attempts=attempts,
+                sleep_seconds=retry_sleep_seconds,
+                reason=f"api_code={response_json.get('code')}",
+            )
             real_sleeper(retry_sleep_seconds)
         if response_json is None:
             raise RuntimeError("create HTTP transport did not receive a response")

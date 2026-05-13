@@ -78,7 +78,8 @@ def _filter_candidate_rows(rows: list[dict[str, Any]], *, policy: dict[str, Any]
     min_stat_cost = _float_value(filters.get("min_candidate_stat_cost"), 0)
     filtered: list[dict[str, Any]] = []
     for row in rows:
-        if allowed_statuses and _normalized_review_status(row.get("review_status")) not in allowed_statuses:
+        review_status = _normalized_review_status(row.get("review_status"))
+        if allowed_statuses and review_status and review_status not in allowed_statuses:
             continue
         if float(row.get("score") or 0) < min_score:
             continue
@@ -348,6 +349,7 @@ def _next_candidate(
     advertiser_id: str,
     candidates: list[dict[str, Any]],
     used_request_material_ids: set[str],
+    used_unit_material_ids: set[str],
     material_accounts_used: dict[str, set[str]],
     existing_by_account: dict[str, set[str]],
     dedupe_scope: str,
@@ -358,6 +360,8 @@ def _next_candidate(
     for enforce_overlap in ([True, False] if allow_reuse_on_shortage else [True]):
         for row in candidates:
             material_id = str(row.get("material_id") or "")
+            if material_id in used_unit_material_ids:
+                continue
             if material_id in existing_material_ids:
                 continue
             if dedupe_scope == "request" and material_id in used_request_material_ids and enforce_overlap:
@@ -427,11 +431,13 @@ def _build_projects(
                 unit_key = f"{project_key}-u{unit_index:02d}"
                 promotion_name = f"{project_name}_U{unit_index:02d}"
                 materials: list[dict[str, Any]] = []
+                used_unit_material_ids: set[str] = set()
                 for _ in range(materials_per_unit):
                     row = _next_candidate(
                         advertiser_id=advertiser_id,
                         candidates=candidates,
                         used_request_material_ids=used_request_material_ids,
+                        used_unit_material_ids=used_unit_material_ids,
                         material_accounts_used=material_accounts_used,
                         existing_by_account=existing_by_account,
                         dedupe_scope=dedupe_scope,
@@ -445,6 +451,7 @@ def _build_projects(
                         used_request_material_ids.add(material_id)
                     if dedupe_scope == "max_account_overlap":
                         material_accounts_used.setdefault(material_id, set()).add(advertiser_id)
+                    used_unit_material_ids.add(material_id)
                     materials.append(_material_entry(row))
                 units.append(
                     {

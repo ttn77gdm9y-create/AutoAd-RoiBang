@@ -20,6 +20,51 @@ def _rows(value: Any) -> list[dict[str, Any]]:
     return [row for row in value if isinstance(row, dict)] if isinstance(value, list) else []
 
 
+def _strategy_projects(plan: dict[str, Any]) -> list[dict[str, Any]]:
+    strategy = plan.get("strategy") if isinstance(plan.get("strategy"), dict) else {}
+    return _rows(strategy.get("projects"))
+
+
+def _strategy_plan_request(plan: dict[str, Any]) -> dict[str, Any]:
+    request = plan.get("request")
+    return dict(request) if isinstance(request, dict) else {}
+
+
+def _strategy_plan_materials(plan: dict[str, Any]) -> list[dict[str, Any]]:
+    materials_by_id: dict[str, dict[str, Any]] = {}
+    for project in _strategy_projects(plan):
+        for unit in _rows(project.get("units")):
+            for material in _rows(unit.get("materials")):
+                material_id = _text(material.get("material_id"))
+                if not material_id or material_id in materials_by_id:
+                    continue
+                materials_by_id[material_id] = {
+                    "source_material_id": material_id,
+                    "source_video_id": _text(material.get("source_video_id")),
+                    "material_id": material_id,
+                }
+    return list(materials_by_id.values())
+
+
+def _normalize_plan(plan: dict[str, Any]) -> dict[str, Any]:
+    if plan.get("workflow") != "create_strategy_plan" or not _strategy_projects(plan):
+        return plan
+    request = _strategy_plan_request(plan)
+    strategy = plan.get("strategy") if isinstance(plan.get("strategy"), dict) else {}
+    return {
+        **plan,
+        "product": _text(request.get("product") or plan.get("product")),
+        "platform": _text(request.get("platform") or plan.get("platform")),
+        "launch_mode": _text(plan.get("launch_mode")) or "create_only",
+        "source_advertiser_id": _text(
+            request.get("source_advertiser_id") or strategy.get("source_advertiser_id") or plan.get("source_advertiser_id")
+        ),
+        "target_accounts": _rows(request.get("target_accounts")),
+        "materials": _strategy_plan_materials(plan),
+        "reason": _text(plan.get("reason")) or "create_mode generated strategy plan",
+    }
+
+
 def _text(value: Any) -> str:
     return str(value or "").strip()
 
@@ -385,9 +430,10 @@ def validate_create_plan(
     db_path: str | Path | None = None,
 ) -> dict[str, Any]:
     policy = policy or {}
-    violations = _field_violations(plan, policy)
-    source_contract = _source_contract(plan, db_path=db_path)
-    allowed_account_contract = _allowed_account_contract(plan, policy)
+    contract_plan = _normalize_plan(plan)
+    violations = _field_violations(contract_plan, policy)
+    source_contract = _source_contract(contract_plan, db_path=db_path)
+    allowed_account_contract = _allowed_account_contract(contract_plan, policy)
     for advertiser_id in source_contract.get("missing_target_accounts") or []:
         violations.append(f"target account not found in SQLite: {advertiser_id}")
     for material_id in source_contract.get("missing_materials") or []:
@@ -412,7 +458,7 @@ def validate_create_plan(
         "execution_enabled": False,
         "external_api_calls": 0,
         "status": "passed" if ok else "blocked",
-        "summary": _summary(plan),
+        "summary": _summary(contract_plan),
         "source_contract": source_contract,
         "allowed_account_contract": allowed_account_contract,
         "violations": violations,

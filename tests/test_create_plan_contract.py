@@ -119,6 +119,57 @@ def test_validate_create_plan_accepts_plan_from_sqlite_sources(tmp_path: Path):
     assert result["actions"] == []
 
 
+def test_validate_create_plan_accepts_create_strategy_plan_shape(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_plan_sources(db_path)
+    strategy_plan = {
+        "workflow": "create_strategy_plan",
+        "plan_id": "create-plan-mode-001",
+        "request_id": "mode-001",
+        "target_date": "2026-05-13",
+        "request": {
+            "product": "yzt",
+            "platform": "wx-mini-game",
+            "source_advertiser_id": "source-1",
+            "target_accounts": [
+                {
+                    "advertiser_id": "target-1",
+                    "project_count": 1,
+                    "units_per_project": 1,
+                    "daily_budget": 1000,
+                }
+            ],
+        },
+        "strategy": {
+            "source_advertiser_id": "source-1",
+            "projects": [
+                {
+                    "advertiser_id": "target-1",
+                    "units": [
+                        {
+                            "unit_key": "target-1-p001-u01",
+                            "materials": [{"material_id": "material-1", "source_video_id": "video-1"}],
+                        }
+                    ],
+                }
+            ],
+        },
+    }
+
+    result = validate_create_plan(strategy_plan, policy=_policy(), db_path=db_path)
+
+    assert result["ok"] is True
+    assert result["summary"] == {
+        "plan_id": "create-plan-mode-001",
+        "launch_mode": "create_only",
+        "target_account_count": 1,
+        "project_count": 1,
+        "unit_count": 1,
+        "material_count": 1,
+    }
+    assert result["violations"] == []
+
+
 def test_validate_create_plan_requires_allowed_target_accounts_when_policy_says_so(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     _seed_plan_sources(db_path)
