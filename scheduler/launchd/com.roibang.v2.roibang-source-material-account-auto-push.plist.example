@@ -8,16 +8,14 @@
 	<array>
 		<string>/bin/zsh</string>
 		<string>-lc</string>
-		<string>cd '/Users/hongen/Documents/New project 2' &amp;&amp; mkdir -p logs/scheduler &amp;&amp; PYTHONPATH=src scripts/run_scheduler_job.py --registry configs/scheduler/roibang-v2.jobs.example.json --job-id roibang-source-material-account-auto-push --repo-root '/Users/hongen/Documents/New project 2' &gt;&gt; logs/scheduler/roibang-source-material-account-auto-push.out.log 2&gt;&gt; logs/scheduler/roibang-source-material-account-auto-push.err.log</string>
+		<string>cd /tmp &amp;&amp; mkdir -p /Users/hongen/Projects/RoiBang-v2/logs/scheduler &amp;&amp; PYTHONPATH=/Users/hongen/Projects/RoiBang-v2/src /Library/Frameworks/Python.framework/Versions/3.11/bin/python3 /Users/hongen/Projects/RoiBang-v2/scripts/run_scheduler_job.py --registry /Users/hongen/Projects/RoiBang-v2/configs/scheduler/roibang-v2.jobs.example.json --job-id roibang-source-material-account-auto-push --repo-root /Users/hongen/Projects/RoiBang-v2 &gt;&gt; /Users/hongen/Projects/RoiBang-v2/logs/scheduler/roibang-source-material-account-auto-push.out.log 2&gt;&gt; /Users/hongen/Projects/RoiBang-v2/logs/scheduler/roibang-source-material-account-auto-push.err.log</string>
 	</array>
-	<key>WorkingDirectory</key>
-	<string>/Users/hongen/Documents/New project 2</string>
 	<key>RunAtLoad</key>
 	<false/>
 	<key>StandardOutPath</key>
-	<string>/Users/hongen/Documents/New project 2/logs/scheduler/roibang-source-material-account-auto-push.launchd.out.log</string>
+	<string>/Users/hongen/Projects/RoiBang-v2/logs/scheduler/roibang-source-material-account-auto-push.launchd.out.log</string>
 	<key>StandardErrorPath</key>
-	<string>/Users/hongen/Documents/New project 2/logs/scheduler/roibang-source-material-account-auto-push.launchd.err.log</string>
+	<string>/Users/hongen/Projects/RoiBang-v2/logs/scheduler/roibang-source-material-account-auto-push.launchd.err.log</string>
 	<key>StartCalendarInterval</key>
 	<dict>
 		<key>Hour</key>

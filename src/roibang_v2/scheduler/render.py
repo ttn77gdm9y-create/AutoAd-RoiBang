@@ -10,6 +10,7 @@ from roibang_v2.scheduler.jobs import validate_job_registry
 
 CRON_OUTPUT = Path("cron") / "roibang-v2.cron.example"
 LAUNCHD_OUTPUT_DIR = Path("launchd")
+LAUNCHD_PYTHON = "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3"
 
 
 def _enabled_jobs(registry: dict[str, Any]) -> list[dict[str, Any]]:
@@ -31,22 +32,43 @@ def _daily_schedule_sort_key(job: dict[str, Any]) -> tuple[int, int, str]:
     return (int(hour), int(minute), str(job["id"]))
 
 
-def _job_command(job: dict[str, Any], repo_root: Path, *, redirect_logs: bool = True) -> str:
+def _job_command(
+    job: dict[str, Any],
+    repo_root: Path,
+    *,
+    redirect_logs: bool = True,
+    launchd_safe_cwd: bool = False,
+) -> str:
+    registry_path = Path("configs/scheduler/roibang-v2.jobs.example.json")
+    runner_path = Path("scripts/run_scheduler_job.py")
+    pythonpath = "src"
+    if launchd_safe_cwd:
+        registry_path = repo_root / registry_path
+        runner_path = repo_root / runner_path
+        pythonpath = str(repo_root / pythonpath)
     args = [
-        "scripts/run_scheduler_job.py",
+        str(runner_path),
         "--registry",
-        "configs/scheduler/roibang-v2.jobs.example.json",
+        str(registry_path),
         "--job-id",
         str(job["id"]),
         "--repo-root",
         str(repo_root),
     ]
-    command = f"cd {shlex.quote(str(repo_root))} && mkdir -p logs/scheduler && PYTHONPATH=src {shlex.join(args)}"
+    logs_dir = repo_root / "logs" / "scheduler" if launchd_safe_cwd else Path("logs") / "scheduler"
+    command_cwd = Path("/tmp") if launchd_safe_cwd else repo_root
+    command = (
+        f"cd {shlex.quote(str(command_cwd))} && "
+        f"mkdir -p {shlex.quote(str(logs_dir))} && "
+        f"PYTHONPATH={shlex.quote(pythonpath)} {shlex.quote(LAUNCHD_PYTHON) if launchd_safe_cwd else 'python3'} {shlex.join(args)}"
+    )
     if redirect_logs:
         job_id = str(job["id"])
+        out_log = logs_dir / f"{job_id}.out.log"
+        err_log = logs_dir / f"{job_id}.err.log"
         command = (
-            f"{command} >> {shlex.quote(f'logs/scheduler/{job_id}.out.log')} "
-            f"2>> {shlex.quote(f'logs/scheduler/{job_id}.err.log')}"
+            f"{command} >> {shlex.quote(str(out_log))} "
+            f"2>> {shlex.quote(str(err_log))}"
         )
     return command
 
@@ -94,11 +116,10 @@ def _launchd_schedule(expr: str) -> dict[str, Any]:
 
 def render_launchd_plist(job: dict[str, Any], *, repo_root: str | Path) -> str:
     label = f"com.roibang.v2.{job['id']}"
-    command = _job_command(job, Path(repo_root))
+    command = _job_command(job, Path(repo_root), launchd_safe_cwd=True)
     plist = {
         "Label": label,
         "ProgramArguments": ["/bin/zsh", "-lc", command],
-        "WorkingDirectory": str(Path(repo_root)),
         "RunAtLoad": False,
         "StandardOutPath": str(Path(repo_root) / "logs" / "scheduler" / f"{job['id']}.launchd.out.log"),
         "StandardErrorPath": str(Path(repo_root) / "logs" / "scheduler" / f"{job['id']}.launchd.err.log"),

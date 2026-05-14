@@ -39,7 +39,7 @@
         },
         "timeout_seconds": 20,
         "max_retries": 3,
-        "retry_api_codes": [50000],
+        "retry_api_codes": [40100, 50000],
         "max_api_retries": 3,
         "retry_sleep_seconds": 3,
         "min_interval_seconds": 0.2,

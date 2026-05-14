@@ -62,10 +62,11 @@ def test_render_launchd_plist_uses_calendar_interval_and_shell_command():
     assert "<integer>9</integer>" in plist
     assert "<key>Minute</key>" in plist
     assert "<integer>0</integer>" in plist
-    assert "PYTHONPATH=src scripts/run_scheduler_job.py" in plist
+    assert "cd /tmp" in plist
+    assert "PYTHONPATH='/tmp/RoiBang v2/src' /Library/Frameworks/Python.framework/Versions/3.11/bin/python3 '/tmp/RoiBang v2/scripts/run_scheduler_job.py'" in plist
     assert "--job-id roibang-data-sync" in plist
-    assert "<key>WorkingDirectory</key>" in plist
-    assert "<string>/tmp/RoiBang v2</string>" in plist
+    assert "<key>WorkingDirectory</key>" not in plist
+    assert "--repo-root '/tmp/RoiBang v2'" in plist
     assert "scripts/run_data_sync.py" not in plist
     assert "prompt" not in plist
     assert "operator_task" not in plist

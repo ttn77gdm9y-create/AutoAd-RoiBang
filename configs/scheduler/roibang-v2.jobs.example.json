@@ -62,7 +62,7 @@
     },
     {
       "id": "roibang-material-history-yesterday",
-      "name": "RoiBang-v2 昨日有消耗账户素材明细同步",
+      "name": "RoiBang-v2 昨日有消耗账户素材明细与计费当日ROI同步",
       "category": "readonly_sync",
       "enabled": true,
       "schedule": {"type": "cron", "expr": "0 2 * * *", "tz": "Asia/Shanghai"},
