@@ -3,7 +3,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from _repo_bootstrap import bootstrap_project_root
+
+bootstrap_project_root()
 
 from roibang_v2.workflows.create_http_transport import build_create_http_transport
 from roibang_v2.workflows.project_update_execute import run_project_update_execute_request

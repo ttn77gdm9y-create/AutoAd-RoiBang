@@ -33,6 +33,11 @@
   "create_live_execute_once": {
     "allow_create_http_transport": true,
     "require_provider_field_mapping": true,
+    "lookup_target_material_visibility_wait": {
+      "enabled": true,
+      "max_retries": 6,
+      "sleep_seconds": 5
+    },
     "create_http_transport": {
       "enabled": true,
       "allow_mutation": true,

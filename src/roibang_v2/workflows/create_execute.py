@@ -249,7 +249,13 @@ def _provider_payload_resolution(
             "external_api_calls": 0,
             "actions": [],
         }
-    return resolve_provider_payload_drafts(db_path=db_path, provider_payload_drafts=drafts)
+    summary = _dry_run_summary(source)
+    return resolve_provider_payload_drafts(
+        db_path=db_path,
+        provider_payload_drafts=drafts,
+        plan_id=str(summary.get("plan_id") or ""),
+        request_id=str(summary.get("request_id") or ""),
+    )
 
 
 def _contains_lookup_placeholder(value: Any) -> bool:

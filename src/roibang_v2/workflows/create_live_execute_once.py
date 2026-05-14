@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -154,6 +155,18 @@ def _project_cap_cleanup_policy(policy: dict[str, Any]) -> dict[str, Any]:
         "delete_count": max(0, delete_count),
         "page_size": max(int(data.get("page_size") or 100), delete_count, 1),
         "disabled_status_values": statuses,
+    }
+
+
+def _lookup_target_material_visibility_wait_policy(policy: dict[str, Any]) -> dict[str, Any]:
+    value = _runner_policy(policy).get("lookup_target_material_visibility_wait")
+    data = dict(value) if isinstance(value, dict) else {}
+    max_retries = data.get("max_retries")
+    sleep_seconds = data.get("sleep_seconds")
+    return {
+        "enabled": bool(data.get("enabled", True)),
+        "max_retries": max(0, int(max_retries if max_retries is not None else 6)),
+        "sleep_seconds": max(0.0, float(sleep_seconds if sleep_seconds is not None else 5)),
     }
 
 
@@ -381,20 +394,37 @@ def _summary(create_execute: dict[str, Any]) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
-def _existing_provider_id(*, db_path: str | Path, entity_type: str, local_key: str) -> str:
+def _existing_provider_id(
+    *,
+    db_path: str | Path,
+    entity_type: str,
+    local_key: str,
+    plan_id: str = "",
+    request_id: str = "",
+) -> str:
     if not str(local_key or "").strip():
         return ""
+    where = [
+        "entity_type = ?",
+        "local_key = ?",
+        "status = 'active'",
+        "provider_id NOT LIKE 'mock_%'",
+        "source_workflow != 'create_mock_execute'",
+    ]
+    params = [entity_type, local_key]
+    if entity_type in {"project", "promotion"}:
+        where.append("plan_id = ?")
+        where.append("request_id = ?")
+        params.extend([str(plan_id), str(request_id)])
     with sqlite3.connect(db_path) as conn:
         row = conn.execute(
-            """
+            f"""
             SELECT provider_id
             FROM create_provider_id_ledger
-            WHERE entity_type = ? AND local_key = ? AND status = 'active'
-              AND provider_id NOT LIKE 'mock_%'
-              AND source_workflow != 'create_mock_execute'
+            WHERE {" AND ".join(where)}
             LIMIT 1
             """,
-            (entity_type, local_key),
+            params,
         ).fetchone()
     return str(row[0]) if row else ""
 
@@ -513,6 +543,7 @@ def _post_run_retry_transient_create_units(
         return {**_default_post_run_retry(), "sequence": sequence, "transport_call_count": transport_call_count}
 
     pending: list[tuple[int, dict[str, Any]]] = []
+    summary = _summary(create_execute_artifact)
     for index, draft in enumerate(_drafts_for_operation(create_execute_artifact, "create_unit")):
         payload = draft.get("payload") if isinstance(draft.get("payload"), dict) else {}
         advertiser_id = _advertiser_id_from_payload(payload)
@@ -520,7 +551,13 @@ def _post_run_retry_transient_create_units(
             continue
         record = _record_for_operation(create_execute_artifact, "create_unit", index)
         local_key = str(record.get("local_key") or "")
-        if _existing_provider_id(db_path=db_path, entity_type="promotion", local_key=local_key):
+        if _existing_provider_id(
+            db_path=db_path,
+            entity_type="promotion",
+            local_key=local_key,
+            plan_id=str(summary.get("plan_id") or ""),
+            request_id=str(summary.get("request_id") or ""),
+        ):
             continue
         pending.append((index, draft))
 
@@ -535,6 +572,8 @@ def _post_run_retry_transient_create_units(
     resolution = resolve_provider_payload_drafts(
         db_path=db_path,
         provider_payload_drafts=[draft for _index, draft in pending],
+        plan_id=str(summary.get("plan_id") or ""),
+        request_id=str(summary.get("request_id") or ""),
     )
     if int(resolution.get("unresolved_count") or 0):
         return {
@@ -1165,7 +1204,14 @@ def _split_existing_provider_ids(
     for index, draft in enumerate(drafts):
         record = _record_for_operation(create_execute_artifact, operation, index)
         local_key = str(record.get("local_key") or "")
-        provider_id = _existing_provider_id(db_path=db_path, entity_type=entity_type, local_key=local_key)
+        summary = _summary(create_execute_artifact)
+        provider_id = _existing_provider_id(
+            db_path=db_path,
+            entity_type=entity_type,
+            local_key=local_key,
+            plan_id=str(summary.get("plan_id") or ""),
+            request_id=str(summary.get("request_id") or ""),
+        )
         if provider_id:
             skipped.append(
                 {
@@ -1381,6 +1427,10 @@ def _target_material_pair_exists(
     )
 
 
+def _missing_provider_id_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [row for row in records if str(row.get("status") or "") == "missing_provider_id"]
+
+
 def _record_existing_target_material_lookup(
     *,
     db_path: str | Path,
@@ -1438,6 +1488,50 @@ def _precheck_existing_target_materials_for_bind(
             pending_after_precheck.append((original_index, draft))
             continue
 
+        existing_source_video_ids = [
+            source_video_id
+            for source_video_id in source_video_ids
+            if all(
+                _target_material_pair_exists(
+                    db_path=db_path,
+                    target_advertiser_id=target_advertiser_id,
+                    source_video_id=source_video_id,
+                )
+                for target_advertiser_id in target_advertiser_ids
+            )
+        ]
+        missing_source_video_ids = [item for item in source_video_ids if item not in set(existing_source_video_ids)]
+        if existing_source_video_ids:
+            existing_payload = {
+                **payload,
+                "source_video_ids": existing_source_video_ids,
+                "video_ids": existing_source_video_ids,
+            }
+            material_bind_records.append(
+                _record_material_bind(
+                    db_path=db_path,
+                    create_execute_artifact=create_execute_artifact,
+                    payload=existing_payload,
+                    response={"code": 0, "message": "existing_target_material", "data": {"task_id": "existing_target_material"}},
+                )
+            )
+            skipped.append(
+                {
+                    "operation": "bind_material",
+                    "index": original_index,
+                    "target_advertiser_ids": target_advertiser_ids,
+                    "source_video_ids": existing_source_video_ids,
+                    "status": "skipped_existing_target_material",
+                }
+            )
+        if not missing_source_video_ids:
+            continue
+        lookup_items = [
+            item
+            for item in lookup_items
+            if str(item.get("source_video_id") or "") in set(missing_source_video_ids)
+        ]
+
         material_ids = [str(item.get("material_id") or "") for item in lookup_items if str(item.get("material_id") or "")]
         source_video_id_filters = [
             str(item.get("source_video_id") or "") for item in lookup_items if str(item.get("source_video_id") or "")
@@ -1479,9 +1573,9 @@ def _precheck_existing_target_materials_for_bind(
                 lookup_items=lookup_items,
             )
         )
-        existing_source_video_ids = [
+        existing_after_lookup_source_video_ids = [
             source_video_id
-            for source_video_id in source_video_ids
+            for source_video_id in missing_source_video_ids
             if all(
                 _target_material_pair_exists(
                     db_path=db_path,
@@ -1491,12 +1585,14 @@ def _precheck_existing_target_materials_for_bind(
                 for target_advertiser_id in target_advertiser_ids
             )
         ]
-        missing_source_video_ids = [item for item in source_video_ids if item not in set(existing_source_video_ids)]
-        if existing_source_video_ids:
+        still_missing_source_video_ids = [
+            item for item in missing_source_video_ids if item not in set(existing_after_lookup_source_video_ids)
+        ]
+        if existing_after_lookup_source_video_ids:
             existing_payload = {
                 **payload,
-                "source_video_ids": existing_source_video_ids,
-                "video_ids": existing_source_video_ids,
+                "source_video_ids": existing_after_lookup_source_video_ids,
+                "video_ids": existing_after_lookup_source_video_ids,
             }
             material_bind_records.append(
                 _record_material_bind(
@@ -1511,12 +1607,12 @@ def _precheck_existing_target_materials_for_bind(
                     "operation": "bind_material",
                     "index": original_index,
                     "target_advertiser_ids": target_advertiser_ids,
-                    "source_video_ids": existing_source_video_ids,
+                    "source_video_ids": existing_after_lookup_source_video_ids,
                     "status": "skipped_existing_target_material",
                 }
             )
-        if missing_source_video_ids:
-            next_payload = {**payload, "source_video_ids": missing_source_video_ids, "video_ids": missing_source_video_ids}
+        if still_missing_source_video_ids:
+            next_payload = {**payload, "source_video_ids": still_missing_source_video_ids, "video_ids": still_missing_source_video_ids}
             pending_after_precheck.append((original_index, {**draft, "payload": next_payload}))
 
     return {
@@ -1544,13 +1640,7 @@ def _resumable_create_http_run(
     skipped_account_records: list[dict[str, Any]] = []
     skipped_account_ids: set[str] = set()
     project_cap_cleanup_records: list[dict[str, Any]] = []
-    ledger_archive_records: list[dict[str, Any]] = [
-        _archive_round_project_unit_ids(
-            db_path=db_path,
-            create_execute_artifact=create_execute_artifact,
-            stage="before_run",
-        )
-    ]
+    ledger_archive_records: list[dict[str, Any]] = []
     ordered_steps: list[dict[str, Any]] = []
     transport_call_count = 0
     sequence = 0
@@ -1682,7 +1772,13 @@ def _resumable_create_http_run(
                 continue
 
         pending_drafts = [draft for _index, draft in pending]
-        resolution = resolve_provider_payload_drafts(db_path=db_path, provider_payload_drafts=pending_drafts)
+        summary = _summary(create_execute_artifact)
+        resolution = resolve_provider_payload_drafts(
+            db_path=db_path,
+            provider_payload_drafts=pending_drafts,
+            plan_id=str(summary.get("plan_id") or ""),
+            request_id=str(summary.get("request_id") or ""),
+        )
         if int(resolution.get("unresolved_count") or 0):
             return {
                 "ok": False,
@@ -1746,7 +1842,9 @@ def _resumable_create_http_run(
                 )
                 continue
             create_retry_count = 0
+            lookup_visibility_retry_count = 0
             max_create_retry_count = int(_runner_policy(policy).get("recover_create_after_lookup_max_retries") or 1)
+            lookup_visibility_wait = _lookup_target_material_visibility_wait_policy(policy)
             skipped_current_account = False
             while True:
                 call = {
@@ -2054,6 +2152,72 @@ def _resumable_create_http_run(
                 request_payload=call["payload"],
             )
             records = record_result if isinstance(record_result, list) else [record_result] if record_result is not None else []
+            missing_provider_records = _missing_provider_id_records(records)
+            while (
+                operation == "lookup_target_material"
+                and missing_provider_records
+                and bool(lookup_visibility_wait["enabled"])
+                and lookup_visibility_retry_count < int(lookup_visibility_wait["max_retries"])
+            ):
+                lookup_visibility_retry_count += 1
+                _write_progress(
+                    policy,
+                    status="waiting",
+                    operation=operation,
+                    done=operation_done_count,
+                    total=len(drafts),
+                    transport_call_count=transport_call_count,
+                    advertiser_id=advertiser_id,
+                    index=original_index,
+                    message=(
+                        "target_material_not_visible "
+                        f"retry={lookup_visibility_retry_count}/{int(lookup_visibility_wait['max_retries'])}"
+                    ),
+                )
+                sleep_seconds = float(lookup_visibility_wait["sleep_seconds"])
+                if sleep_seconds > 0:
+                    time.sleep(sleep_seconds)
+                retry_call = {
+                    "sequence": sequence,
+                    "operation": operation,
+                    "endpoint": endpoints.get(operation, ""),
+                    "payload": payload,
+                    "transport_mode": "create_http",
+                }
+                try:
+                    response = transport(retry_call)
+                except RuntimeError as exc:
+                    sequence += 1
+                    transport_call_count += 1
+                    operation_call_count += 1
+                    return _runner_failure_result(
+                        operation=operation,
+                        index=original_index,
+                        message=str(exc),
+                        code=-1,
+                        ordered_steps=ordered_steps,
+                        provider_id_records=provider_id_records,
+                        material_bind_records=material_bind_records,
+                        transport_call_count=transport_call_count,
+                        skipped_provider_id_records=skipped_provider_id_records,
+                        skipped_material_bind_records=skipped_material_bind_records,
+                    )
+                sequence += 1
+                transport_call_count += 1
+                operation_call_count += 1
+                call = retry_call
+                if _response_code(response) != 0:
+                    break
+                record_result = _record_provider_id(
+                    db_path=db_path,
+                    create_execute_artifact=create_execute_artifact,
+                    operation=operation,
+                    index=original_index,
+                    response=response,
+                    request_payload=call["payload"],
+                )
+                records = record_result if isinstance(record_result, list) else [record_result] if record_result is not None else []
+                missing_provider_records = _missing_provider_id_records(records)
             for record in records:
                 provider_id_records.append(record)
                 if str(record.get("status") or "") != "recorded":

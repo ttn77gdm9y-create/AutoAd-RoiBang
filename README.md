@@ -32,15 +32,19 @@ AI（人工智能）只负责写代码、修脚本、看数据生成配置、复
 | 7R 通投历史放量 | `wx_7r_general_scale` | `wx_7r_general（微小每付 7R 通投）` |
 | 7R 通投近期放量 | `wx_7r_general_recent_scale` | `wx_7r_general（微小每付 7R 通投）` |
 | 7R 通投测新 | `wx_7r_general_test_new` | `wx_7r_general（微小每付 7R 通投）` |
+| 7R 通投复测 | `wx_7r_general_retest` | `wx_7r_general（微小每付 7R 通投）` |
 | 7R 男历史放量 | `wx_7r_male_scale` | `wx_7r_male（微小每付 7R 男）` |
 | 7R 男近期放量 | `wx_7r_male_recent_scale` | `wx_7r_male（微小每付 7R 男）` |
 | 7R 男测新 | `wx_7r_male_test_new` | `wx_7r_male（微小每付 7R 男）` |
+| 7R 男复测 | `wx_7r_male_retest` | `wx_7r_male（微小每付 7R 男）` |
 | 每付通投历史放量 | `wx_pay_general_scale` | `wx_pay_general（微小每付通投）` |
 | 每付通投近期放量 | `wx_pay_general_recent_scale` | `wx_pay_general（微小每付通投）` |
 | 每付通投测新 | `wx_pay_general_test_new` | `wx_pay_general（微小每付通投）` |
+| 每付通投复测 | `wx_pay_general_retest` | `wx_pay_general（微小每付通投）` |
 | 每付男历史放量 | `wx_pay_male_scale` | `wx_pay_male（微小每付男）` |
 | 每付男近期放量 | `wx_pay_male_recent_scale` | `wx_pay_male（微小每付男）` |
 | 每付男测新 | `wx_pay_male_test_new` | `wx_pay_male（微小每付男）` |
+| 每付男复测 | `wx_pay_male_retest` | `wx_pay_male（微小每付男）` |
 
 放量默认：
 
@@ -60,6 +64,12 @@ AI（人工智能）只负责写代码、修脚本、看数据生成配置、复
 - 每账户 8 个项目，每项目 1 个单元，每单元 6 个素材
 - 素材回看 30 天，按测新素材选择
 
+复测默认：
+
+- 预算、出价、ROI 系数、项目数、单元数、素材数和测新一致
+- 素材回看 30 天
+- 只选择 `stat_cost（素材消耗）` 大于等于 200 且小于等于 1000 的素材
+
 单元层固定规则：
 
 - `title_pool（文案池）`：放量和测新共用模板文案池。
@@ -67,6 +77,7 @@ AI（人工智能）只负责写代码、修脚本、看数据生成配置、复
 - `product_selling_points（产品卖点）`：每个单元稳定随机选 2-3 个。
 - `aweme_ids（抖音号 ID）`：固定两个抖音号，每个单元稳定随机选 1 个。
 - `anchor（锚点）`、`landing_url（落地页）`、`fixed_video_cover_id（固定封面）`、`product_image_id（产品图）`：固定来自模板。
+- `effective_touch_url（有效触点链接）`：产品级固定字段，生成到项目层 `action_track_url（点击监测链接）`。
 - 稳定随机的意思是：同一个 `plan_id（计划 ID）` 和 `unit_key（单元键）` 预演和执行结果一致。
 
 生成创建计划示例：
@@ -77,6 +88,20 @@ PYTHONPATH=src python3 scripts/run_create_mode.py \
   --request configs/create-mode-requests/wx_7r_general_recent_scale.example.json \
   --policy policies/create-policy.example.json
 ```
+
+少写 `request（请求配置）` 的创建计划入口：
+
+```bash
+PYTHONPATH=src python3 scripts/run_create_mode.py \
+  --config configs/runtime.example.json \
+  --mode 每付通投近期放量 \
+  --account 185xxx \
+  --account 185xxx \
+  --target-date 2026-05-14 \
+  --policy policies/create-policy.example.json
+```
+
+这个入口只生成创建计划，不执行真实创建；预算、出价、项目数、单元数、素材数都来自 `configs/create-modes（创建模式配置）`。
 
 素材选择会自动排除 `fixtures（测试样例）` 来源，以及明显无效的 `video_id（视频 ID）`，例如 `v001`。
 

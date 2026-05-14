@@ -5906,6 +5906,8 @@ def test_create_provider_id_ledger_records_and_resolves_lookup_placeholders(tmp_
 
     resolved = resolve_create_lookup_placeholders(
         db_path=db_path,
+        plan_id="plan-1",
+        request_id="request-1",
         payload={
             "project_id": "<lookup:target-1-p001>",
             "promotion_id": "<lookup:target-1-p001-u01>",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
@@ -10,6 +11,17 @@ from roibang_v2.workflows.project_update_execute import PROJECT_LIST_ENDPOINT
 
 Transport = Callable[[dict[str, Any]], dict[str, Any]]
 MANAGEMENT_ACTION_TYPES = {"status_update", "budget_update", "bid_update", "roi_coeff_update", "delete_project"}
+PROJECT_REPORT_ENDPOINT = "/open_api/v3.0/report/custom/get/"
+SPEND_WINDOW_LABELS = {
+    "today": "今天",
+    "yesterday": "昨天",
+    "last_3_days": "最近3天",
+    "last_7_days": "最近7天",
+    "last_15_days": "最近15天",
+    "last_30_days": "最近30天",
+    "last_week": "上周",
+    "this_month": "本月",
+}
 
 
 def _text(value: Any) -> str:
@@ -66,6 +78,14 @@ def _total_number(response: dict[str, Any]) -> int:
     return 0
 
 
+def _response_report_rows(response: dict[str, Any]) -> list[dict[str, Any]]:
+    data = response.get("data") if isinstance(response.get("data"), dict) else {}
+    value = data.get("rows")
+    if not isinstance(value, list):
+        value = data.get("list")
+    return [dict(row) for row in value if isinstance(row, dict)] if isinstance(value, list) else []
+
+
 def _advertiser_ids(cfg: dict[str, Any]) -> list[str]:
     values = cfg.get("advertiser_ids")
     if not isinstance(values, list):
@@ -96,7 +116,7 @@ def _default_filtering(action_type: str, opt_status: str) -> dict[str, Any]:
     if action_type == "status_update" and opt_status == "ENABLE":
         return {"status_first": "PROJECT_STATUS_DISABLE", "status_second": "PROJECT_STATUS_STOP"}
     if action_type == "delete_project":
-        return {"status_first": "PROJECT_STATUS_DISABLE"}
+        return {}
     return {"status_first": "PROJECT_STATUS_ENABLE"}
 
 
@@ -124,6 +144,57 @@ def _filtering_with_name(cfg: dict[str, Any], action_type: str, opt_status: str,
     return filtering
 
 
+def _parse_date(value: Any) -> date:
+    text = _text(value)
+    if not text:
+        return date.today()
+    return date.fromisoformat(text)
+
+
+def _week_start(value: date) -> date:
+    return value - timedelta(days=value.weekday())
+
+
+def _spend_window_dates(window: str, *, end_date: date) -> tuple[date, date]:
+    if window == "today":
+        return end_date, end_date
+    if window == "yesterday":
+        target = end_date - timedelta(days=1)
+        return target, target
+    if window.startswith("last_") and window.endswith("_days"):
+        days = int(window.removeprefix("last_").removesuffix("_days"))
+        return end_date - timedelta(days=days - 1), end_date
+    if window == "last_week":
+        this_week_start = _week_start(end_date)
+        last_week_end = this_week_start - timedelta(days=1)
+        return last_week_end - timedelta(days=6), last_week_end
+    if window == "this_month":
+        return end_date.replace(day=1), end_date
+    raise ValueError(f"project management spend_filter window must be one of {sorted(SPEND_WINDOW_LABELS)}")
+
+
+def _spend_filter(cfg: dict[str, Any]) -> dict[str, Any]:
+    value = cfg.get("spend_filter")
+    if not isinstance(value, dict):
+        return {}
+    window = _text(value.get("window") or "today")
+    end_date = _parse_date(value.get("end_date"))
+    start, end = _spend_window_dates(window, end_date=end_date)
+    threshold = value.get("max_stat_cost_exclusive", value.get("max_stat_cost"))
+    if threshold in (None, ""):
+        raise ValueError("project management spend_filter requires max_stat_cost_exclusive")
+    max_stat_cost_exclusive = _number(threshold, "spend_filter.max_stat_cost_exclusive")
+    if max_stat_cost_exclusive < 0:
+        raise ValueError("project management spend_filter max_stat_cost_exclusive must be >= 0")
+    return {
+        "window": window,
+        "window_label": SPEND_WINDOW_LABELS[window],
+        "start_date": start.isoformat(),
+        "end_date": end.isoformat(),
+        "max_stat_cost_exclusive": max_stat_cost_exclusive,
+    }
+
+
 def _name_matched(project: dict[str, Any], keywords: list[str]) -> bool:
     if not keywords:
         return True
@@ -139,6 +210,26 @@ def _lookup_request(advertiser_id: str, filtering: dict[str, Any], *, page: int,
         "payload": {
             "advertiser_id": _wire_id(advertiser_id),
             "filtering": filtering,
+            "page": page,
+            "page_size": page_size,
+        },
+    }
+
+
+def _report_request(advertiser_id: str, spend_filter: dict[str, Any], *, page: int, page_size: int) -> dict[str, Any]:
+    return {
+        "operation": "lookup_project_report",
+        "method": "GET",
+        "endpoint": PROJECT_REPORT_ENDPOINT,
+        "payload": {
+            "advertiser_id": _wire_id(advertiser_id),
+            "data_topic": "BASIC_DATA",
+            "dimensions": ["cdp_project_id", "cdp_project_name"],
+            "metrics": ["stat_cost"],
+            "filters": [],
+            "start_time": spend_filter["start_date"],
+            "end_time": spend_filter["end_date"],
+            "order_by": [{"field": "stat_cost", "type": "DESC"}],
             "page": page,
             "page_size": page_size,
         },
@@ -168,6 +259,37 @@ def _fetch_projects(
             break
         page += 1
     return projects, calls
+
+
+def _fetch_project_spend(
+    advertiser_id: str,
+    *,
+    spend_filter: dict[str, Any],
+    page_size: int,
+    transport: Transport,
+) -> tuple[dict[str, float], int]:
+    page = 1
+    calls = 0
+    spend_by_project_id: dict[str, float] = {}
+    while True:
+        response = transport(_report_request(advertiser_id, spend_filter, page=page, page_size=page_size))
+        calls += 1
+        _raise_for_api_error(response)
+        rows = _response_report_rows(response)
+        for row in rows:
+            dimensions = row.get("dimensions") if isinstance(row.get("dimensions"), dict) else {}
+            metrics = row.get("metrics") if isinstance(row.get("metrics"), dict) else {}
+            project_id = _text(dimensions.get("project_id") or dimensions.get("cdp_project_id"))
+            if not project_id:
+                continue
+            spend_by_project_id[project_id] = spend_by_project_id.get(project_id, 0.0) + _number(metrics.get("stat_cost"), "stat_cost")
+        total_number = _total_number(response)
+        if not rows or len(rows) < page_size:
+            break
+        if total_number and sum(1 for _ in spend_by_project_id) >= total_number:
+            break
+        page += 1
+    return spend_by_project_id, calls
 
 
 def _number(value: Any, key: str) -> float:
@@ -235,6 +357,8 @@ def _build_action(
         "project_id": _text(project.get("project_id")),
         "project_name": _text(project.get("name")),
     }
+    if "stat_cost" in project:
+        action["stat_cost"] = float(project.get("stat_cost") or 0)
     action.update(fields)
     if reason:
         action["reason"] = reason
@@ -257,11 +381,14 @@ def build_project_status_update_config(
     name_keywords = _name_contains(cfg)
     filtering = _filtering_with_name(cfg, action_type, opt_status, name_keywords)
     page_size = int(cfg.get("page_size") or 100)
+    spend_page_size = int(cfg.get("spend_page_size") or page_size)
+    spend_filter = _spend_filter(cfg)
     reason = _text(cfg.get("reason"))
     workflow_name = _workflow_name(cfg, action_type)
 
     actions: list[dict[str, Any]] = []
     skipped_duration_project_count = 0
+    skipped_spend_filter_count = 0
     external_api_calls = 0
     for advertiser_id in advertiser_ids:
         projects, calls = _fetch_projects(
@@ -271,6 +398,15 @@ def build_project_status_update_config(
             transport=transport,
         )
         external_api_calls += calls
+        spend_by_project_id: dict[str, float] = {}
+        if spend_filter:
+            spend_by_project_id, calls = _fetch_project_spend(
+                advertiser_id,
+                spend_filter=spend_filter,
+                page_size=spend_page_size,
+                transport=transport,
+            )
+            external_api_calls += calls
         for project in projects:
             if not _name_matched(project, name_keywords):
                 continue
@@ -280,6 +416,12 @@ def build_project_status_update_config(
             if _text(project.get("delivery_type")) == "DURATION":
                 skipped_duration_project_count += 1
                 continue
+            if spend_filter:
+                stat_cost = spend_by_project_id.get(project_id, 0.0)
+                if stat_cost >= float(spend_filter["max_stat_cost_exclusive"]):
+                    skipped_spend_filter_count += 1
+                    continue
+                project = {**project, "stat_cost": stat_cost}
             actions.append(
                 _build_action(
                     action_type=action_type,
@@ -314,9 +456,11 @@ def build_project_status_update_config(
             "target_account_count": len(advertiser_ids),
             "action_count": len(actions),
             "skipped_duration_project_count": skipped_duration_project_count,
+            "skipped_spend_filter_count": skipped_spend_filter_count,
             "action_type": action_type,
             "opt_status": opt_status,
             "name_contains": name_keywords,
+            **({"spend_filter": {key: value for key, value in spend_filter.items() if key != "window_label"}} if spend_filter else {}),
         },
         "project_update": project_update,
     }

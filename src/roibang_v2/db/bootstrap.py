@@ -217,6 +217,7 @@ def bootstrap_database(database_path: str | Path) -> None:
               ON create_idempotency_keys (status, target_date)
             """
         )
+        _ensure_provider_id_ledger_plan_scope(conn)
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS create_provider_id_ledger (
@@ -233,7 +234,7 @@ def bootstrap_database(database_path: str | Path) -> None:
               response_payload_json TEXT NOT NULL DEFAULT '{}',
               first_seen_at TEXT NOT NULL,
               last_seen_at TEXT NOT NULL,
-              PRIMARY KEY (entity_type, local_key)
+              PRIMARY KEY (entity_type, local_key, plan_id, request_id)
             )
             """
         )
@@ -286,3 +287,58 @@ def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition
     columns = {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
     if column not in columns:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def _primary_key_columns(conn: sqlite3.Connection, table: str) -> tuple[str, ...]:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    keyed = sorted((int(row[5]), str(row[1])) for row in rows if int(row[5] or 0) > 0)
+    return tuple(name for _position, name in keyed)
+
+
+def _ensure_provider_id_ledger_plan_scope(conn: sqlite3.Connection) -> None:
+    exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'create_provider_id_ledger'"
+    ).fetchone()
+    if not exists or _primary_key_columns(conn, "create_provider_id_ledger") == (
+        "entity_type",
+        "local_key",
+        "plan_id",
+        "request_id",
+    ):
+        return
+    conn.execute("ALTER TABLE create_provider_id_ledger RENAME TO create_provider_id_ledger_old_pk")
+    conn.execute(
+        """
+        CREATE TABLE create_provider_id_ledger (
+          entity_type TEXT NOT NULL,
+          local_key TEXT NOT NULL,
+          provider_id TEXT NOT NULL,
+          plan_id TEXT NOT NULL DEFAULT '',
+          request_id TEXT NOT NULL DEFAULT '',
+          advertiser_id TEXT NOT NULL DEFAULT '',
+          parent_local_key TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL,
+          source_workflow TEXT NOT NULL,
+          execution_enabled INTEGER NOT NULL,
+          response_payload_json TEXT NOT NULL DEFAULT '{}',
+          first_seen_at TEXT NOT NULL,
+          last_seen_at TEXT NOT NULL,
+          PRIMARY KEY (entity_type, local_key, plan_id, request_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO create_provider_id_ledger (
+          entity_type, local_key, provider_id, plan_id, request_id, advertiser_id,
+          parent_local_key, status, source_workflow, execution_enabled,
+          response_payload_json, first_seen_at, last_seen_at
+        )
+        SELECT
+          entity_type, local_key, provider_id, plan_id, request_id, advertiser_id,
+          parent_local_key, status, source_workflow, execution_enabled,
+          response_payload_json, first_seen_at, last_seen_at
+        FROM create_provider_id_ledger_old_pk
+        """
+    )
+    conn.execute("DROP TABLE create_provider_id_ledger_old_pk")

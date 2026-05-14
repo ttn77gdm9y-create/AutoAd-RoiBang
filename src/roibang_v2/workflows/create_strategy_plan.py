@@ -117,10 +117,20 @@ def _candidate_min_stat_cost(request: dict[str, Any], policy: dict[str, Any]) ->
     return max(_float_value(policy.get("min_candidate_stat_cost"), 0), _float_value(selection.get("min_stat_cost"), 0))
 
 
+def _candidate_max_stat_cost(request: dict[str, Any]) -> float | None:
+    selection = _selection_policy(request)
+    value = _float_value(selection.get("max_stat_cost"), 0)
+    return value if value > 0 else None
+
+
 def _filter_candidate_rows_for_request(rows: list[dict[str, Any]], *, request: dict[str, Any], policy: dict[str, Any]) -> list[dict[str, Any]]:
     filtered = _filter_candidate_rows(rows, policy=policy)
     min_stat_cost = _candidate_min_stat_cost(request, _candidate_filters(policy))
-    return [row for row in filtered if float(row.get("stat_cost") or 0) >= min_stat_cost]
+    max_stat_cost = _candidate_max_stat_cost(request)
+    result = [row for row in filtered if float(row.get("stat_cost") or 0) >= min_stat_cost]
+    if max_stat_cost is not None:
+        result = [row for row in result if float(row.get("stat_cost") or 0) <= max_stat_cost]
+    return result
 
 
 def _candidate_sort_key(row: dict[str, Any], *, selection: dict[str, Any]) -> tuple[Any, ...]:

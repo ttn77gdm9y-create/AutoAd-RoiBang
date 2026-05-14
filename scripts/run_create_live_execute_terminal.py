@@ -14,6 +14,10 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from _repo_bootstrap import bootstrap_project_root
+
+PROJECT_ROOT = bootstrap_project_root()
+
 from watch_create_live_progress import _render
 from open_create_live_progress_terminal import open_progress_terminal
 
@@ -116,7 +120,7 @@ def run_from_args(argv: list[str] | None = None) -> int:
     if args.open_progress_window and not args.check_config_only:
         try:
             open_progress_terminal(
-                cwd=Path.cwd(),
+                cwd=PROJECT_ROOT,
                 progress_dir=progress_dir,
                 interval=float(args.interval),
                 recent_events=int(args.recent_events),

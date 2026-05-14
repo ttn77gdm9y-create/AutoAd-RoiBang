@@ -37,6 +37,18 @@ def is_mock_provider_id(value: Any) -> bool:
     return str(value or "").strip().startswith("mock_")
 
 
+PLAN_SCOPED_ENTITY_TYPES = {"project", "promotion"}
+ASSET_SCOPED_ENTITY_TYPES = {"target_video", "target_video_cover"}
+
+
+def _scope_for_record(entity_type: str, plan_id: str, request_id: str) -> tuple[str, str]:
+    if entity_type in PLAN_SCOPED_ENTITY_TYPES:
+        return str(plan_id), str(request_id)
+    if entity_type in ASSET_SCOPED_ENTITY_TYPES:
+        return "", ""
+    return str(plan_id), str(request_id)
+
+
 def record_create_provider_id(
     *,
     db_path: str | Path,
@@ -54,6 +66,7 @@ def record_create_provider_id(
     normalized_entity_type = str(entity_type).strip()
     normalized_local_key = str(local_key).strip()
     normalized_provider_id = str(provider_id).strip()
+    scoped_plan_id, scoped_request_id = _scope_for_record(normalized_entity_type, str(plan_id), str(request_id))
     if not normalized_entity_type or not normalized_local_key or not normalized_provider_id:
         raise ValueError("entity_type, local_key and provider_id are required")
     with sqlite3.connect(db_path) as conn:
@@ -61,9 +74,9 @@ def record_create_provider_id(
             """
             SELECT provider_id, source_workflow, status
             FROM create_provider_id_ledger
-            WHERE entity_type = ? AND local_key = ?
+            WHERE entity_type = ? AND local_key = ? AND plan_id = ? AND request_id = ?
             """,
-            (normalized_entity_type, normalized_local_key),
+            (normalized_entity_type, normalized_local_key, scoped_plan_id, scoped_request_id),
         ).fetchone()
         existing_provider_id = str(existing[0]) if existing else ""
         existing_source_workflow = str(existing[1]) if existing else ""
@@ -91,10 +104,8 @@ def record_create_provider_id(
               parent_local_key, status, source_workflow, execution_enabled,
               response_payload_json, first_seen_at, last_seen_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(entity_type, local_key) DO UPDATE SET
+            ON CONFLICT(entity_type, local_key, plan_id, request_id) DO UPDATE SET
               provider_id = excluded.provider_id,
-              plan_id = excluded.plan_id,
-              request_id = excluded.request_id,
               advertiser_id = excluded.advertiser_id,
               parent_local_key = excluded.parent_local_key,
               status = excluded.status,
@@ -107,8 +118,8 @@ def record_create_provider_id(
                 normalized_entity_type,
                 normalized_local_key,
                 normalized_provider_id,
-                str(plan_id),
-                str(request_id),
+                scoped_plan_id,
+                scoped_request_id,
                 str(advertiser_id),
                 str(parent_local_key),
                 "active",
@@ -136,27 +147,47 @@ def archive_create_provider_ids(
     plan_id: str = "",
     request_id: str = "",
     entity_types: tuple[str, ...] = ("project", "promotion"),
+    local_keys: tuple[str, ...] = (),
+    match_any_local_key: bool = False,
+    exclude_plan_id: str = "",
+    exclude_request_id: str = "",
 ) -> dict[str, Any]:
     normalized_plan_id = str(plan_id or "").strip()
     normalized_request_id = str(request_id or "").strip()
+    normalized_exclude_plan_id = str(exclude_plan_id or "").strip()
+    normalized_exclude_request_id = str(exclude_request_id or "").strip()
     normalized_entity_types = tuple(str(item).strip() for item in entity_types if str(item).strip())
-    if not normalized_entity_types or (not normalized_plan_id and not normalized_request_id):
+    normalized_local_keys = tuple(str(item).strip() for item in local_keys if str(item).strip())
+    if not normalized_entity_types or (
+        not normalized_plan_id and not normalized_request_id and not normalized_local_keys
+    ):
         return {
             "status": "skipped",
             "archived_count": 0,
             "plan_id": normalized_plan_id,
             "request_id": normalized_request_id,
             "entity_types": list(normalized_entity_types),
+            "local_key_count": len(normalized_local_keys),
             "execution_enabled": False,
             "external_api_calls": 0,
             "actions": [],
         }
     where = ["status = 'active'"]
     params: list[str] = []
-    if normalized_plan_id:
+    if normalized_local_keys:
+        placeholders = ",".join("?" for _ in normalized_local_keys)
+        where.append(f"local_key IN ({placeholders})")
+        params.extend(normalized_local_keys)
+    if normalized_exclude_plan_id:
+        where.append("plan_id != ?")
+        params.append(normalized_exclude_plan_id)
+    if normalized_exclude_request_id:
+        where.append("request_id != ?")
+        params.append(normalized_exclude_request_id)
+    if normalized_plan_id and not (match_any_local_key and normalized_local_keys):
         where.append("plan_id = ?")
         params.append(normalized_plan_id)
-    elif normalized_request_id:
+    elif normalized_request_id and not (match_any_local_key and normalized_local_keys):
         where.append("request_id = ?")
         params.append(normalized_request_id)
     placeholders = ",".join("?" for _ in normalized_entity_types)
@@ -180,13 +211,20 @@ def archive_create_provider_ids(
         "plan_id": normalized_plan_id,
         "request_id": normalized_request_id,
         "entity_types": list(normalized_entity_types),
+        "local_key_count": len(normalized_local_keys),
         "execution_enabled": False,
         "external_api_calls": 0,
         "actions": [],
     }
 
 
-def resolve_create_lookup_placeholders(*, db_path: str | Path, payload: dict[str, Any]) -> dict[str, Any]:
+def resolve_create_lookup_placeholders(
+    *,
+    db_path: str | Path,
+    payload: dict[str, Any],
+    plan_id: str = "",
+    request_id: str = "",
+) -> dict[str, Any]:
     unresolved: list[dict[str, str]] = []
     lookup_count = 0
     resolved_count = 0
@@ -205,10 +243,15 @@ def resolve_create_lookup_placeholders(*, db_path: str | Path, payload: dict[str
         entity_type = _entity_type_for_field(str(field))
         params: tuple[str, ...]
         where = "local_key = ? AND status = 'active'"
-        params = (local_key,)
+        params_list: list[str] = [local_key]
         if entity_type:
             where += " AND entity_type = ?"
-            params = (local_key, entity_type)
+            params_list.append(entity_type)
+            scoped_plan_id, scoped_request_id = _scope_for_record(entity_type, str(plan_id), str(request_id))
+            if entity_type in PLAN_SCOPED_ENTITY_TYPES:
+                where += " AND plan_id = ? AND request_id = ?"
+                params_list.extend([scoped_plan_id, scoped_request_id])
+        params = tuple(params_list)
         row = conn.execute(
             f"""
             SELECT provider_id
@@ -246,6 +289,8 @@ def resolve_provider_payload_drafts(
     *,
     db_path: str | Path,
     provider_payload_drafts: list[dict[str, Any]],
+    plan_id: str = "",
+    request_id: str = "",
 ) -> dict[str, Any]:
     resolved_drafts: list[dict[str, Any]] = []
     unresolved_placeholders: list[dict[str, str]] = []
@@ -255,7 +300,12 @@ def resolve_provider_payload_drafts(
         if not isinstance(draft, dict):
             continue
         payload = draft.get("payload") if isinstance(draft.get("payload"), dict) else {}
-        resolution = resolve_create_lookup_placeholders(db_path=db_path, payload=payload)
+        resolution = resolve_create_lookup_placeholders(
+            db_path=db_path,
+            payload=payload,
+            plan_id=plan_id,
+            request_id=request_id,
+        )
         lookup_count += int(resolution.get("lookup_count") or 0)
         resolved_count += int(resolution.get("resolved_count") or 0)
         for item in resolution.get("unresolved_placeholders") or []:

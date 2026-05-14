@@ -146,7 +146,7 @@ def test_project_management_update_config_builds_budget_actions_by_name():
     ]
 
 
-def test_project_management_update_config_builds_delete_actions_from_disabled_projects():
+def test_project_management_update_config_builds_delete_actions_by_name_without_hidden_status_filter():
     calls: list[dict] = []
 
     def transport(request: dict) -> dict:
@@ -171,7 +171,75 @@ def test_project_management_update_config_builds_delete_actions_from_disabled_pr
         "project_id": "p-closed",
         "project_name": "0513_郭靖_旧项目",
     }
-    assert calls[0]["payload"]["filtering"] == {"status_first": "PROJECT_STATUS_DISABLE", "name": "0513"}
+    assert calls[0]["payload"]["filtering"] == {"name": "0513"}
+
+
+def test_project_management_update_config_filters_delete_actions_by_realtime_spend():
+    calls: list[dict] = []
+
+    def transport(request: dict) -> dict:
+        calls.append(request)
+        if request["operation"] == "lookup_project_list":
+            return {
+                "code": 0,
+                "data": {
+                    "list": [
+                        {"project_id": "p-low", "name": "0513_郭靖_低消耗"},
+                        {"project_id": "p-high", "name": "0513_郭靖_高消耗"},
+                        {"project_id": "p-no-cost", "name": "0513_郭靖_无消耗"},
+                    ]
+                },
+            }
+        if request["operation"] == "lookup_project_report":
+            return {
+                "code": 0,
+                "data": {
+                    "rows": [
+                        {
+                            "dimensions": {"cdp_project_id": "p-low", "cdp_project_name": "0513_郭靖_低消耗"},
+                            "metrics": {"stat_cost": "99.99"},
+                        },
+                        {
+                            "dimensions": {"cdp_project_id": "p-high", "cdp_project_name": "0513_郭靖_高消耗"},
+                            "metrics": {"stat_cost": "100.00"},
+                        },
+                    ]
+                },
+            }
+        raise AssertionError(request)
+
+    result = build_project_status_update_config(
+        {
+            "project_update_id": "delete-0513-low-spend-001",
+            "advertiser_ids": ["adv-1"],
+            "action_type": "delete_project",
+            "name_contains": ["0513"],
+            "spend_filter": {
+                "window": "today",
+                "end_date": "2026-05-14",
+                "max_stat_cost_exclusive": 100,
+            },
+        },
+        transport=transport,
+    )
+
+    assert result["summary"]["action_count"] == 2
+    assert result["summary"]["spend_filter"] == {
+        "window": "today",
+        "start_date": "2026-05-14",
+        "end_date": "2026-05-14",
+        "max_stat_cost_exclusive": 100.0,
+    }
+    assert [
+        (action["project_id"], action["stat_cost"])
+        for action in result["project_update"]["actions"]
+    ] == [("p-low", 99.99), ("p-no-cost", 0.0)]
+    assert [(call["operation"], call["endpoint"]) for call in calls] == [
+        ("lookup_project_list", "/open_api/v3.0/project/list/"),
+        ("lookup_project_report", "/open_api/v3.0/report/custom/get/"),
+    ]
+    assert calls[1]["payload"]["start_time"] == "2026-05-14"
+    assert calls[1]["payload"]["end_time"] == "2026-05-14"
 
 
 def test_run_project_status_update_config_writes_project_update_json(tmp_path: Path):

@@ -3,16 +3,60 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
+from datetime import date
+from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from _repo_bootstrap import bootstrap_project_root
+
+bootstrap_project_root()
 
 from roibang_v2.config import load_json, load_runtime_config
 from roibang_v2.db.bootstrap import bootstrap_database
 from roibang_v2.workflows.create_mode import run_create_mode_request
 
 
+def _split_accounts(values: list[str] | None) -> list[str]:
+    accounts: list[str] = []
+    for value in values or []:
+        for part in str(value).replace("\n", ",").split(","):
+            account = part.strip()
+            if account:
+                accounts.append(account)
+    return accounts
+
+
+def _request_from_args(args: argparse.Namespace) -> dict:
+    if args.request:
+        return load_json(args.request)
+    accounts = _split_accounts(args.account) + _split_accounts(args.accounts)
+    if not args.mode:
+        raise ValueError("run_create_mode requires --request or --mode")
+    if not accounts:
+        raise ValueError("run_create_mode --mode requires at least one --account or --accounts")
+    return {
+        "create_mode": {
+            "mode_key": args.mode,
+            "target_date": args.target_date or date.today().isoformat(),
+            "owner": args.owner,
+            "target_accounts": accounts,
+        }
+    }
+
+
 def run_from_args(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build a create plan from a fixed create mode config.")
     parser.add_argument("--config", default="configs/runtime.example.json")
-    parser.add_argument("--request", required=True)
+    parser.add_argument("--request")
+    parser.add_argument("--mode", help="Create mode name or mode_key, for example 每付通投近期放量.")
+    parser.add_argument("--account", action="append", help="Target advertiser ID. Can be repeated.")
+    parser.add_argument("--accounts", action="append", help="Comma/newline separated target advertiser IDs.")
+    parser.add_argument("--target-date")
+    parser.add_argument("--owner", default="郭靖")
     parser.add_argument("--policy", default="policies/create-policy.example.json")
     parser.add_argument("--template-catalog", default="configs/create-templates/wx-mini-game.json")
     args = parser.parse_args(argv)
@@ -23,7 +67,7 @@ def run_from_args(argv: list[str] | None = None) -> int:
 
     bootstrap_database(config.database_path)
     result = run_create_mode_request(
-        load_json(args.request),
+        _request_from_args(args),
         db_path=config.database_path,
         runs_dir=config.runs_dir,
         policy=load_json(args.policy),

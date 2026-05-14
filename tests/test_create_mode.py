@@ -130,15 +130,19 @@ def test_bundled_create_modes_cover_7r_and_pay_scale_and_test_new():
         "wx_7r_general_scale": ("wx_7r_general", "微小每付7R通投历史放量", 0.419, "7R 通投历史放量", 30),
         "wx_7r_general_recent_scale": ("wx_7r_general", "微小每付7R通投近期放量", 0.419, "7R 通投近期放量", 7),
         "wx_7r_general_test_new": ("wx_7r_general", "微小每付7R通投测新", 0.41, "7R 通投测新", 30),
+        "wx_7r_general_retest": ("wx_7r_general", "微小每付7R通投复测", 0.41, "7R 通投复测", 30),
         "wx_7r_male_scale": ("wx_7r_male", "微小每付7R男历史放量", 0.419, "7R 男历史放量", 30),
         "wx_7r_male_recent_scale": ("wx_7r_male", "微小每付7R男近期放量", 0.419, "7R 男近期放量", 7),
         "wx_7r_male_test_new": ("wx_7r_male", "微小每付7R男测新", 0.41, "7R 男测新", 30),
+        "wx_7r_male_retest": ("wx_7r_male", "微小每付7R男复测", 0.41, "7R 男复测", 30),
         "wx_pay_general_scale": ("wx_pay_general", "微小每付通投历史放量", None, "每付通投历史放量", 30),
         "wx_pay_general_recent_scale": ("wx_pay_general", "微小每付通投近期放量", None, "每付通投近期放量", 7),
         "wx_pay_general_test_new": ("wx_pay_general", "微小每付通投测新", None, "每付通投测新", 30),
+        "wx_pay_general_retest": ("wx_pay_general", "微小每付通投复测", None, "每付通投复测", 30),
         "wx_pay_male_scale": ("wx_pay_male", "微小每付男历史放量", None, "每付男历史放量", 30),
         "wx_pay_male_recent_scale": ("wx_pay_male", "微小每付男近期放量", None, "每付男近期放量", 7),
         "wx_pay_male_test_new": ("wx_pay_male", "微小每付男测新", None, "每付男测新", 30),
+        "wx_pay_male_retest": ("wx_pay_male", "微小每付男复测", None, "每付男复测", 30),
     }
     for mode_key, (template_key, project_template_name, roi_goal, display_name, lookback_days) in expected.items():
         mode_config = json.loads(Path(f"configs/create-modes/{mode_key}.example.json").read_text(encoding="utf-8"))
@@ -159,8 +163,12 @@ def test_bundled_create_modes_cover_7r_and_pay_scale_and_test_new():
         assert request["material_selection"]["lookback_days"] == lookback_days
         assert request["material_selection"]["source_scope"] == "source_material_account"
         assert request["material_selection"]["exclude_recent_used_days"] == 0
+        if mode_key.endswith("_retest"):
+            assert request["material_selection"]["min_stat_cost"] == 200
+            assert request["material_selection"]["max_stat_cost"] == 1000
         assert request["material_requirements"]["dedupe_scope"] == "max_account_overlap"
         assert request["material_requirements"]["allow_reuse_across_accounts"] is True
+        assert request["field_defaults"]["action_track_url"].startswith("https://backend.gravity-engine.com/")
         assert request["template_parameters"]["unit_creative_selection"] == {
             "title_strategy": "deterministic_shuffle_per_unit",
             "cta_min_count": 2,
@@ -178,7 +186,9 @@ def test_bundled_create_modes_cover_7r_and_pay_scale_and_test_new():
 def test_create_mode_resolves_complete_chinese_aliases_and_rejects_ambiguous_names():
     assert load_create_mode_config({"mode_key": "7R 通投历史放量"})["mode_key"] == "wx_7r_general_scale"
     assert load_create_mode_config({"mode_key": "7R 通投近期放量"})["mode_key"] == "wx_7r_general_recent_scale"
+    assert load_create_mode_config({"mode_key": "7R 通投复测"})["mode_key"] == "wx_7r_general_retest"
     assert load_create_mode_config({"mode_key": "7R 男测新"})["mode_key"] == "wx_7r_male_test_new"
+    assert load_create_mode_config({"mode_key": "每付通投复测"})["mode_key"] == "wx_pay_general_retest"
     assert load_create_mode_config({"mode_key": "每付男近期放量"})["mode_key"] == "wx_pay_male_recent_scale"
 
     try:
@@ -352,6 +362,47 @@ def test_create_mode_treats_blank_source_material_review_status_as_usable(tmp_pa
     assert len(unit["materials"]) == 5
 
 
+def test_create_mode_retest_filters_material_cost_range(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_source_materials(db_path, count=12)
+    with sqlite3.connect(db_path) as conn:
+        for index in range(1, 13):
+            stat_cost = 500
+            if index <= 2:
+                stat_cost = 199
+            if index >= 10:
+                stat_cost = 1001
+            conn.execute(
+                "UPDATE product_source_materials SET cost_lookback = ?, score = ? WHERE material_id = ?",
+                (stat_cost, stat_cost, f"m-{index:03d}"),
+            )
+            conn.execute(
+                "UPDATE product_source_material_metric_rollups SET stat_cost = ? WHERE material_id = ?",
+                (stat_cost, f"m-{index:03d}"),
+            )
+
+    result = run_create_mode_request(
+        {
+            "create_mode": {
+                "mode_key": "每付通投复测",
+                "target_accounts": ["acc-1"],
+                "target_date": "2026-05-13",
+                "owner": "郭靖",
+            }
+        },
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        policy={"create_strategy_plan": _policy()},
+        template_catalog_path=Path("configs/create-templates/wx-mini-game.json"),
+    )
+
+    assert result["ok"] is True
+    unit = result["create_strategy_plan"]["strategy"]["projects"][0]["units"][0]
+    stat_costs = [material["stat_cost"] for material in unit["materials"]]
+    assert stat_costs
+    assert all(200 <= stat_cost <= 1000 for stat_cost in stat_costs)
+
+
 def test_run_create_mode_cli_prints_json_summary(tmp_path: Path, capsys):
     db_path = tmp_path / "roibang.sqlite3"
     _seed_source_materials(db_path, count=12)
@@ -433,3 +484,53 @@ def test_run_create_mode_cli_prints_json_summary(tmp_path: Path, capsys):
     assert output["ok"] is True
     assert output["workflow"] == "create_mode"
     assert output["summary"]["planned_project_count"] == 1
+
+
+def test_run_create_mode_cli_builds_request_from_mode_and_accounts(tmp_path: Path, capsys):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_source_materials(db_path, count=20)
+    runtime_path = tmp_path / "runtime.json"
+    runtime_path.write_text(
+        json.dumps(
+            {
+                "environment": "test",
+                "phase": "phase1",
+                "database_path": str(db_path),
+                "runs_dir": str(tmp_path / "runs"),
+                "fixtures_dir": str(tmp_path / "fixtures"),
+                "external_api_enabled": False,
+                "execution_enabled": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    script = _load_script("run_create_mode")
+    code = script.run_from_args(
+        [
+            "--config",
+            str(runtime_path),
+            "--mode",
+            "每付通投近期放量",
+            "--account",
+            "acc-1",
+            "--accounts",
+            "acc-2,acc-3",
+            "--target-date",
+            "2026-05-13",
+            "--owner",
+            "郭靖",
+            "--policy",
+            "policies/create-policy.example.json",
+            "--template-catalog",
+            "configs/create-templates/wx-mini-game.json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    output = json.loads(captured.out)
+    assert code == 0
+    assert output["ok"] is True
+    assert output["mode_key"] == "wx_pay_general_recent_scale"
+    assert output["summary"]["planned_project_count"] == 15
+    assert output["summary"]["planned_unit_count"] == 15

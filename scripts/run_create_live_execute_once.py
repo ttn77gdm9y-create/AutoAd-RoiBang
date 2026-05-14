@@ -4,8 +4,17 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from _repo_bootstrap import bootstrap_project_root
+
+bootstrap_project_root()
 
 from roibang_v2.config import load_json, load_runtime_config
 from roibang_v2.integrations.oceanengine.tokens import token_health
@@ -16,7 +25,6 @@ from roibang_v2.workflows.create_http_transport import CREATE_ENDPOINT_ALLOWLIST
 from roibang_v2.workflows.create_lineage import create_ref
 from roibang_v2.workflows.create_live_execute_once import run_create_live_execute_once_request
 from roibang_v2.workflows.create_plan_contract import validate_create_plan
-from roibang_v2.workflows.create_provider_id_ledger import archive_create_provider_ids
 
 
 DEFAULT_DIRECT_CREATE_DRY_RUN_POLICY = {
@@ -335,21 +343,24 @@ def _direct_dry_run_policy(policy: dict) -> dict:
     return {**DEFAULT_DIRECT_CREATE_DRY_RUN_POLICY, **cfg}
 
 
-def _archive_plan_project_unit_ledger(*, create_plan: dict, db_path: Path, stage: str) -> dict:
+def _project_unit_ledger_scope(*, create_plan: dict, stage: str) -> dict:
     plan_ref = create_ref(workflow="create_strategy_plan", artifact=create_plan)
-    result = archive_create_provider_ids(
-        db_path=db_path,
-        plan_id=str(plan_ref.get("plan_id") or ""),
-        request_id=str(plan_ref.get("request_id") or ""),
-        entity_types=("project", "promotion"),
-    )
-    return {"stage": stage, **result}
+    return {
+        "stage": stage,
+        "status": "plan_scoped_no_archive",
+        "plan_id": str(plan_ref.get("plan_id") or ""),
+        "request_id": str(plan_ref.get("request_id") or ""),
+        "archived_count": 0,
+        "entity_types": ["project", "promotion"],
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "actions": [],
+    }
 
 
 def _build_internal_create_execute(*, create_plan: dict, policy: dict, db_path: Path) -> dict:
-    ledger_archive = _archive_plan_project_unit_ledger(
+    ledger_scope = _project_unit_ledger_scope(
         create_plan=create_plan,
-        db_path=db_path,
         stage="before_internal_create_execute",
     )
     dry_run = build_create_dry_run(
@@ -365,7 +376,7 @@ def _build_internal_create_execute(*, create_plan: dict, policy: dict, db_path: 
     if not create_execute.get("resolved_provider_payload_drafts") and dry_run.get("provider_payload_drafts"):
         create_execute["provider_payload_drafts"] = list(dry_run["provider_payload_drafts"])
     create_execute["generated_from_create_plan"] = True
-    create_execute["pre_create_execute_ledger_archive"] = ledger_archive
+    create_execute["pre_create_execute_ledger_archive"] = ledger_scope
     return create_execute
 
 

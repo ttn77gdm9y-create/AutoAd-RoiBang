@@ -33,6 +33,7 @@ CREATE_ENDPOINT_ALLOWLIST = {
     "update_project_cpa_bid": "/open_api/v3.0/project/cpa_bid/update/",
     "update_project_roi_goal": "/open_api/v3.0/project/roigoal/update/",
     "lookup_disabled_projects": "/open_api/v3.0/project/list/",
+    "lookup_project_report": "/open_api/v3.0/report/custom/get/",
     "delete_project": "/open_api/v3.0/project/delete/",
 }
 
@@ -166,6 +167,7 @@ def _request_method(operation: str) -> str:
             "lookup_project_list",
             "lookup_project_schedule",
             "lookup_disabled_projects",
+            "lookup_project_report",
         }
         else "POST"
     )

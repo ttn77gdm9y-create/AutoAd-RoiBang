@@ -526,6 +526,64 @@ def test_create_live_execute_once_direct_mode_runs_fixed_sequence_with_transport
     assert result["ordered_steps"][1]["status"] == "skipped_existing_target_material"
 
 
+def test_lookup_target_material_retries_when_bound_material_is_not_visible_yet(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+    artifact = _execute_artifact()
+    artifact["resolved_provider_payload_drafts"] = [
+        draft
+        for draft in artifact["resolved_provider_payload_drafts"]
+        if draft["operation"] != "bind_material"
+    ]
+    policy = _policy()
+    policy["create_live_execute_once"]["lookup_target_material_visibility_wait"] = {
+        "enabled": True,
+        "max_retries": 1,
+        "sleep_seconds": 0,
+    }
+    calls: list[dict] = []
+    lookup_count = {"value": 0}
+
+    def fake_transport(call: dict) -> dict:
+        calls.append(call)
+        if call["operation"] == "create_project":
+            return {"code": 0, "data": {"project_id": "project-001"}}
+        if call["operation"] == "lookup_target_material":
+            lookup_count["value"] += 1
+            if lookup_count["value"] == 1:
+                return {"code": 0, "data": {"list": []}}
+            return {
+                "code": 0,
+                "data": {"list": [{"id": "target-video-001", "material_id": "material-1", "cover_id": "target-cover-001"}]},
+            }
+        if call["operation"] == "create_unit":
+            assert call["payload"]["promotion_materials"]["video_material_list"][0]["video_id"] == "target-video-001"
+            return {"code": 0, "data": {"promotion_id": "promotion-001"}}
+        raise AssertionError(call["operation"])
+
+    result = run_create_live_execute_once_request(
+        {
+            "create_live_execute_once": {
+                "create_execute_artifact": artifact,
+                "policy": policy,
+                "runtime": {"execution_enabled": True, "external_api_enabled": True},
+            }
+        },
+        runs_dir=tmp_path / "runs",
+        db_path=db_path,
+        transport=fake_transport,
+    )
+
+    assert result["ok"] is True
+    assert lookup_count["value"] == 2
+    assert [call["operation"] for call in calls] == [
+        "create_project",
+        "lookup_target_material",
+        "lookup_target_material",
+        "create_unit",
+    ]
+
+
 def test_create_live_execute_once_deletes_closed_projects_and_retries_when_project_cap_is_hit(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     bootstrap_database(db_path)
@@ -1452,7 +1510,7 @@ def test_create_live_execute_once_batches_target_material_lookup_by_account(tmp_
     ]
 
 
-def test_create_live_execute_once_archives_existing_project_before_new_round(tmp_path: Path):
+def test_create_live_execute_once_resumes_existing_project_in_same_round(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     bootstrap_database(db_path)
     record_create_provider_id(
@@ -1472,7 +1530,7 @@ def test_create_live_execute_once_archives_existing_project_before_new_round(tmp
         if call["operation"] == "create_project":
             return {"code": 0, "data": {"project_id": "project-new"}}
         if call["operation"] == "create_unit":
-            assert call["payload"]["project_id"] == "project-new"
+            assert call["payload"]["project_id"] == "project-existing"
             return {"code": 0, "data": {"promotion_id": "promotion-001"}}
         if call["operation"] == "bind_material":
             return {"code": 0, "data": {"task_id": "bind-001"}}
@@ -1495,18 +1553,16 @@ def test_create_live_execute_once_archives_existing_project_before_new_round(tmp
 
     assert result["ok"] is True
     assert result["status"] == "create_http_completed"
-    assert result["external_api_calls"] == 3
-    assert [call["operation"] for call in calls] == ["create_project", "lookup_target_material", "create_unit"]
-    assert result["idempotency"]["skipped_existing_provider_id_count"] == 2
+    assert result["external_api_calls"] == 2
+    assert [call["operation"] for call in calls] == ["lookup_target_material", "create_unit"]
+    assert result["idempotency"]["skipped_existing_provider_id_count"] == 3
     assert result["ordered_steps"][0] == {
         "operation": "create_project",
         "planned_count": 1,
-        "status": "completed",
-        "test_transport_call_count": 1,
+        "status": "skipped_existing_provider_id",
+        "test_transport_call_count": 0,
     }
-    assert result["ledger_archive"][0]["stage"] == "before_run"
-    assert result["ledger_archive"][0]["archived_count"] == 1
-    assert result["ledger_archive"][1]["stage"] == "after_run"
+    assert result["ledger_archive"][0]["stage"] == "after_run"
 
     with sqlite3.connect(db_path) as conn:
         rows = conn.execute(
@@ -1517,7 +1573,7 @@ def test_create_live_execute_once_archives_existing_project_before_new_round(tmp
             """
         ).fetchall()
     assert rows == [
-        ("project", "target-1-p001", "project-new", "archived"),
+        ("project", "target-1-p001", "project-existing", "archived"),
         ("promotion", "target-1-p001-u01", "promotion-001", "archived"),
         ("target_video", "target_video:target-1:video-1", "target-video-001", "active"),
         ("target_video_cover", "target_video_cover:target-1:video-1", "target-cover-001", "active"),
@@ -1635,7 +1691,7 @@ def test_create_live_execute_once_replaces_invalid_provider_id_record(tmp_path: 
     assert row == ("correct-video-id", "active")
 
 
-def test_create_live_execute_once_archives_existing_project_and_unit_then_creates_new_ones(tmp_path: Path):
+def test_create_live_execute_once_skips_existing_project_and_unit_in_same_round(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     bootstrap_database(db_path)
     record_create_provider_id(
@@ -1688,14 +1744,103 @@ def test_create_live_execute_once_archives_existing_project_and_unit_then_create
     )
 
     assert result["ok"] is True
-    assert result["external_api_calls"] == 3
-    assert [call["operation"] for call in calls] == ["create_project", "lookup_target_material", "create_unit"]
-    assert result["idempotency"]["skipped_existing_provider_id_count"] == 2
+    assert result["external_api_calls"] == 1
+    assert [call["operation"] for call in calls] == ["lookup_target_material"]
+    assert result["idempotency"]["skipped_existing_provider_id_count"] == 4
     assert [step["status"] for step in result["ordered_steps"]] == [
-        "completed",
+        "skipped_existing_provider_id",
         "skipped_existing_target_material",
         "skipped_existing_provider_id",
-        "completed",
+        "skipped_existing_provider_id",
+    ]
+
+
+def test_create_live_execute_once_does_not_reuse_project_or_unit_from_different_plan(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+    record_create_provider_id(
+        db_path=db_path,
+        entity_type="project",
+        local_key="target-1-p001",
+        provider_id="project-from-old-plan",
+        plan_id="old-plan",
+        request_id="old-req",
+        advertiser_id="target-1",
+        source_workflow="create_live_execute_once",
+    )
+    record_create_provider_id(
+        db_path=db_path,
+        entity_type="promotion",
+        local_key="target-1-p001-u01",
+        provider_id="promotion-from-old-plan",
+        plan_id="old-plan",
+        request_id="old-req",
+        advertiser_id="target-1",
+        parent_local_key="target-1-p001",
+        source_workflow="create_live_execute_once",
+    )
+    record_create_provider_id(
+        db_path=db_path,
+        entity_type="target_video",
+        local_key="target_video:target-1:video-1",
+        provider_id="target-video-from-old-plan",
+        plan_id="old-plan",
+        request_id="old-req",
+        source_workflow="create_live_execute_once",
+    )
+    record_create_provider_id(
+        db_path=db_path,
+        entity_type="target_video_cover",
+        local_key="target_video_cover:target-1:video-1",
+        provider_id="target-cover-from-old-plan",
+        plan_id="old-plan",
+        request_id="old-req",
+        source_workflow="create_live_execute_once",
+    )
+    calls: list[dict] = []
+
+    def fake_transport(call: dict) -> dict:
+        calls.append(call)
+        if call["operation"] == "create_project":
+            return {"code": 0, "data": {"project_id": "project-new-plan"}}
+        if call["operation"] == "create_unit":
+            assert call["payload"]["project_id"] == "project-new-plan"
+            material = call["payload"]["promotion_materials"]["video_material_list"][0]
+            assert material["video_id"] == "target-video-from-old-plan"
+            assert material["video_cover_id"] == "target-cover-from-old-plan"
+            return {"code": 0, "data": {"promotion_id": "promotion-new-plan"}}
+        raise AssertionError(f"{call['operation']} should be skipped by target material ledger")
+
+    result = run_create_live_execute_once_request(
+        {
+            "create_live_execute_once": {
+                "create_execute_artifact": _execute_artifact(),
+                "policy": _policy(),
+                "runtime": {"execution_enabled": True, "external_api_enabled": True},
+            }
+        },
+        runs_dir=tmp_path / "runs",
+        db_path=db_path,
+        transport=fake_transport,
+    )
+
+    assert result["ok"] is True
+    assert [call["operation"] for call in calls] == ["create_project", "create_unit"]
+    assert result["idempotency"]["skipped_existing_provider_id_count"] == 2
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT entity_type, local_key, provider_id, plan_id, status
+            FROM create_provider_id_ledger
+            WHERE entity_type IN ('project', 'promotion')
+            ORDER BY entity_type, plan_id, provider_id
+            """
+        ).fetchall()
+    assert rows == [
+        ("project", "target-1-p001", "project-from-old-plan", "old-plan", "active"),
+        ("project", "target-1-p001", "project-new-plan", "plan-1", "archived"),
+        ("promotion", "target-1-p001-u01", "promotion-from-old-plan", "old-plan", "active"),
+        ("promotion", "target-1-p001-u01", "promotion-new-plan", "plan-1", "archived"),
     ]
 
 
@@ -1755,7 +1900,7 @@ def test_create_live_execute_once_skips_existing_material_bind(tmp_path: Path):
         if call["operation"] == "create_project":
             return {"code": 0, "data": {"project_id": "project-new"}}
         if call["operation"] == "create_unit":
-            assert call["payload"]["project_id"] == "project-new"
+            assert call["payload"]["project_id"] == "project-existing"
             assert call["payload"]["promotion_materials"]["video_material_list"][0]["video_id"] == "target-video-existing"
             return {"code": 0, "data": {"promotion_id": "promotion-new"}}
         raise AssertionError(f"{call['operation']} must not be called")
@@ -1775,15 +1920,15 @@ def test_create_live_execute_once_skips_existing_material_bind(tmp_path: Path):
 
     assert result["ok"] is True
     assert result["status"] == "create_http_completed"
-    assert result["external_api_calls"] == 2
-    assert [call["operation"] for call in calls] == ["create_project", "create_unit"]
-    assert result["idempotency"]["skipped_existing_provider_id_count"] == 2
+    assert result["external_api_calls"] == 0
+    assert calls == []
+    assert result["idempotency"]["skipped_existing_provider_id_count"] == 4
     assert result["idempotency"]["skipped_existing_material_bind_count"] == 1
     assert [step["status"] for step in result["ordered_steps"]] == [
-        "completed",
+        "skipped_existing_provider_id",
         "skipped_existing_material_bind",
         "skipped_existing_provider_id",
-        "completed",
+        "skipped_existing_provider_id",
     ]
 
 
@@ -2025,7 +2170,7 @@ def test_create_live_execute_once_fixed_script_can_build_internal_create_execute
     assert create_execute["resolved_provider_payload_drafts"]
 
 
-def test_create_live_execute_once_fixed_script_archives_stale_project_before_internal_create_execute(tmp_path: Path):
+def test_create_live_execute_once_fixed_script_keeps_old_plan_project_out_of_current_plan_scope(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     _seed_plan_sources(db_path)
     record_create_provider_id(
@@ -2033,8 +2178,8 @@ def test_create_live_execute_once_fixed_script_archives_stale_project_before_int
         entity_type="project",
         local_key="target-1-p001",
         provider_id="project-deleted",
-        plan_id="plan-1",
-        request_id="req-1",
+        plan_id="old-plan",
+        request_id="old-req",
         advertiser_id="target-1",
         source_workflow="create_live_execute_once",
     )
@@ -2054,7 +2199,8 @@ def test_create_live_execute_once_fixed_script_archives_stale_project_before_int
     )
     assert unit_draft["payload"]["project_id"] == "<lookup:target-1-p001>"
     assert create_execute["pre_create_execute_ledger_archive"]["stage"] == "before_internal_create_execute"
-    assert create_execute["pre_create_execute_ledger_archive"]["archived_count"] == 1
+    assert create_execute["pre_create_execute_ledger_archive"]["status"] == "plan_scoped_no_archive"
+    assert create_execute["pre_create_execute_ledger_archive"]["archived_count"] == 0
 
     with sqlite3.connect(db_path) as conn:
         row = conn.execute(
@@ -2066,7 +2212,53 @@ def test_create_live_execute_once_fixed_script_archives_stale_project_before_int
               AND provider_id = 'project-deleted'
             """
         ).fetchone()
-    assert row == ("archived",)
+    assert row == ("active",)
+
+
+def test_create_live_execute_once_fixed_script_does_not_archive_colliding_local_keys_from_old_plan(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_plan_sources(db_path)
+    record_create_provider_id(
+        db_path=db_path,
+        entity_type="project",
+        local_key="target-1-p001",
+        provider_id="project-from-old-plan",
+        plan_id="old-plan",
+        request_id="old-req",
+        advertiser_id="target-1",
+        source_workflow="create_live_execute_once",
+    )
+    record_create_provider_id(
+        db_path=db_path,
+        entity_type="promotion",
+        local_key="target-1-p001-u01",
+        provider_id="promotion-from-old-plan",
+        plan_id="old-plan",
+        request_id="old-req",
+        advertiser_id="target-1",
+        source_workflow="create_live_execute_once",
+    )
+    plan = _create_strategy_plan()
+    module = _load_script("run_create_live_execute_once")
+
+    create_execute = module._build_internal_create_execute(
+        create_plan=plan,
+        policy=_policy(),
+        db_path=db_path,
+    )
+
+    assert create_execute["pre_create_execute_ledger_archive"]["status"] == "plan_scoped_no_archive"
+    assert create_execute["pre_create_execute_ledger_archive"]["archived_count"] == 0
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT entity_type, status
+            FROM create_provider_id_ledger
+            WHERE provider_id IN ('project-from-old-plan', 'promotion-from-old-plan')
+            ORDER BY entity_type
+            """
+        ).fetchall()
+    assert rows == [("project", "active"), ("promotion", "active")]
 
 
 def test_create_live_execute_once_fixed_script_blocks_disallowed_target_account(

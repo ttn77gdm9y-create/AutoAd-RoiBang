@@ -450,7 +450,7 @@ CREATE TABLE IF NOT EXISTS create_provider_id_ledger (
   response_payload_json TEXT NOT NULL DEFAULT '{}',
   first_seen_at TEXT NOT NULL,
   last_seen_at TEXT NOT NULL,
-  PRIMARY KEY (entity_type, local_key)
+  PRIMARY KEY (entity_type, local_key, plan_id, request_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_create_provider_id_ledger_local_key

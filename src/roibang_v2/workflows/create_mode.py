@@ -14,15 +14,19 @@ MODE_ALIASES = {
     "7r通投历史放量": "wx_7r_general_scale",
     "7r通投近期放量": "wx_7r_general_recent_scale",
     "7r通投测新": "wx_7r_general_test_new",
+    "7r通投复测": "wx_7r_general_retest",
     "7r男历史放量": "wx_7r_male_scale",
     "7r男近期放量": "wx_7r_male_recent_scale",
     "7r男测新": "wx_7r_male_test_new",
+    "7r男复测": "wx_7r_male_retest",
     "每付通投历史放量": "wx_pay_general_scale",
     "每付通投近期放量": "wx_pay_general_recent_scale",
     "每付通投测新": "wx_pay_general_test_new",
+    "每付通投复测": "wx_pay_general_retest",
     "每付男历史放量": "wx_pay_male_scale",
     "每付男近期放量": "wx_pay_male_recent_scale",
     "每付男测新": "wx_pay_male_test_new",
+    "每付男复测": "wx_pay_male_retest",
 }
 
 AMBIGUOUS_MODE_ALIASES = {
@@ -30,10 +34,12 @@ AMBIGUOUS_MODE_ALIASES = {
     "7r通投放量": "7R 通投放量需要指定历史/近期，例如 7R 通投历史放量 / 7R 通投近期放量",
     "7r男放量": "7R 男放量需要指定历史/近期，例如 7R 男历史放量 / 7R 男近期放量",
     "7r测新": "7R 测新需要指定通投或男，例如 7R 通投测新 / 7R 男测新",
+    "7r复测": "7R 复测需要指定通投或男，例如 7R 通投复测 / 7R 男复测",
     "每付放量": "每付放量需要指定通投或男，并指定历史/近期，例如 每付通投历史放量 / 每付通投近期放量",
     "每付通投放量": "每付通投放量需要指定历史/近期，例如 每付通投历史放量 / 每付通投近期放量",
     "每付男放量": "每付男放量需要指定历史/近期，例如 每付男历史放量 / 每付男近期放量",
     "每付测新": "每付测新需要指定通投或男，例如 每付通投测新 / 每付男测新",
+    "每付复测": "每付复测需要指定通投或男，例如 每付通投复测 / 每付男复测",
 }
 
 
@@ -81,7 +87,11 @@ def _now_iso() -> str:
 def _template(template_catalog: dict[str, Any], template_key: str) -> dict[str, Any]:
     templates = template_catalog.get("templates") if isinstance(template_catalog.get("templates"), dict) else {}
     value = templates.get(template_key)
-    return dict(value) if isinstance(value, dict) else {}
+    result = dict(value) if isinstance(value, dict) else {}
+    effective_touch_url = _text(template_catalog.get("effective_touch_url"))
+    if effective_touch_url and not _text(result.get("effective_touch_url")):
+        result["effective_touch_url"] = effective_touch_url
+    return result
 
 
 def _template_name(mode_config: dict[str, Any], template: dict[str, Any]) -> str:
@@ -117,7 +127,7 @@ def _field_defaults(mode_config: dict[str, Any], template: dict[str, Any]) -> di
         "inventory_catalog": "UNIVERSAL_SMART",
         "pricing": _text(fixed.get("pricing")) or "PRICING_OCPM",
         "inventory_type": "INVENTORY_FEED",
-        "action_track_url": _text(mode_config.get("effective_touch_url")),
+        "action_track_url": _text(mode_config.get("effective_touch_url")) or _text(template.get("effective_touch_url")),
         "schedule_type": "SCHEDULE_FROM_NOW",
         "deep_bid_type": _text(fixed.get("deep_bid_type")) or "BID_PER_ACTION",
         "bid_type": _text(fixed.get("bid_type")) or "CUSTOM",
@@ -136,6 +146,7 @@ def _field_defaults(mode_config: dict[str, Any], template: dict[str, Any]) -> di
 def _template_parameters(mode_config: dict[str, Any], template: dict[str, Any]) -> dict[str, Any]:
     result = dict(template)
     result.pop("project_fixed", None)
+    result.pop("effective_touch_url", None)
     fixed_cover = mode_config.get("fixed_cover") if isinstance(mode_config.get("fixed_cover"), dict) else {}
     if _text(fixed_cover.get("mode")) == "template_fixed" and template.get("fixed_video_cover_id"):
         result["fixed_video_cover_id"] = template.get("fixed_video_cover_id")

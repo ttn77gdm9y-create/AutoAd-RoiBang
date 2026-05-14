@@ -3,7 +3,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from _repo_bootstrap import bootstrap_project_root
+
+bootstrap_project_root()
 
 from roibang_v2.workflows.create_http_transport import build_create_http_transport
 from roibang_v2.workflows.project_status_update_config import run_project_status_update_config_request
@@ -53,6 +62,13 @@ def run_from_args(argv: list[str] | None = None, *, default_action_type: str = "
     parser.add_argument("--cpa-bid", default="")
     parser.add_argument("--roi-goal", default="")
     parser.add_argument("--name-contains", action="append", default=[])
+    parser.add_argument(
+        "--spend-window",
+        choices=["today", "yesterday", "last_3_days", "last_7_days", "last_15_days", "last_30_days", "last_week", "this_month"],
+        default="",
+    )
+    parser.add_argument("--spend-end-date", default="")
+    parser.add_argument("--max-stat-cost", default="")
     parser.add_argument("--filter-status-first", default="")
     parser.add_argument("--filter-status-second", default="")
     parser.add_argument("--server-name-query", default="")
@@ -91,6 +107,12 @@ def run_from_args(argv: list[str] | None = None, *, default_action_type: str = "
         "output_path": args.output,
         "workflow": "project_management_update_config" if args.action_type != "status_update" else "project_status_update_config",
     }
+    if args.spend_window or args.max_stat_cost:
+        request["spend_filter"] = {
+            "window": args.spend_window or "today",
+            "end_date": args.spend_end_date,
+            "max_stat_cost_exclusive": args.max_stat_cost,
+        }
     if filtering:
         request["filtering"] = filtering
 
