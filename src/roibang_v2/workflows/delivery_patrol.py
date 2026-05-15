@@ -22,6 +22,14 @@ from roibang_v2.workflows.project_hourly_realtime_sync import _json_rows
 
 REPORT_PRESETS = ["account_daily", "project_daily", "promotion_daily"]
 WINDOWS = {"today": "target_date", "yesterday": "yesterday_date"}
+STATUS_LABELS = {
+    "PROJECT_STATUS_ENABLE": "启用",
+    "PROJECT_STATUS_DISABLE": "已关闭",
+    "PROJECT_STATUS_DELETE": "已删除",
+    "PROMOTION_STATUS_ENABLE": "启用",
+    "PROMOTION_STATUS_DISABLE": "已关闭",
+    "PROMOTION_STATUS_DELETE": "已删除",
+}
 
 
 def _config(request: dict[str, Any] | None) -> dict[str, Any]:
@@ -306,6 +314,42 @@ def _metric_text(metrics: dict[str, Any]) -> str:
     )
 
 
+def _status_text(value: Any) -> str:
+    status = str(value or "").strip()
+    return STATUS_LABELS.get(status, status or "未知")
+
+
+def _aggregate_window_metrics(items: list[dict[str, Any]], window: str) -> dict[str, Any]:
+    total = _empty_metrics()
+    for item in items:
+        metrics = item.get("metrics") if isinstance(item.get("metrics"), dict) else {}
+        window_metrics = metrics.get(window) if isinstance(metrics.get(window), dict) else {}
+        stat_cost = _number(window_metrics.get("stat_cost"))
+        total["stat_cost"] = round(float(total["stat_cost"] or 0) + stat_cost, 4)
+        total["active_register"] = round(
+            float(total["active_register"] or 0) + _number(window_metrics.get("active_register")),
+            4,
+        )
+        total["billing_convert_cnt"] = round(
+            float(total["billing_convert_cnt"] or 0) + _number(window_metrics.get("billing_convert_cnt")),
+            4,
+        )
+        raw = window_metrics.get("raw") if isinstance(window_metrics.get("raw"), dict) else {}
+        total["raw"]["show_cnt"] = round(float(total["raw"]["show_cnt"] or 0) + _number(raw.get("show_cnt")), 4)
+        total["raw"]["click_cnt"] = round(float(total["raw"]["click_cnt"] or 0) + _number(raw.get("click_cnt")), 4)
+        roi = window_metrics.get("billing_1day_pay_roi")
+        if roi is not None and stat_cost:
+            total["_roi_weighted"] = float(total.get("_roi_weighted") or 0) + _number(roi) * stat_cost
+    return _finalize_metrics(total)
+
+
+def _overall_metrics(accounts: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {
+        "today": _aggregate_window_metrics(accounts, "today"),
+        "yesterday": _aggregate_window_metrics(accounts, "yesterday"),
+    }
+
+
 def _top_entities(items: list[dict[str, Any]], *, limit: int = 5) -> list[dict[str, Any]]:
     spent = [item for item in items if float((item.get("metrics") or {}).get("today", {}).get("stat_cost") or 0) > 0]
     return sorted(
@@ -315,10 +359,35 @@ def _top_entities(items: list[dict[str, Any]], *, limit: int = 5) -> list[dict[s
     )[:limit]
 
 
+def _attention_projects(projects: list[dict[str, Any]], *, limit: int = 5) -> list[dict[str, Any]]:
+    attention: list[dict[str, Any]] = []
+    for project in projects:
+        today = project.get("metrics", {}).get("today", {})
+        stat_cost = _number(today.get("stat_cost"))
+        billing_convert_cnt = _number(today.get("billing_convert_cnt"))
+        roi_raw = today.get("billing_1day_pay_roi")
+        roi = None if roi_raw is None else _number(roi_raw)
+        reason = ""
+        if stat_cost >= 500 and billing_convert_cnt <= 0:
+            reason = "今天消耗>=500 且计费时间转化数为0"
+        elif stat_cost >= 800 and roi is not None and roi < 0.05:
+            reason = "今天消耗>=800 且计费当日ROI<0.05"
+        if reason:
+            attention.append({**project, "attention_reason": reason})
+    return sorted(
+        attention,
+        key=lambda item: float((item.get("metrics") or {}).get("today", {}).get("stat_cost") or 0),
+        reverse=True,
+    )[:limit]
+
+
 def _format_delivery_patrol_message(payload: dict[str, Any]) -> str:
     windows = payload.get("windows") if isinstance(payload.get("windows"), dict) else {}
     target_date = str(windows.get("today") or payload.get("summary", {}).get("target_date") or "")
     summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    overall = summary.get("overall_metrics") if isinstance(summary.get("overall_metrics"), dict) else {}
+    today_overall = overall.get("today") if isinstance(overall.get("today"), dict) else _empty_metrics()
+    yesterday_overall = overall.get("yesterday") if isinstance(overall.get("yesterday"), dict) else _empty_metrics()
     lines = [
         f"RoiBang-V2 投放账户巡检 {target_date}",
         "",
@@ -327,6 +396,11 @@ def _format_delivery_patrol_message(payload: dict[str, Any]) -> str:
             f"项目 {summary.get('project_count', 0)} 个，"
             f"单元 {summary.get('promotion_count', 0)} 个，"
             f"接口调用 {summary.get('transport_calls', 0)} 次"
+        ),
+        (
+            "整体表现："
+            f"今日{_metric_text(today_overall)}；"
+            f"昨日{_metric_text(yesterday_overall)}"
         ),
         "",
         "账户数据",
@@ -344,10 +418,23 @@ def _format_delivery_patrol_message(payload: dict[str, Any]) -> str:
         today = project.get("metrics", {}).get("today", {})
         lines.append(
             f"- {project.get('project_name') or project.get('project_id')}，"
-            f"状态 {project.get('status') or '未知'}，{_metric_text(today)}"
+            f"项目ID {project.get('project_id') or '未知'}，"
+            f"状态 {_status_text(project.get('status'))}，{_metric_text(today)}"
         )
     if not any(line.startswith("- ") for line in lines[lines.index("重点项目") + 1 :]):
         lines.append("- 无今日消耗项目")
+
+    lines.extend(["", "要注意的重点项目"])
+    for project in _attention_projects([item for item in projects if isinstance(item, dict)], limit=5):
+        today = project.get("metrics", {}).get("today", {})
+        lines.append(
+            f"- {project.get('project_name') or project.get('project_id')}，"
+            f"项目ID {project.get('project_id') or '未知'}，"
+            f"状态 {_status_text(project.get('status'))}，"
+            f"原因 {project.get('attention_reason')}，{_metric_text(today)}"
+        )
+    if not any(line.startswith("- ") for line in lines[lines.index("要注意的重点项目") + 1 :]):
+        lines.append("- 暂无")
 
     lines.extend(["", "重点单元"])
     promotions = payload.get("promotions") if isinstance(payload.get("promotions"), list) else []
@@ -355,7 +442,7 @@ def _format_delivery_patrol_message(payload: dict[str, Any]) -> str:
         today = promotion.get("metrics", {}).get("today", {})
         lines.append(
             f"- {promotion.get('promotion_name') or promotion.get('promotion_id')}，"
-            f"状态 {promotion.get('status') or '未知'}，{_metric_text(today)}"
+            f"状态 {_status_text(promotion.get('status'))}，{_metric_text(today)}"
         )
     if not any(line.startswith("- ") for line in lines[lines.index("重点单元") + 1 :]):
         lines.append("- 无今日消耗单元")
@@ -629,6 +716,7 @@ def run_delivery_patrol_request(
     entities = _build_result(plan_payload, execution)
     transport_calls = int(execution["summary"]["transport_calls"])
     discovery_calls = int((plan_payload.get("account_discovery") or {}).get("external_api_calls") or 0)
+    overall_metrics = _overall_metrics(entities["accounts"])
     payload = {
         "ok": True,
         "workflow": "delivery_patrol",
@@ -643,6 +731,7 @@ def run_delivery_patrol_request(
             "account_count": len(entities["accounts"]),
             "project_count": len(entities["projects"]),
             "promotion_count": len(entities["promotions"]),
+            "overall_metrics": overall_metrics,
         },
         "windows": {
             "today": plan_payload["target_dates"]["today"],

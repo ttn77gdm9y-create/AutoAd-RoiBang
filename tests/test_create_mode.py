@@ -129,24 +129,18 @@ def test_bundled_create_modes_cover_7r_and_pay_scale_and_test_new():
     expected = {
         "wx_7r_general_scale": ("wx_7r_general", "微小每付7R通投历史放量", 0.419, "7R 通投历史放量", 30),
         "wx_7r_general_recent_scale": ("wx_7r_general", "微小每付7R通投近期放量", 0.419, "7R 通投近期放量", 7),
-        "wx_7r_general_test_new": ("wx_7r_general", "微小每付7R通投测新", 0.41, "7R 通投测新", 30),
-        "wx_7r_general_retest": ("wx_7r_general", "微小每付7R通投低转化复测", 0.41, "7R 通投低转化复测", 0),
-        "wx_7r_general_no_conversion_retest": ("wx_7r_general", "微小每付7R通投无转化复测", 0.41, "7R 通投无转化复测", 0),
         "wx_7r_male_scale": ("wx_7r_male", "微小每付7R男历史放量", 0.419, "7R 男历史放量", 30),
         "wx_7r_male_recent_scale": ("wx_7r_male", "微小每付7R男近期放量", 0.419, "7R 男近期放量", 7),
-        "wx_7r_male_test_new": ("wx_7r_male", "微小每付7R男测新", 0.41, "7R 男测新", 30),
-        "wx_7r_male_retest": ("wx_7r_male", "微小每付7R男低转化复测", 0.41, "7R 男低转化复测", 0),
-        "wx_7r_male_no_conversion_retest": ("wx_7r_male", "微小每付7R男无转化复测", 0.41, "7R 男无转化复测", 0),
         "wx_pay_general_scale": ("wx_pay_general", "微小每付通投历史放量", None, "每付通投历史放量", 30),
         "wx_pay_general_recent_scale": ("wx_pay_general", "微小每付通投近期放量", None, "每付通投近期放量", 7),
-        "wx_pay_general_test_new": ("wx_pay_general", "微小每付通投测新", None, "每付通投测新", 30),
-        "wx_pay_general_retest": ("wx_pay_general", "微小每付通投低转化复测", None, "每付通投低转化复测", 0),
-        "wx_pay_general_no_conversion_retest": ("wx_pay_general", "微小每付通投无转化复测", None, "每付通投无转化复测", 0),
+        "wx_pay_general_test_new": ("wx_pay_general", "微小每付通投测新", None, "每付通投测新", 7),
+        "wx_pay_general_retest": ("wx_pay_general", "微小每付通投低转化复测", None, "每付通投低转化复测", 30),
+        "wx_pay_general_no_conversion_retest": ("wx_pay_general", "微小每付通投无转化复测", None, "每付通投无转化复测", 30),
         "wx_pay_male_scale": ("wx_pay_male", "微小每付男历史放量", None, "每付男历史放量", 30),
         "wx_pay_male_recent_scale": ("wx_pay_male", "微小每付男近期放量", None, "每付男近期放量", 7),
-        "wx_pay_male_test_new": ("wx_pay_male", "微小每付男测新", None, "每付男测新", 30),
-        "wx_pay_male_retest": ("wx_pay_male", "微小每付男低转化复测", None, "每付男低转化复测", 0),
-        "wx_pay_male_no_conversion_retest": ("wx_pay_male", "微小每付男无转化复测", None, "每付男无转化复测", 0),
+        "wx_pay_male_test_new": ("wx_pay_male", "微小每付男测新", None, "每付男测新", 7),
+        "wx_pay_male_retest": ("wx_pay_male", "微小每付男低转化复测", None, "每付男低转化复测", 30),
+        "wx_pay_male_no_conversion_retest": ("wx_pay_male", "微小每付男无转化复测", None, "每付男无转化复测", 30),
     }
     for mode_key, (template_key, project_template_name, roi_goal, display_name, lookback_days) in expected.items():
         mode_config = json.loads(Path(f"configs/create-modes/{mode_key}.example.json").read_text(encoding="utf-8"))
@@ -167,10 +161,11 @@ def test_bundled_create_modes_cover_7r_and_pay_scale_and_test_new():
         assert request["material_selection"]["lookback_days"] == lookback_days
         assert request["material_selection"]["source_scope"] == "source_material_account"
         assert request["material_selection"]["exclude_recent_used_days"] == 0
+        assert request["field_defaults"]["cpa_bid"] == (103 if mode_key.endswith("_scale") or mode_key.endswith("_recent_scale") else 111)
         if mode_key.endswith("_test_new"):
             assert request["target_accounts"][0]["project_count"] == 5
             assert request["material_selection"]["candidate_pool_limit"] == 200
-            assert request["material_selection"]["first_seen_days"] == 30
+            assert request["material_selection"]["first_seen_days"] == 7
         if mode_key.endswith("_retest"):
             assert request["target_accounts"][0]["project_count"] == 5
         if mode_key.endswith("_recent_scale"):
@@ -203,9 +198,6 @@ def test_bundled_create_modes_cover_7r_and_pay_scale_and_test_new():
 def test_create_mode_resolves_complete_chinese_aliases_and_rejects_ambiguous_names():
     assert load_create_mode_config({"mode_key": "7R 通投历史放量"})["mode_key"] == "wx_7r_general_scale"
     assert load_create_mode_config({"mode_key": "7R 通投近期放量"})["mode_key"] == "wx_7r_general_recent_scale"
-    assert load_create_mode_config({"mode_key": "7R 通投低转化复测"})["mode_key"] == "wx_7r_general_retest"
-    assert load_create_mode_config({"mode_key": "7R 通投无转化复测"})["mode_key"] == "wx_7r_general_no_conversion_retest"
-    assert load_create_mode_config({"mode_key": "7R 男测新"})["mode_key"] == "wx_7r_male_test_new"
     assert load_create_mode_config({"mode_key": "每付通投低转化复测"})["mode_key"] == "wx_pay_general_retest"
     assert load_create_mode_config({"mode_key": "每付通投无转化复测"})["mode_key"] == "wx_pay_general_no_conversion_retest"
     assert load_create_mode_config({"mode_key": "每付男近期放量"})["mode_key"] == "wx_pay_male_recent_scale"
@@ -216,6 +208,20 @@ def test_create_mode_resolves_complete_chinese_aliases_and_rejects_ambiguous_nam
         assert "需要指定通投或男" in str(exc)
     else:
         raise AssertionError("7R 放量 must be rejected as ambiguous")
+
+    try:
+        load_create_mode_config({"mode_key": "7R 通投低转化复测"})
+    except ValueError as exc:
+        assert "7R 只保留历史放量/近期放量" in str(exc)
+    else:
+        raise AssertionError("7R 复测 must be rejected")
+
+    try:
+        load_create_mode_config({"mode_key": "7R 男测新"})
+    except ValueError as exc:
+        assert "7R 只保留历史放量/近期放量" in str(exc)
+    else:
+        raise AssertionError("7R 测新 must be rejected")
 
     try:
         load_create_mode_config({"mode_key": "每付男放量"})
@@ -235,22 +241,21 @@ def test_create_mode_resolves_complete_chinese_aliases_and_rejects_ambiguous_nam
 def test_create_mode_generates_strategy_plan_with_enabled_initial_status_and_overlap_cap(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     _seed_source_materials(db_path, count=40)
-    mode_path = tmp_path / "wx_7r_general_test_new.json"
+    mode_path = tmp_path / "wx_pay_general_test_new.json"
     mode_path.write_text(
         json.dumps(
             {
-                "mode_key": "wx_7r_general_test_new",
-                "display_name": "7R 测新",
+                "mode_key": "wx_pay_general_test_new",
+                "display_name": "每付通投测新",
                 "product": "勇者突进",
                 "platform": "WECHAT_GAME",
-                "template_key": "wx_7r_general",
+                "template_key": "wx_pay_general",
                 "template_name_suffix": "测新",
                 "source_advertiser_id": "1856647522964490",
                 "organization_id": "1851650746645060",
                 "defaults": {
                     "daily_budget": 10000,
-                    "cpa_bid": 105,
-                    "roi_coefficient": 0.41,
+                    "cpa_bid": 111,
                     "project_count": 8,
                     "units_per_project": 1,
                 },
@@ -288,7 +293,7 @@ def test_create_mode_generates_strategy_plan_with_enabled_initial_status_and_ove
     assert result["summary"]["planned_project_count"] == 16
     assert result["summary"]["planned_unit_count"] == 16
     plan = result["create_strategy_plan"]
-    assert plan["request"]["project_template_name"] == "微小每付7R通投测新"
+    assert plan["request"]["project_template_name"] == "微小每付通投测新"
     assert plan["strategy"]["projects"][0]["operation"] == "ENABLE"
     assert plan["strategy"]["projects"][0]["units"][0]["operation"] == "ENABLE"
     assert "测新" in plan["strategy"]["projects"][0]["project_name"]

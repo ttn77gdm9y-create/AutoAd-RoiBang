@@ -25,3 +25,6 @@
 
 # roibang-scheduler-status - RoiBang-v2 定时任务日报 [Asia/Shanghai]
 0 6 * * * cd /Users/hongen/Projects/RoiBang-v2 && mkdir -p logs/scheduler && PYTHONPATH=src python3 scripts/run_scheduler_job.py --registry configs/scheduler/roibang-v2.jobs.example.json --job-id roibang-scheduler-status --repo-root /Users/hongen/Projects/RoiBang-v2 >> logs/scheduler/roibang-scheduler-status.out.log 2>> logs/scheduler/roibang-scheduler-status.err.log
+
+# roibang-delivery-patrol - RoiBang-v2 投放账户巡检 [Asia/Shanghai]
+30 8-23 * * * cd /Users/hongen/Projects/RoiBang-v2 && mkdir -p logs/scheduler && PYTHONPATH=src python3 scripts/run_scheduler_job.py --registry configs/scheduler/roibang-v2.jobs.example.json --job-id roibang-delivery-patrol --repo-root /Users/hongen/Projects/RoiBang-v2 >> logs/scheduler/roibang-delivery-patrol.out.log 2>> logs/scheduler/roibang-delivery-patrol.err.log

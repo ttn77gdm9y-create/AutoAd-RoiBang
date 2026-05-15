@@ -190,8 +190,8 @@
       "id": "roibang-delivery-patrol",
       "name": "RoiBang-v2 投放账户巡检",
       "category": "delivery_patrol",
-      "enabled": false,
-      "schedule": {"type": "cron", "expr": "30 10 * * *", "tz": "Asia/Shanghai"},
+      "enabled": true,
+      "schedule": {"type": "cron", "expr": "30 8-23 * * *", "tz": "Asia/Shanghai"},
       "script": {
         "command": ["python3", "scripts/run_delivery_patrol.py", "--config", "configs/runtime.openapi-execute.local.example.json", "--request", "configs/delivery-patrol.daily-readonly.example.json", "--enable-readonly"],
         "mode": "foreground"

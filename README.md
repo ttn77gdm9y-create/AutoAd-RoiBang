@@ -23,7 +23,7 @@ AI（人工智能）只负责写代码、修脚本、看数据生成配置、复
 
 ## 创建模式
 
-创建时必须明确模板类型，不能省略“通投/男”。放量还要明确“历史/近期”，复测还要明确“低转化/无转化”。例如 `7R 放量` 是歧义说法，脚本会阻断；必须写成 `7R 通投历史放量` 或 `7R 通投近期放量`。
+创建时必须明确模板类型，不能省略“通投/男”。放量还要明确“历史/近期”，复测还要明确“低转化/无转化”。例如 `7R 放量` 是歧义说法，脚本会阻断；必须写成 `7R 通投历史放量` 或 `7R 通投近期放量`。7R 模式只保留放量，测新和复测统一使用每付模板。
 
 当前固定模式：
 
@@ -31,14 +31,8 @@ AI（人工智能）只负责写代码、修脚本、看数据生成配置、复
 | --- | --- | --- |
 | 7R 通投历史放量 | `wx_7r_general_scale` | `wx_7r_general（微小每付 7R 通投）` |
 | 7R 通投近期放量 | `wx_7r_general_recent_scale` | `wx_7r_general（微小每付 7R 通投）` |
-| 7R 通投测新 | `wx_7r_general_test_new` | `wx_7r_general（微小每付 7R 通投）` |
-| 7R 通投低转化复测 | `wx_7r_general_retest` | `wx_7r_general（微小每付 7R 通投）` |
-| 7R 通投无转化复测 | `wx_7r_general_no_conversion_retest` | `wx_7r_general（微小每付 7R 通投）` |
 | 7R 男历史放量 | `wx_7r_male_scale` | `wx_7r_male（微小每付 7R 男）` |
 | 7R 男近期放量 | `wx_7r_male_recent_scale` | `wx_7r_male（微小每付 7R 男）` |
-| 7R 男测新 | `wx_7r_male_test_new` | `wx_7r_male（微小每付 7R 男）` |
-| 7R 男低转化复测 | `wx_7r_male_retest` | `wx_7r_male（微小每付 7R 男）` |
-| 7R 男无转化复测 | `wx_7r_male_no_conversion_retest` | `wx_7r_male（微小每付 7R 男）` |
 | 每付通投历史放量 | `wx_pay_general_scale` | `wx_pay_general（微小每付通投）` |
 | 每付通投近期放量 | `wx_pay_general_recent_scale` | `wx_pay_general（微小每付通投）` |
 | 每付通投测新 | `wx_pay_general_test_new` | `wx_pay_general（微小每付通投）` |
@@ -63,22 +57,22 @@ AI（人工智能）只负责写代码、修脚本、看数据生成配置、复
 测新默认：
 
 - `daily_budget（日预算）`：10000
-- `cpa_bid（项目出价）`：105
-- `roi_coefficient（ROI 系数）`：7R 模板为 0.41
+- `cpa_bid（项目出价）`：111
+- 每付模板不写 `roi_coefficient（ROI 系数）`
 - 每账户 5 个项目，每项目 1 个单元，每单元 6 个素材
-- 素材回看 30 天，并要求 `effective_create_date（有效创建日期）` 在近 30 天内；按有效创建日期倒序取最近 200 条候选，再稳定随机打乱
+- 素材回看 7 天，并要求 `effective_create_date（有效创建日期）` 在近 7 天内；按有效创建日期倒序取最近 200 条候选，再稳定随机打乱
 
 低转化复测默认：
 
-- 预算、出价、ROI 系数、项目数、单元数、素材数和测新一致
-- 素材回看全部历史
+- 预算、出价、项目数、单元数、素材数和测新一致
+- 素材筛选 30 天内
 - 只选择 `convert_cnt（转化数）` 大于等于 1 且小于等于 5 的素材
 - 按 `effective_create_date（有效创建日期）` 倒序排序后稳定随机打乱
 
 无转化复测默认：
 
-- 预算、出价、ROI 系数、项目数、单元数、素材数和测新一致
-- 素材回看全部历史
+- 预算、出价、项目数、单元数、素材数和测新一致
+- 素材筛选 30 天内
 - 只选择 `convert_cnt（转化数）` 等于 0、`stat_cost（素材消耗）` 小于等于 500、且有效创建日期距目标日期至少 7 天的素材
 - 按 `effective_create_date（有效创建日期）` 倒序排序后稳定随机打乱
 
@@ -337,6 +331,7 @@ PYTHONPATH=src python3 scripts/run_delivery_patrol_suggestions.py \
 - `05:00` 源素材账户自动补材。
 - `05:30` 源素材表现汇总重建。
 - `06:00` 定时任务日报。
+- `08:30-23:30` 每小时投放账户巡检并推送飞书。
 
 常用检查：
 

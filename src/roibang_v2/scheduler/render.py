@@ -27,9 +27,15 @@ def _daily_schedule_sort_key(job: dict[str, Any]) -> tuple[int, int, str]:
     if len(parts) != 5:
         return (99, 99, str(job["id"]))
     minute, hour = parts[0], parts[1]
-    if not minute.isdigit() or not hour.isdigit():
+    if not minute.isdigit():
         return (99, 99, str(job["id"]))
-    return (int(hour), int(minute), str(job["id"]))
+    if hour.isdigit():
+        return (int(hour), int(minute), str(job["id"]))
+    if "-" in hour:
+        start, _, _end = hour.partition("-")
+        if start.isdigit():
+            return (int(start), int(minute), str(job["id"]))
+    return (99, 99, str(job["id"]))
 
 
 def _job_command(
@@ -89,16 +95,37 @@ def render_cron(registry: dict[str, Any], *, repo_root: str | Path) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _cron_calendar_interval(expr: str) -> dict[str, int]:
+def _hour_values(hour: str, *, expr: str) -> list[int]:
+    if hour.isdigit():
+        value = int(hour)
+        if not 0 <= value <= 23:
+            raise ValueError(f"launchd renderer hour out of range: {expr}")
+        return [value]
+    if "-" in hour:
+        start_text, _, end_text = hour.partition("-")
+        if start_text.isdigit() and end_text.isdigit():
+            start = int(start_text)
+            end = int(end_text)
+            if not 0 <= start <= end <= 23:
+                raise ValueError(f"launchd renderer hour range out of range: {expr}")
+            return list(range(start, end + 1))
+    raise ValueError(f"launchd renderer only supports fixed hour or hour range cron expressions: {expr}")
+
+
+def _cron_calendar_interval(expr: str) -> dict[str, int] | list[dict[str, int]]:
     parts = expr.split()
     if len(parts) != 5:
         raise ValueError(f"unsupported cron expression: {expr}")
     minute, hour, day, month, weekday = parts
     if day != "*" or month != "*" or weekday != "*":
         raise ValueError(f"launchd renderer only supports daily cron expressions: {expr}")
-    if not minute.isdigit() or not hour.isdigit():
-        raise ValueError(f"launchd renderer only supports fixed minute/hour cron expressions: {expr}")
-    return {"Hour": int(hour), "Minute": int(minute)}
+    if not minute.isdigit():
+        raise ValueError(f"launchd renderer only supports fixed minute cron expressions: {expr}")
+    minute_value = int(minute)
+    if not 0 <= minute_value <= 59:
+        raise ValueError(f"launchd renderer minute out of range: {expr}")
+    intervals = [{"Hour": value, "Minute": minute_value} for value in _hour_values(hour, expr=expr)]
+    return intervals[0] if len(intervals) == 1 else intervals
 
 
 def _launchd_schedule(expr: str) -> dict[str, Any]:

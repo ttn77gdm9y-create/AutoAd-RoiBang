@@ -9,7 +9,7 @@
   "organization_id": "1851650746645060",
   "defaults": {
     "daily_budget": 10000,
-    "cpa_bid": 105,
+    "cpa_bid": 111,
     "project_count": 5,
     "units_per_project": 1
   },
@@ -23,8 +23,8 @@
   },
   "material_selection": {
     "source_scope": "source_material_account",
-    "lookback_days": 30,
-    "first_seen_days": 30,
+    "lookback_days": 7,
+    "first_seen_days": 7,
     "selection_type": "test_new",
     "min_stat_cost": 0,
     "sort_by": "create_time_desc",

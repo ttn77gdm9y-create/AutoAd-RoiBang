@@ -1,7 +1,5 @@
 {
   "delivery_patrol": {
-    "target_date": "2026-05-15",
-    "yesterday_date": "2026-05-14",
     "product_keyword": "勇者突进",
     "allowed_target_accounts_path": "configs/control-allowed-accounts.local.json",
     "account_scope": {
@@ -34,7 +32,7 @@
     },
     "delivery": {
       "feishu": {
-        "enabled": false,
+        "enabled": true,
         "runtime_file": "data/secrets/feishu.runtime.local.json"
       }
     },

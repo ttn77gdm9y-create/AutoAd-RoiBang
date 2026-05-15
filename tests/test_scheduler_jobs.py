@@ -13,8 +13,8 @@ def test_scheduler_registry_has_no_ai_execution_prompts():
     assert result == {
         "ok": True,
         "jobs": 21,
-        "enabled_jobs": 8,
-        "disabled_jobs": 13,
+        "enabled_jobs": 9,
+        "disabled_jobs": 12,
         "violations": [],
     }
 
@@ -198,6 +198,7 @@ def test_scheduler_registry_keeps_daily_jobs_and_restore_due_job():
         ("roibang-source-material-rollup-rebuild", "30 5 * * *"),
         ("roibang-scheduler-status", "0 6 * * *"),
         ("roibang-project-schedule-restore-due", "10 0 * * *"),
+        ("roibang-delivery-patrol", "30 8-23 * * *"),
     ]
 
     source_account_push = {job["id"]: job for job in registry["jobs"]}["roibang-source-material-account-auto-push"]
@@ -289,13 +290,14 @@ def test_scheduler_registry_keeps_daily_jobs_and_restore_due_job():
     }
 
 
-def test_scheduler_registry_includes_disabled_delivery_patrol_jobs():
+def test_scheduler_registry_includes_delivery_patrol_jobs():
     registry = load_job_registry(Path("configs/scheduler/roibang-v2.jobs.example.json"))
     jobs = {job["id"]: job for job in registry["jobs"]}
     patrol = jobs["roibang-delivery-patrol"]
     suggestions = jobs["roibang-delivery-patrol-suggestions"]
 
-    assert patrol["enabled"] is False
+    assert patrol["enabled"] is True
+    assert patrol["schedule"] == {"type": "cron", "expr": "30 8-23 * * *", "tz": "Asia/Shanghai"}
     assert patrol["script"]["command"] == [
         "python3",
         "scripts/run_delivery_patrol.py",

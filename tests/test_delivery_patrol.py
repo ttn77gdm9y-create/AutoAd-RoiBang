@@ -235,9 +235,13 @@ def test_delivery_patrol_aggregates_today_and_yesterday_metrics(tmp_path: Path):
     assert result["summary"]["account_count"] == 1
     assert result["summary"]["project_count"] == 1
     assert result["summary"]["promotion_count"] == 1
+    assert result["summary"]["overall_metrics"]["today"]["stat_cost"] == 100
+    assert result["summary"]["overall_metrics"]["yesterday"]["billing_1day_pay_roi"] == 0.2
     assert result["message"].startswith("RoiBang-V2 投放账户巡检 2026-05-15")
+    assert "整体表现：今日消耗 100.0，注册成本 50.0，计费转化 1.0，计费转化成本 100.0，计费当日ROI 0.12；昨日消耗 200.0，注册成本 100.0，计费转化 1.0，计费转化成本 200.0，计费当日ROI 0.2" in result["message"]
     assert "账户：黑旗-勇者突进-微小-傲星-153" in result["message"]
     assert "重点项目" in result["message"]
+    assert "项目ID project-1，状态 启用，" in result["message"]
     assert "重点单元" in result["message"]
 
     account = result["accounts"][0]
