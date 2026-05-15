@@ -12,9 +12,9 @@ def test_scheduler_registry_has_no_ai_execution_prompts():
 
     assert result == {
         "ok": True,
-        "jobs": 19,
+        "jobs": 21,
         "enabled_jobs": 8,
-        "disabled_jobs": 11,
+        "disabled_jobs": 13,
         "violations": [],
     }
 
@@ -111,6 +111,7 @@ def test_scheduler_registry_phase1_contracts_pin_safe_execution_values():
             "roibang-daily-report-pipeline",
             "roibang-material-history-yesterday",
             "roibang-operation-log-yesterday-sync",
+            "roibang-delivery-patrol",
         }:
             assert "external_api_calls" not in contract["must_equal"]
         elif job["id"] == "roibang-project-schedule-restore-due":
@@ -285,6 +286,43 @@ def test_scheduler_registry_keeps_daily_jobs_and_restore_due_job():
         "restore_queue": "data/runs/project_schedule_restore_queue.json",
         "config": "configs/project-update-execute.local.json",
         "approval_policy": "restore_from_execute_ledger_only",
+    }
+
+
+def test_scheduler_registry_includes_disabled_delivery_patrol_jobs():
+    registry = load_job_registry(Path("configs/scheduler/roibang-v2.jobs.example.json"))
+    jobs = {job["id"]: job for job in registry["jobs"]}
+    patrol = jobs["roibang-delivery-patrol"]
+    suggestions = jobs["roibang-delivery-patrol-suggestions"]
+
+    assert patrol["enabled"] is False
+    assert patrol["script"]["command"] == [
+        "python3",
+        "scripts/run_delivery_patrol.py",
+        "--config",
+        "configs/runtime.openapi-execute.local.example.json",
+        "--request",
+        "configs/delivery-patrol.daily-readonly.example.json",
+        "--enable-readonly",
+    ]
+    assert patrol["result_contract"]["workflow"] == "delivery_patrol"
+    assert "message" in patrol["result_contract"]["must_include"]
+    assert "delivery" in patrol["result_contract"]["must_include"]
+    assert patrol["result_contract"]["must_equal"] == {"execution_enabled": False}
+
+    assert suggestions["enabled"] is False
+    assert suggestions["script"]["command"] == [
+        "python3",
+        "scripts/run_delivery_patrol_suggestions.py",
+        "--patrol-artifact",
+        "data/runs/delivery_patrol/latest.json",
+        "--request",
+        "configs/delivery-patrol-suggestions.example.json",
+    ]
+    assert suggestions["result_contract"]["workflow"] == "delivery_patrol_suggestions"
+    assert suggestions["result_contract"]["must_equal"] == {
+        "execution_enabled": False,
+        "external_api_calls": 0,
     }
 
 

@@ -14,6 +14,8 @@ from roibang_v2.fetch.workbench_account_discovery import Sleeper as WorkbenchSle
 from roibang_v2.fetch.workbench_account_discovery import WorkbenchOpener
 from roibang_v2.fetch.workbench_account_discovery import discover_spending_accounts
 from roibang_v2.runs import write_run_artifact
+from roibang_v2.workflows.scheduler_status import FeishuSender
+from roibang_v2.workflows.scheduler_status import send_feishu_app_chat_text
 from roibang_v2.workflows.project_hourly_realtime_sync import _enabled
 from roibang_v2.workflows.project_hourly_realtime_sync import _json_rows
 
@@ -288,6 +290,93 @@ def _finalize_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _metric_text(metrics: dict[str, Any]) -> str:
+    roi = metrics.get("billing_1day_pay_roi")
+    roi_text = "无" if roi is None else str(roi)
+    billing_cost = metrics.get("billing_conversion_cost")
+    billing_cost_text = "无" if billing_cost is None else str(billing_cost)
+    register_cost = metrics.get("register_cost")
+    register_cost_text = "无" if register_cost is None else str(register_cost)
+    return (
+        f"消耗 {metrics.get('stat_cost', 0)}，"
+        f"注册成本 {register_cost_text}，"
+        f"计费转化 {metrics.get('billing_convert_cnt', 0)}，"
+        f"计费转化成本 {billing_cost_text}，"
+        f"计费当日ROI {roi_text}"
+    )
+
+
+def _top_entities(items: list[dict[str, Any]], *, limit: int = 5) -> list[dict[str, Any]]:
+    spent = [item for item in items if float((item.get("metrics") or {}).get("today", {}).get("stat_cost") or 0) > 0]
+    return sorted(
+        spent,
+        key=lambda item: float((item.get("metrics") or {}).get("today", {}).get("stat_cost") or 0),
+        reverse=True,
+    )[:limit]
+
+
+def _format_delivery_patrol_message(payload: dict[str, Any]) -> str:
+    windows = payload.get("windows") if isinstance(payload.get("windows"), dict) else {}
+    target_date = str(windows.get("today") or payload.get("summary", {}).get("target_date") or "")
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    lines = [
+        f"RoiBang-V2 投放账户巡检 {target_date}",
+        "",
+        (
+            f"账户 {summary.get('account_count', 0)} 个，"
+            f"项目 {summary.get('project_count', 0)} 个，"
+            f"单元 {summary.get('promotion_count', 0)} 个，"
+            f"接口调用 {summary.get('transport_calls', 0)} 次"
+        ),
+        "",
+        "账户数据",
+    ]
+    accounts = payload.get("accounts") if isinstance(payload.get("accounts"), list) else []
+    for account in _top_entities([item for item in accounts if isinstance(item, dict)], limit=8):
+        today = account.get("metrics", {}).get("today", {})
+        lines.append(f"- 账户：{account.get('account_name') or account.get('advertiser_id')}，{_metric_text(today)}")
+    if not any(line.startswith("- 账户：") for line in lines):
+        lines.append("- 无今日消耗账户")
+
+    lines.extend(["", "重点项目"])
+    projects = payload.get("projects") if isinstance(payload.get("projects"), list) else []
+    for project in _top_entities([item for item in projects if isinstance(item, dict)], limit=8):
+        today = project.get("metrics", {}).get("today", {})
+        lines.append(
+            f"- {project.get('project_name') or project.get('project_id')}，"
+            f"状态 {project.get('status') or '未知'}，{_metric_text(today)}"
+        )
+    if not any(line.startswith("- ") for line in lines[lines.index("重点项目") + 1 :]):
+        lines.append("- 无今日消耗项目")
+
+    lines.extend(["", "重点单元"])
+    promotions = payload.get("promotions") if isinstance(payload.get("promotions"), list) else []
+    for promotion in _top_entities([item for item in promotions if isinstance(item, dict)], limit=8):
+        today = promotion.get("metrics", {}).get("today", {})
+        lines.append(
+            f"- {promotion.get('promotion_name') or promotion.get('promotion_id')}，"
+            f"状态 {promotion.get('status') or '未知'}，{_metric_text(today)}"
+        )
+    if not any(line.startswith("- ") for line in lines[lines.index("重点单元") + 1 :]):
+        lines.append("- 无今日消耗单元")
+    artifact_path = str(payload.get("artifact_path") or "")
+    if artifact_path:
+        lines.extend(["", f"完整 JSON：{artifact_path}"])
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _deliver_feishu(cfg: dict[str, Any], message: str, *, feishu_sender: FeishuSender) -> dict[str, Any]:
+    delivery = cfg.get("delivery") if isinstance(cfg.get("delivery"), dict) else {}
+    feishu = delivery.get("feishu") if isinstance(delivery.get("feishu"), dict) else {}
+    if not bool(feishu.get("enabled", False)):
+        return {"enabled": False, "attempted": False, "ok": True, "reason": "disabled"}
+    try:
+        result = feishu_sender(feishu, message)
+    except Exception as exc:
+        return {"enabled": True, "attempted": True, "ok": False, "reason": str(exc)}
+    return {"enabled": True, "attempted": True, **result}
+
+
 def _window_for_date(target_dates: dict[str, str], value: Any) -> str:
     current = str(value or "").strip()[:10]
     for window, target_date in target_dates.items():
@@ -499,6 +588,7 @@ def run_delivery_patrol_request(
     http_sleeper=None,
     workbench_opener: WorkbenchOpener | None = None,
     workbench_sleeper: WorkbenchSleeper | None = None,
+    feishu_sender: FeishuSender | None = None,
 ) -> dict[str, Any]:
     cfg = _config(request)
     openapi_http = cfg.get("openapi_http") if isinstance(cfg.get("openapi_http"), dict) else {}
@@ -567,4 +657,17 @@ def run_delivery_patrol_request(
         ],
     }
     payload["artifact_path"] = str(write_run_artifact(runs_dir, "delivery_patrol", payload))
+    payload["message"] = _format_delivery_patrol_message(payload)
+    patrol_dir = Path(runs_dir) / "delivery_patrol"
+    patrol_dir.mkdir(parents=True, exist_ok=True)
+    (patrol_dir / "latest.md").write_text(payload["message"], encoding="utf-8")
+    payload["delivery"] = {
+        "feishu": _deliver_feishu(
+            cfg,
+            payload["message"],
+            feishu_sender=feishu_sender or send_feishu_app_chat_text,
+        )
+    }
+    payload["artifact_path"] = str(write_run_artifact(runs_dir, "delivery_patrol", payload))
+    (patrol_dir / "latest.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return payload

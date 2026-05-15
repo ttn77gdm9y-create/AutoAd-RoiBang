@@ -1,0 +1,16 @@
+{
+  "delivery_patrol_suggestions": {
+    "target_date": "2026-05-15",
+    "rules": {
+      "zero_billing_convert": {
+        "enabled": true,
+        "min_stat_cost": 500
+      },
+      "low_billing_roi": {
+        "enabled": true,
+        "min_stat_cost": 800,
+        "roi_lt": 0.05
+      }
+    }
+  }
+}

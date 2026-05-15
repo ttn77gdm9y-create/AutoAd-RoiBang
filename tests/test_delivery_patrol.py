@@ -235,6 +235,10 @@ def test_delivery_patrol_aggregates_today_and_yesterday_metrics(tmp_path: Path):
     assert result["summary"]["account_count"] == 1
     assert result["summary"]["project_count"] == 1
     assert result["summary"]["promotion_count"] == 1
+    assert result["message"].startswith("RoiBang-V2 投放账户巡检 2026-05-15")
+    assert "账户：黑旗-勇者突进-微小-傲星-153" in result["message"]
+    assert "重点项目" in result["message"]
+    assert "重点单元" in result["message"]
 
     account = result["accounts"][0]
     assert account["account_remark"] == "勇者突进-微小-郭靖"
@@ -259,6 +263,38 @@ def test_delivery_patrol_aggregates_today_and_yesterday_metrics(tmp_path: Path):
     assert promotion["status"] == "PROMOTION_STATUS_ENABLE"
     assert promotion["metrics"]["yesterday"]["stat_cost"] == 150
     assert Path(result["artifact_path"]).exists()
+    assert (tmp_path / "runs/delivery_patrol/latest.md").read_text(encoding="utf-8").startswith(
+        "RoiBang-V2 投放账户巡检"
+    )
+    assert json.loads((tmp_path / "runs/delivery_patrol/latest.json").read_text(encoding="utf-8"))["workflow"] == "delivery_patrol"
+
+
+def test_delivery_patrol_can_send_feishu_summary(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    allowlist_path = tmp_path / "allowed.json"
+    bootstrap_database(db_path)
+    _write_allowed_accounts(allowlist_path)
+    sent: list[str] = []
+    request = _request(allowlist_path)
+    request["delivery_patrol"]["delivery"] = {
+        "feishu": {"enabled": True, "chat_id": "oc_test", "runtime_file": "data/secrets/feishu.runtime.local.json"}
+    }
+
+    def transport(request: dict) -> dict:
+        if request["endpoint_key"] in {"project_list", "promotion_list"}:
+            return {"code": 0, "data": {"list": [], "page_info": {"page": 1, "total_page": 1}}}
+        return {"code": 0, "data": {"rows": _report_rows(request), "page_info": {"page": 1, "total_page": 1}}}
+
+    result = run_delivery_patrol_request(
+        request,
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        transport=transport,
+        feishu_sender=lambda config, text: sent.append(f"{config['chat_id']}|{text}") or {"ok": True},
+    )
+
+    assert result["delivery"]["feishu"]["attempted"] is True
+    assert sent and sent[0].startswith("oc_test|RoiBang-V2 投放账户巡检")
 
 
 def test_delivery_patrol_can_discover_today_spending_accounts_by_workbench_remark(tmp_path: Path):

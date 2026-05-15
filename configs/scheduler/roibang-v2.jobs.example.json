@@ -187,6 +187,34 @@
       "delivery": {"channel": "none"}
     },
     {
+      "id": "roibang-delivery-patrol",
+      "name": "RoiBang-v2 投放账户巡检",
+      "category": "delivery_patrol",
+      "enabled": false,
+      "schedule": {"type": "cron", "expr": "30 10 * * *", "tz": "Asia/Shanghai"},
+      "script": {
+        "command": ["python3", "scripts/run_delivery_patrol.py", "--config", "configs/runtime.openapi-execute.local.example.json", "--request", "configs/delivery-patrol.daily-readonly.example.json", "--enable-readonly"],
+        "mode": "foreground"
+      },
+      "policy": {"config": "configs/runtime.openapi-execute.local.example.json", "request": "configs/delivery-patrol.daily-readonly.example.json", "readonly": true},
+      "result_contract": {"workflow": "delivery_patrol", "artifact_dir": "data/runs/delivery_patrol", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "summary", "accounts", "projects", "promotions", "message", "delivery"], "must_equal": {"execution_enabled": false}},
+      "delivery": {"channel": "feishu"}
+    },
+    {
+      "id": "roibang-delivery-patrol-suggestions",
+      "name": "RoiBang-v2 投放巡检建议生成",
+      "category": "delivery_patrol_suggestions",
+      "enabled": false,
+      "schedule": {"type": "cron", "expr": "45 10 * * *", "tz": "Asia/Shanghai"},
+      "script": {
+        "command": ["python3", "scripts/run_delivery_patrol_suggestions.py", "--patrol-artifact", "data/runs/delivery_patrol/latest.json", "--request", "configs/delivery-patrol-suggestions.example.json"],
+        "mode": "foreground"
+      },
+      "policy": {"patrol_artifact": "data/runs/delivery_patrol/latest.json", "request": "configs/delivery-patrol-suggestions.example.json", "readonly": true},
+      "result_contract": {"workflow": "delivery_patrol_suggestions", "artifact_dir": "data/runs/delivery_patrol_suggestions", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "summary", "suggestions"], "must_equal": {"execution_enabled": false, "external_api_calls": 0}},
+      "delivery": {"channel": "none"}
+    },
+    {
       "id": "roibang-strategy-plan",
       "name": "RoiBang-v2 策略计划生成",
       "category": "strategy_plan",

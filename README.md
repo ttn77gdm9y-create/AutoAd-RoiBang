@@ -277,6 +277,41 @@ PYTHONPATH=src python3 scripts/watch_create_live_progress.py --clear --recent-ev
 
 源素材账户自动补材只处理视频素材，不处理文案素材；脚本会输出推送数量、失败样例和外部接口调用数。
 
+## 投放账户巡检
+
+投放账户巡检是只读模块，用于查看今天和昨天的账户、项目、单元状态，不执行暂停、删除、调预算、调出价。
+
+- `scripts/run_delivery_patrol.py`：读取账户、项目、单元实时数据，输出 `delivery_patrol（投放巡检结果）`。
+- `configs/delivery-patrol.daily-readonly.example.json`：真实只读配置，按 `account_remark（账户备注）= 勇者突进-微小-郭靖` 发现今天有消耗账户。
+- 输出字段包含 `accounts（账户）`、`projects（项目）`、`promotions（单元）`、`message（可读报告）`、`delivery（推送结果）`。
+- `scripts/run_delivery_patrol_suggestions.py`：读取巡检结果生成 `delivery_patrol_suggestions（投放巡检建议）`，只输出建议 JSON，不生成执行动作。
+- `configs/delivery-patrol-suggestions.example.json`：建议规则配置，当前只做关注提示，不直接转成真实修改。
+
+只生成巡检计划：
+
+```bash
+PYTHONPATH=src python3 scripts/run_delivery_patrol.py \
+  --config configs/runtime.example.json \
+  --request configs/delivery-patrol.example.json
+```
+
+真实只读巡检：
+
+```bash
+PYTHONPATH=src python3 scripts/run_delivery_patrol.py \
+  --config configs/runtime.openapi-execute.local.example.json \
+  --request configs/delivery-patrol.daily-readonly.example.json \
+  --enable-readonly
+```
+
+基于巡检结果生成建议：
+
+```bash
+PYTHONPATH=src python3 scripts/run_delivery_patrol_suggestions.py \
+  --patrol-artifact data/runs/delivery_patrol/latest.json \
+  --request configs/delivery-patrol-suggestions.example.json
+```
+
 ## 定时任务
 
 示例配置：

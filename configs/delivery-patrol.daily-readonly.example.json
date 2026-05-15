@@ -32,6 +32,12 @@
       "status": "execute",
       "external_api_enabled": true
     },
+    "delivery": {
+      "feishu": {
+        "enabled": false,
+        "runtime_file": "data/secrets/feishu.runtime.local.json"
+      }
+    },
     "openapi_http": {
       "enabled": true,
       "token_store": {
