@@ -19,7 +19,7 @@
       "return_lowquality_suggestions": true,
       "date_range": {
         "start": "2026-02-10",
-        "end": "2026-05-06"
+        "end": "2026-05-13"
       },
       "page_size": 100,
       "material_id_chunk_size": 100,

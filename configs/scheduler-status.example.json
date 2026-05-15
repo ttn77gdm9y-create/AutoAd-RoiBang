@@ -28,10 +28,26 @@
         }
       },
       {
+        "job_id": "roibang-material-kind-reconcile",
+        "display_name": "04:30 素材类型校正",
+        "data_check": {
+          "type": "material_kind_reconcile"
+        }
+      },
+      {
         "job_id": "roibang-source-material-account-auto-push",
         "display_name": "05:00 源素材账户自动补材",
         "data_check": {
           "type": "source_material_account",
+          "source_advertiser_id": "1856647522964490",
+          "product": "勇者突进"
+        }
+      },
+      {
+        "job_id": "roibang-source-material-rollup-rebuild",
+        "display_name": "05:30 源素材表现汇总重建",
+        "data_check": {
+          "type": "source_material_rollup",
           "source_advertiser_id": "1856647522964490",
           "product": "勇者突进"
         }

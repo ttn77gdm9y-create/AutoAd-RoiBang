@@ -26,7 +26,7 @@
     "source_scope": "source_material_account",
     "lookback_days": 7,
     "selection_type": "high_spend",
-    "min_stat_cost": 1000,
+    "min_stat_cost": 200,
     "sort_by": "stat_cost_desc",
     "random_shuffle": true,
     "exclude_recent_used": false,

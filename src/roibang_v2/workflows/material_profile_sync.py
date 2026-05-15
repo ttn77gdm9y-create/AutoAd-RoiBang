@@ -215,6 +215,29 @@ def _material_id_chunk_size(cfg: dict[str, Any]) -> int:
     return value
 
 
+def _skip_failed_lookups(cfg: dict[str, Any]) -> bool:
+    return not bool(cfg.get("retry_failed_lookups", False))
+
+
+def _failed_lookup_material_ids(
+    conn: sqlite3.Connection,
+    *,
+    account_id: str,
+    endpoint_key: str,
+) -> set[str]:
+    rows = conn.execute(
+        """
+        SELECT material_id
+        FROM material_profile_lookup_failures
+        WHERE account_id = ?
+          AND endpoint_key = ?
+          AND status = 'failed'
+        """,
+        (str(account_id), str(endpoint_key)),
+    ).fetchall()
+    return {str(row[0]) for row in rows}
+
+
 def _chunked(values: list[str], size: int) -> list[list[str]]:
     return [values[start : start + size] for start in range(0, len(values), size)]
 
@@ -285,6 +308,20 @@ def _missing_material_lookup_requests(
         return _source_account_material_lookup_requests(conn=conn, cfg=cfg, endpoint_key=resolved_endpoint_key)
     if resolved_endpoint_key == "material_attributes_list":
         account_type = str(cfg.get("account_type") or "AD")
+        failure_filter_sql = ""
+        failure_params: list[Any] = []
+        if _skip_failed_lookups(cfg):
+            failure_filter_sql = """
+              AND NOT EXISTS (
+                SELECT 1
+                FROM material_profile_lookup_failures mlf
+                WHERE mlf.material_id = mdm.material_id
+                  AND mlf.account_id = mdm.advertiser_id
+                  AND mlf.endpoint_key = ?
+                  AND mlf.status = 'failed'
+              )
+            """
+            failure_params.append(resolved_endpoint_key)
         rows = conn.execute(
             f"""
             SELECT
@@ -300,12 +337,27 @@ def _missing_material_lookup_requests(
               AND TRIM(mdm.material_id) != ''
               AND mas.material_id IS NULL
               {date_sql}
+              {failure_filter_sql}
             GROUP BY mdm.advertiser_id, mdm.material_id
             ORDER BY stat_cost DESC, mdm.advertiser_id, mdm.material_id
             """,
-            (account_type, *params),
+            (account_type, *params, *failure_params),
         ).fetchall()
     else:
+        failure_filter_sql = ""
+        failure_params = []
+        if _skip_failed_lookups(cfg):
+            failure_filter_sql = """
+              AND NOT EXISTS (
+                SELECT 1
+                FROM material_profile_lookup_failures mlf
+                WHERE mlf.material_id = mdm.material_id
+                  AND mlf.account_id = mdm.advertiser_id
+                  AND mlf.endpoint_key = ?
+                  AND mlf.status = 'failed'
+              )
+            """
+            failure_params.append(resolved_endpoint_key)
         rows = conn.execute(
             f"""
             SELECT
@@ -319,10 +371,11 @@ def _missing_material_lookup_requests(
               AND TRIM(mdm.material_id) != ''
               AND mp.material_id IS NULL
               {date_sql}
+              {failure_filter_sql}
             GROUP BY mdm.advertiser_id, mdm.material_id
             ORDER BY stat_cost DESC, mdm.advertiser_id, mdm.material_id
             """,
-            tuple(params),
+            tuple(params + failure_params),
         ).fetchall()
     grouped: dict[str, list[tuple[str, float]]] = {}
     account_costs: dict[str, float] = {}
@@ -402,7 +455,11 @@ def _source_account_material_lookup_requests(
     requests: list[dict[str, Any]] = []
     for account in source_accounts:
         advertiser_id = str(account["advertiser_id"])
-        for chunk in _chunked(material_ids, chunk_size):
+        account_material_ids = material_ids
+        if _skip_failed_lookups(cfg):
+            failed_ids = _failed_lookup_material_ids(conn, account_id=advertiser_id, endpoint_key=endpoint_key)
+            account_material_ids = [material_id for material_id in material_ids if material_id not in failed_ids]
+        for chunk in _chunked(account_material_ids, chunk_size):
             requests.append(
                 {
                     "account": {
@@ -705,6 +762,13 @@ def import_material_profiles(
                         synced_at,
                     ),
                 )
+            conn.execute(
+                """
+                DELETE FROM material_profile_lookup_failures
+                WHERE material_id = ?
+                """,
+                (material_id,),
+            )
             canonical_keys.add(canonical_key)
             profiles_imported += 1
     return {
@@ -714,6 +778,62 @@ def import_material_profiles(
         "duplicate_profile_count": max(profiles_imported - len(canonical_keys), 0),
         "external_api_calls": 0,
     }
+
+
+def record_material_profile_lookup_failures(
+    *,
+    db_path: str | Path,
+    execution: dict[str, Any],
+    endpoint_key: str,
+    reason: str = "not_found",
+) -> dict[str, Any]:
+    now = _utc_now()
+    failures: list[tuple[str, str, str, str, str, str]] = []
+    for item in execution.get("responses") or []:
+        if not isinstance(item, dict):
+            continue
+        request = item.get("request") if isinstance(item.get("request"), dict) else {}
+        query_params = request.get("query_params") if isinstance(request.get("query_params"), dict) else {}
+        account_id = str(query_params.get("advertiser_id") or query_params.get("account_id") or "")
+        requested_ids = _material_id_set_from_request(request)
+        returned_ids = {
+            _first_text(row, "material_id", "mid", "id")
+            for row in item.get("rows") or []
+            if isinstance(row, dict)
+        }
+        missing_ids = sorted(material_id for material_id in requested_ids if material_id and material_id not in returned_ids)
+        request_json = json.dumps(request, ensure_ascii=False, sort_keys=True)
+        for material_id in missing_ids:
+            failures.append((material_id, account_id, endpoint_key, reason, request_json, now))
+    if not failures:
+        return {"lookup_failures_recorded": 0}
+    with sqlite3.connect(db_path) as conn:
+        for material_id, account_id, endpoint, failure_reason, request_json, failed_at in failures:
+            conn.execute(
+                """
+                INSERT INTO material_profile_lookup_failures (
+                  material_id, account_id, endpoint_key, reason, status, fail_count,
+                  last_error, request_json, first_failed_at, last_failed_at
+                ) VALUES (?, ?, ?, ?, 'failed', 1, ?, ?, ?, ?)
+                ON CONFLICT(material_id, account_id, endpoint_key, reason) DO UPDATE SET
+                  status='failed',
+                  fail_count=material_profile_lookup_failures.fail_count + 1,
+                  last_error=excluded.last_error,
+                  request_json=excluded.request_json,
+                  last_failed_at=excluded.last_failed_at
+                """,
+                (
+                    material_id,
+                    account_id,
+                    endpoint,
+                    failure_reason,
+                    failure_reason,
+                    request_json,
+                    failed_at,
+                    failed_at,
+                ),
+            )
+    return {"lookup_failures_recorded": len(failures)}
 
 
 ATTRIBUTE_FLAG_FIELDS = [
@@ -1101,6 +1221,7 @@ def _run_openapi_video_materials(
     total_attributes_imported = 0
     total_canonical_material_count = 0
     total_duplicate_profile_count = 0
+    total_lookup_failures_recorded = 0
     for endpoint_key in _endpoint_sequence(cfg):
         stage_cfg = _single_endpoint_cfg(cfg, endpoint_key)
         stage_plan = _openapi_plan(db_path=db_path, cfg=stage_cfg)
@@ -1139,6 +1260,13 @@ def _run_openapi_video_materials(
         total_attributes_imported += attributes_imported
         total_canonical_material_count += int(imported.get("canonical_material_count") or 0)
         total_duplicate_profile_count += int(imported.get("duplicate_profile_count") or 0)
+        failures = record_material_profile_lookup_failures(
+            db_path=db_path,
+            execution=execution,
+            endpoint_key=endpoint_key,
+        )
+        lookup_failures_recorded = int(failures.get("lookup_failures_recorded") or 0)
+        total_lookup_failures_recorded += lookup_failures_recorded
         stages.append(
             {
                 "endpoint_key": endpoint_key,
@@ -1149,6 +1277,7 @@ def _run_openapi_video_materials(
                 "rows_skipped_unrequested": skipped_unrequested,
                 "profiles_imported": profiles_imported,
                 "attributes_imported": attributes_imported,
+                "lookup_failures_recorded": lookup_failures_recorded,
             }
         )
     return {
@@ -1166,6 +1295,7 @@ def _run_openapi_video_materials(
             "attributes_imported": total_attributes_imported,
             "canonical_material_count": total_canonical_material_count,
             "duplicate_profile_count": total_duplicate_profile_count,
+            "lookup_failures_recorded": total_lookup_failures_recorded,
             "stages": stages,
         },
         "execution": {
@@ -1178,6 +1308,13 @@ def _run_openapi_video_materials(
         "guardrails": {
             "external_api_calls": total_transport_calls,
             "business_actions": [],
-            "writes": ["material_profiles", "materials", "account_materials", "material_attribute_snapshots", "run_artifact"],
+            "writes": [
+                "material_profiles",
+                "materials",
+                "account_materials",
+                "material_attribute_snapshots",
+                "material_profile_lookup_failures",
+                "run_artifact",
+            ],
         },
     }

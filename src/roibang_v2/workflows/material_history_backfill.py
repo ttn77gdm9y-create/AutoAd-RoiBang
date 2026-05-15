@@ -362,7 +362,7 @@ def import_material_daily_execution(
                     dimensions.get("material_kind"),
                     dimensions.get("material_type"),
                     row.get("material_kind"),
-                    "video",
+                    "unknown",
                 )
                 conn.execute(
                     """

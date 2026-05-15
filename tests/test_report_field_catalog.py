@@ -55,6 +55,7 @@ def _config_response():
                         {"field": "show_cnt", "name": "展示"},
                         {"field": "click_cnt", "name": "点击"},
                         {"field": "convert_cnt", "name": "转化"},
+                        {"field": "active_register", "name": "注册数"},
                         {"field": "attribution_convert_cnt", "name": "计费时间转化数"},
                         {"field": "attribution_convert_cost", "name": "计费时间转化成本"},
                         {"field": "attribution_billing_game_in_app_ltv_1day", "name": "计费当日付费"},

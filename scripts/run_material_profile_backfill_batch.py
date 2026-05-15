@@ -18,16 +18,20 @@ def _enable_readonly(request: dict) -> dict:
     cfg = updated.setdefault("material_profile_backfill_batch", {})
     if not isinstance(cfg, dict):
         raise RuntimeError("material_profile_backfill_batch must be a JSON object")
-    profile_cfg = cfg.setdefault("material_profile_sync", {})
-    if not isinstance(profile_cfg, dict):
-        raise RuntimeError("material_profile_backfill_batch.material_profile_sync must be a JSON object")
-    if str(profile_cfg.get("kind") or "") != "openapi_video_materials":
-        raise RuntimeError("--enable-readonly only supports kind=openapi_video_materials")
-    profile_cfg["enabled"] = True
-    openapi_http = profile_cfg.setdefault("openapi_http", {})
-    if not isinstance(openapi_http, dict):
-        raise RuntimeError("material_profile_sync.openapi_http must be a JSON object")
-    openapi_http["enabled"] = True
+    profile_cfgs = [cfg.setdefault("material_profile_sync", {})]
+    fallbacks = cfg.get("fallback_material_profile_syncs")
+    if isinstance(fallbacks, list):
+        profile_cfgs.extend(row for row in fallbacks if isinstance(row, dict))
+    for profile_cfg in profile_cfgs:
+        if not isinstance(profile_cfg, dict):
+            raise RuntimeError("material_profile_backfill_batch.material_profile_sync must be a JSON object")
+        if str(profile_cfg.get("kind") or "") != "openapi_video_materials":
+            raise RuntimeError("--enable-readonly only supports kind=openapi_video_materials")
+        profile_cfg["enabled"] = True
+        openapi_http = profile_cfg.setdefault("openapi_http", {})
+        if not isinstance(openapi_http, dict):
+            raise RuntimeError("material_profile_sync.openapi_http must be a JSON object")
+        openapi_http["enabled"] = True
     return updated
 
 

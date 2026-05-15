@@ -140,6 +140,77 @@ def _source_material_account_check(conn: sqlite3.Connection, check: dict[str, An
     }
 
 
+def _material_kind_reconcile_check(conn: sqlite3.Connection, expected_date: str) -> dict[str, Any]:
+    max_date = str(_scalar(conn, "SELECT MAX(metric_date) FROM material_daily_metrics") or "")
+    rows = conn.execute(
+        """
+        SELECT material_kind, COUNT(DISTINCT material_id), COUNT(*), COALESCE(SUM(stat_cost), 0)
+        FROM material_daily_metrics
+        GROUP BY material_kind
+        """
+    ).fetchall()
+    by_kind = {
+        str(kind or "unknown"): {
+            "material_count": int(material_count or 0),
+            "row_count": int(row_count or 0),
+            "stat_cost": round(float(stat_cost or 0), 2),
+        }
+        for kind, material_count, row_count, stat_cost in rows
+    }
+    total_rows = sum(int(value["row_count"]) for value in by_kind.values())
+    status = "ok" if max_date >= expected_date and total_rows > 0 else "stale"
+    return {
+        "type": "material_kind_reconcile",
+        "status": status,
+        "expected_date": expected_date,
+        "latest_date": max_date,
+        "row_count": total_rows,
+        "by_kind": by_kind,
+    }
+
+
+def _source_material_rollup_check(conn: sqlite3.Connection, check: dict[str, Any], expected_date: str) -> dict[str, Any]:
+    product = str(check.get("product") or "勇者突进")
+    source_advertiser_id = str(check.get("source_advertiser_id") or "")
+    latest_period_end = str(
+        _scalar(
+            conn,
+            """
+            SELECT MAX(period_end)
+            FROM product_source_material_metric_rollups
+            WHERE product = ?
+              AND source_advertiser_id = ?
+              AND window_key = 'all_history'
+            """,
+            (product, source_advertiser_id),
+        )
+        or ""
+    )
+    row = conn.execute(
+        """
+        SELECT COUNT(*), COALESCE(SUM(stat_cost), 0)
+        FROM product_source_material_metric_rollups
+        WHERE product = ?
+          AND source_advertiser_id = ?
+          AND window_key = 'all_history'
+          AND period_end = ?
+        """,
+        (product, source_advertiser_id, latest_period_end),
+    ).fetchone()
+    row_count = int(row[0] or 0) if row else 0
+    stat_cost = round(float(row[1] or 0), 2) if row else 0.0
+    status = "ok" if source_advertiser_id and latest_period_end >= expected_date and row_count > 0 else "stale"
+    return {
+        "type": "source_material_rollup",
+        "status": status,
+        "product": product,
+        "source_advertiser_id": source_advertiser_id,
+        "latest_date": latest_period_end,
+        "row_count": row_count,
+        "stat_cost": stat_cost,
+    }
+
+
 def _operation_logs_check(conn: sqlite3.Connection, expected_date: str) -> dict[str, Any]:
     max_date = str(_scalar(conn, "SELECT MAX(substr(occurred_at, 1, 10)) FROM operation_logs") or "")
     row_count = int(
@@ -222,6 +293,10 @@ def _data_check(
         return _daily_report_check(conn, expected_date)
     if check_type == "source_material_account":
         return _source_material_account_check(conn, check)
+    if check_type == "material_kind_reconcile":
+        return _material_kind_reconcile_check(conn, expected_date)
+    if check_type == "source_material_rollup":
+        return _source_material_rollup_check(conn, check, expected_date)
     if check_type == "operation_logs":
         return _operation_logs_check(conn, expected_date)
     if check_type == "project_schedule_restore_queue":
@@ -285,6 +360,21 @@ def _format_data_line(data_check: dict[str, Any]) -> str:
             f"源素材账户 {data_check.get('source_advertiser_id') or '无'}，"
             f"素材 {data_check.get('source_account_material_count', 0)} 个，"
             f"同步到 {data_check.get('latest_synced_at') or '无'}"
+        )
+    if check_type == "source_material_rollup":
+        return (
+            f"汇总到 {data_check.get('latest_date') or '无'}，"
+            f"视频素材 {data_check.get('row_count', 0)} 个，"
+            f"全历史消耗 {data_check.get('stat_cost', 0)}"
+        )
+    if check_type == "material_kind_reconcile":
+        by_kind = data_check.get("by_kind") if isinstance(data_check.get("by_kind"), dict) else {}
+        video_count = (by_kind.get("video") or {}).get("material_count", 0) if isinstance(by_kind.get("video"), dict) else 0
+        title_count = (by_kind.get("title") or {}).get("material_count", 0) if isinstance(by_kind.get("title"), dict) else 0
+        unknown_count = (by_kind.get("unknown") or {}).get("material_count", 0) if isinstance(by_kind.get("unknown"), dict) else 0
+        return (
+            f"数据到 {data_check.get('latest_date') or '无'}，"
+            f"视频 {video_count}，文案 {title_count}，未知 {unknown_count}"
         )
     if check_type == "project_schedule_restore_queue":
         return (

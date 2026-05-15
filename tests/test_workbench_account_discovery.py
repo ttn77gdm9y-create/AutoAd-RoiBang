@@ -1,4 +1,5 @@
 import json
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -171,6 +172,48 @@ def test_workbench_discovery_stops_at_configured_max_pages(tmp_path):
     assert offsets == [1, 2]
     assert result["active_account_ids"] == ["a1", "a2"]
     assert result["summary"]["transport_calls"] == 2
+
+
+def test_workbench_discovery_retries_transport_errors_and_writes_audit(tmp_path):
+    calls = []
+    sleeps = []
+
+    def opener(_url, _body, _headers, _timeout_seconds):
+        calls.append("called")
+        if len(calls) == 1:
+            raise urllib.error.URLError(ConnectionResetError(54, "Connection reset by peer"))
+        return _response(
+            [
+                {"advertiser_id": "a1", "advertiser_name": "A1", "metrics": {"stat_cost": "12.50"}},
+            ],
+            has_more=False,
+            total=1,
+        )
+
+    result = discover_spending_accounts(
+        {
+            "enabled": True,
+            "session_file": str(_secret_file(tmp_path / "session.json")),
+            "keyword": "勇者突进-微小",
+            "max_retries": 1,
+            "retry_sleep_seconds": 3,
+            "response_audit_dir": str(tmp_path / "audit"),
+        },
+        target_date="2026-05-01",
+        min_spend=0,
+        opener=opener,
+        sleeper=sleeps.append,
+    )
+
+    assert result["active_account_ids"] == ["a1"]
+    assert result["summary"]["transport_calls"] == 2
+    assert sleeps == [3]
+
+    audit_lines = (tmp_path / "audit" / "workbench_account_list.jsonl").read_text(encoding="utf-8").splitlines()
+    first_audit = json.loads(audit_lines[0])
+    assert first_audit["status_code"] == 0
+    assert first_audit["response_json"]["error"] == "URLError"
+    assert "Connection reset by peer" in first_audit["response_json"]["message"]
 
 
 def test_workbench_discovery_can_restrict_results_to_local_account_pool(tmp_path):

@@ -1,0 +1,10 @@
+{
+  "create_mode": {
+    "mode_key": "wx_pay_general_no_conversion_retest",
+    "target_date": "2026-05-14",
+    "owner": "郭靖",
+    "target_accounts": [
+      "target-advertiser-id"
+    ]
+  }
+}

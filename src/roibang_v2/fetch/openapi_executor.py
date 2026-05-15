@@ -152,6 +152,8 @@ def execute_openapi_readonly_plan(
                 not in {
                     "report_custom",
                     "operation_log_search",
+                    "project_list",
+                    "promotion_list",
                     "video_material_get",
                     "account_video_material_get",
                     "ebp_video_material_get",

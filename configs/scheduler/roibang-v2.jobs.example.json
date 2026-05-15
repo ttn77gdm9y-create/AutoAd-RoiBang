@@ -89,6 +89,20 @@
       "delivery": {"channel": "none"}
     },
     {
+      "id": "roibang-material-kind-reconcile",
+      "name": "RoiBang-v2 素材类型校正",
+      "category": "material_kind_reconcile",
+      "enabled": true,
+      "schedule": {"type": "cron", "expr": "30 4 * * *", "tz": "Asia/Shanghai"},
+      "script": {
+        "command": ["python3", "scripts/run_material_kind_reconcile.py", "--config", "configs/runtime.example.json", "--request", "configs/material-kind-reconcile.example.json"],
+        "mode": "foreground"
+      },
+      "policy": {"config": "configs/runtime.example.json", "request": "configs/material-kind-reconcile.example.json", "readonly": true, "source": "material_daily_metrics_and_material_evidence_tables"},
+      "result_contract": {"workflow": "material_kind_reconcile", "artifact_dir": "data/runs/material_kind_reconcile", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "summary"], "must_equal": {"execution_enabled": false, "external_api_calls": 0}},
+      "delivery": {"channel": "none"}
+    },
+    {
       "id": "roibang-source-material-account-auto-push",
       "name": "RoiBang-v2 源素材账户自动补材",
       "category": "source_material_account_auto_push",
@@ -100,6 +114,20 @@
       },
       "policy": {"config": "configs/runtime.openapi-execute.local.example.json", "request": "configs/source-material-account-auto-push.daily.example.json", "source_advertiser_id": "1856647522964490", "approval_policy": "fixed_daily_source_account_auto_push"},
       "result_contract": {"workflow": "source_material_account_auto_push", "artifact_dir": "data/runs/source_material_account_auto_push", "must_include": ["ok", "workflow", "phase", "status", "execution_enabled", "external_api_calls", "summary", "blocking_reasons"], "must_equal": {}},
+      "delivery": {"channel": "none"}
+    },
+    {
+      "id": "roibang-source-material-rollup-rebuild",
+      "name": "RoiBang-v2 源素材表现汇总重建",
+      "category": "product_source_material_rollup",
+      "enabled": true,
+      "schedule": {"type": "cron", "expr": "30 5 * * *", "tz": "Asia/Shanghai"},
+      "script": {
+        "command": ["python3", "scripts/run_source_material_rollup_rebuild.py", "--config", "configs/runtime.example.json", "--request", "configs/product-source-material-rollup.example.json"],
+        "mode": "foreground"
+      },
+      "policy": {"config": "configs/runtime.example.json", "request": "configs/product-source-material-rollup.example.json", "readonly": true, "source": "material_daily_metrics_video_only"},
+      "result_contract": {"workflow": "product_source_material_rollup", "artifact_dir": "data/runs/product_source_material_rollup", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "summary", "rollups"], "must_equal": {"execution_enabled": false, "external_api_calls": 0}},
       "delivery": {"channel": "none"}
     },
     {

@@ -1,17 +1,17 @@
 {
   "mode_key": "wx_7r_general_retest",
-  "display_name": "7R 通投复测",
+  "display_name": "7R 通投低转化复测",
   "product": "勇者突进",
   "platform": "WECHAT_GAME",
   "template_key": "wx_7r_general",
-  "template_name_suffix": "复测",
+  "template_name_suffix": "低转化复测",
   "source_advertiser_id": "1856647522964490",
   "organization_id": "1851650746645060",
   "defaults": {
     "daily_budget": 10000,
     "cpa_bid": 105,
     "roi_coefficient": 0.41,
-    "project_count": 8,
+    "project_count": 5,
     "units_per_project": 1
   },
   "material_requirements": {
@@ -24,10 +24,10 @@
   },
   "material_selection": {
     "source_scope": "source_material_account",
-    "lookback_days": 30,
-    "selection_type": "retest",
-    "min_stat_cost": 200,
-    "max_stat_cost": 1000,
+    "lookback_days": 0,
+    "selection_type": "low_conversion_retest",
+    "min_convert_cnt": 1,
+    "max_convert_cnt": 5,
     "sort_by": "create_time_desc",
     "random_shuffle": true,
     "exclude_recent_used": false,

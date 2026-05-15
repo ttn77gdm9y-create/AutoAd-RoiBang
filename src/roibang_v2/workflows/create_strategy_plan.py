@@ -5,7 +5,7 @@ import json
 import math
 import re
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -123,34 +123,122 @@ def _candidate_max_stat_cost(request: dict[str, Any]) -> float | None:
     return value if value > 0 else None
 
 
+def _candidate_min_convert_cnt(request: dict[str, Any]) -> float | None:
+    selection = _selection_policy(request)
+    if selection.get("min_convert_cnt") is None:
+        return None
+    return _float_value(selection.get("min_convert_cnt"), 0)
+
+
+def _candidate_max_convert_cnt(request: dict[str, Any]) -> float | None:
+    selection = _selection_policy(request)
+    if selection.get("max_convert_cnt") is None:
+        return None
+    return _float_value(selection.get("max_convert_cnt"), 0)
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    normalized = text.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(normalized)
+    except ValueError:
+        try:
+            return datetime.fromisoformat(normalized[:10])
+        except ValueError:
+            return None
+
+
+def _target_date_datetime(request: dict[str, Any]) -> datetime:
+    parsed = _parse_datetime(request.get("target_date"))
+    if parsed is not None:
+        return parsed
+    return datetime.now(timezone.utc)
+
+
+def _candidate_min_create_age_days(request: dict[str, Any]) -> int:
+    selection = _selection_policy(request)
+    return max(_int_value(selection.get("min_create_age_days"), 0), 0)
+
+
+def _candidate_first_seen_days(request: dict[str, Any]) -> int:
+    selection = _selection_policy(request)
+    return max(_int_value(selection.get("first_seen_days"), 0), 0)
+
+
+def _candidate_effective_create_datetime(row: dict[str, Any]) -> datetime | None:
+    return _parse_datetime(
+        row.get("effective_create_date")
+        or row.get("first_seen_metric_date")
+        or row.get("create_time")
+        or row.get("first_seen_at")
+    )
+
+
 def _filter_candidate_rows_for_request(rows: list[dict[str, Any]], *, request: dict[str, Any], policy: dict[str, Any]) -> list[dict[str, Any]]:
     filtered = _filter_candidate_rows(rows, policy=policy)
     min_stat_cost = _candidate_min_stat_cost(request, _candidate_filters(policy))
     max_stat_cost = _candidate_max_stat_cost(request)
+    min_convert_cnt = _candidate_min_convert_cnt(request)
+    max_convert_cnt = _candidate_max_convert_cnt(request)
+    min_create_age_days = _candidate_min_create_age_days(request)
+    target_date = _target_date_datetime(request)
+    create_before = (target_date - timedelta(days=min_create_age_days)).date()
+    first_seen_days = _candidate_first_seen_days(request)
+    first_seen_since = (target_date - timedelta(days=max(first_seen_days - 1, 0))).date()
     result = [row for row in filtered if float(row.get("stat_cost") or 0) >= min_stat_cost]
     if max_stat_cost is not None:
         result = [row for row in result if float(row.get("stat_cost") or 0) <= max_stat_cost]
+    if min_convert_cnt is not None:
+        result = [row for row in result if float(row.get("convert_cnt") or 0) >= min_convert_cnt]
+    if max_convert_cnt is not None:
+        result = [row for row in result if float(row.get("convert_cnt") or 0) <= max_convert_cnt]
+    if min_create_age_days > 0:
+        result = [
+            row
+            for row in result
+            if (created_at := _candidate_effective_create_datetime(row)) is not None
+            and created_at.date() <= create_before
+        ]
+    if first_seen_days > 0:
+        result = [
+            row
+            for row in result
+            if (created_at := _candidate_effective_create_datetime(row)) is not None
+            and created_at.date() >= first_seen_since
+        ]
     return result
 
 
 def _candidate_sort_key(row: dict[str, Any], *, selection: dict[str, Any]) -> tuple[Any, ...]:
     sort_by = str(selection.get("sort_by") or "")
     selection_type = str(selection.get("selection_type") or "")
-    if sort_by == "create_time_desc" or selection_type == "test_new":
-        created_at = str(row.get("create_time") or row.get("first_seen_at") or "")
+    if sort_by in {"create_time_desc", "effective_create_date_desc"} or selection_type == "test_new":
+        created_at = str(
+            row.get("effective_create_date")
+            or row.get("first_seen_metric_date")
+            or row.get("create_time")
+            or row.get("first_seen_at")
+            or ""
+        )
         return (created_at, -float(row.get("stat_cost") or 0), str(row.get("material_id") or ""))
     return (float(row.get("stat_cost") or 0), float(row.get("score") or 0), str(row.get("material_id") or ""))
 
 
 def _sort_candidate_rows(rows: list[dict[str, Any]], *, request: dict[str, Any]) -> list[dict[str, Any]]:
     selection = _selection_policy(request)
+    reverse = True
+    if _int_value(selection.get("candidate_pool_limit"), 0) > 0:
+        limit = _int_value(selection.get("candidate_pool_limit"), 0)
+        rows = sorted(rows, key=lambda row: _candidate_sort_key(row, selection=selection), reverse=reverse)[:limit]
     if bool(selection.get("random_shuffle", False)):
         seed = str(request.get("request_id") or request.get("plan_id") or "")
         return sorted(
             rows,
             key=lambda row: hashlib.sha256(f"{seed}:{row.get('material_id')}".encode("utf-8")).hexdigest(),
         )
-    reverse = str(selection.get("sort_by") or "") != "create_time_desc" and str(selection.get("selection_type") or "") != "test_new"
     return sorted(rows, key=lambda row: _candidate_sort_key(row, selection=selection), reverse=reverse)
 
 
@@ -202,9 +290,13 @@ def _candidate_rows(*, db_path: str | Path, request: dict[str, Any], policy: dic
               psm.review_status,
               psm.source,
               COALESCE(MAX(CASE WHEN psmr.window_days = ? THEN psmr.stat_cost END), MAX(psmr.stat_cost), psm.cost_lookback, 0) AS stat_cost,
+              COALESCE(MAX(CASE WHEN psmr.window_days = ? THEN psmr.convert_cnt END), MAX(psmr.convert_cnt), 0) AS convert_cnt,
               psm.score,
               psm.create_time,
-              psm.first_seen_at
+              psm.first_seen_at,
+              COALESCE(MAX(CASE WHEN psmr.window_days = ? THEN psmr.first_seen_metric_date END), MAX(psmr.first_seen_metric_date), '') AS first_seen_metric_date,
+              COALESCE(MAX(CASE WHEN psmr.window_days = ? THEN psmr.effective_create_date END), MAX(psmr.effective_create_date), psm.create_time, psm.first_seen_at, '') AS effective_create_date,
+              COALESCE(MAX(CASE WHEN psmr.window_days = ? THEN psmr.effective_create_date_source END), MAX(psmr.effective_create_date_source), '') AS effective_create_date_source
             FROM product_source_materials psm
             LEFT JOIN product_source_material_metric_rollups psmr
               ON psmr.product = psm.product
@@ -219,6 +311,10 @@ def _candidate_rows(*, db_path: str | Path, request: dict[str, Any], policy: dic
               psm.review_status, psm.source, psm.cost_lookback, psm.score, psm.create_time, psm.first_seen_at
             """,
             (
+                lookback_days,
+                lookback_days,
+                lookback_days,
+                lookback_days,
                 lookback_days,
                 str(request.get("product") or ""),
                 str(request.get("source_advertiser_id") or ""),
@@ -352,7 +448,16 @@ def _material_entry(row: dict[str, Any]) -> dict[str, Any]:
         "rank": int(row.get("rank") or 0),
         "score": float(row.get("score") or 0),
         "stat_cost": float(row.get("stat_cost") or 0),
+        "convert_cnt": float(row.get("convert_cnt") or 0),
     }
+    if str(row.get("create_time") or "").strip():
+        entry["create_time"] = str(row.get("create_time") or "").strip()
+    if str(row.get("first_seen_metric_date") or "").strip():
+        entry["first_seen_metric_date"] = str(row.get("first_seen_metric_date") or "").strip()
+    if str(row.get("effective_create_date") or "").strip():
+        entry["effective_create_date"] = str(row.get("effective_create_date") or "").strip()
+    if str(row.get("effective_create_date_source") or "").strip():
+        entry["effective_create_date_source"] = str(row.get("effective_create_date_source") or "").strip()
     if str(row.get("source") or "").strip():
         entry["source"] = str(row.get("source") or "").strip()
     return entry

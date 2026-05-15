@@ -130,19 +130,23 @@ def test_bundled_create_modes_cover_7r_and_pay_scale_and_test_new():
         "wx_7r_general_scale": ("wx_7r_general", "微小每付7R通投历史放量", 0.419, "7R 通投历史放量", 30),
         "wx_7r_general_recent_scale": ("wx_7r_general", "微小每付7R通投近期放量", 0.419, "7R 通投近期放量", 7),
         "wx_7r_general_test_new": ("wx_7r_general", "微小每付7R通投测新", 0.41, "7R 通投测新", 30),
-        "wx_7r_general_retest": ("wx_7r_general", "微小每付7R通投复测", 0.41, "7R 通投复测", 30),
+        "wx_7r_general_retest": ("wx_7r_general", "微小每付7R通投低转化复测", 0.41, "7R 通投低转化复测", 0),
+        "wx_7r_general_no_conversion_retest": ("wx_7r_general", "微小每付7R通投无转化复测", 0.41, "7R 通投无转化复测", 0),
         "wx_7r_male_scale": ("wx_7r_male", "微小每付7R男历史放量", 0.419, "7R 男历史放量", 30),
         "wx_7r_male_recent_scale": ("wx_7r_male", "微小每付7R男近期放量", 0.419, "7R 男近期放量", 7),
         "wx_7r_male_test_new": ("wx_7r_male", "微小每付7R男测新", 0.41, "7R 男测新", 30),
-        "wx_7r_male_retest": ("wx_7r_male", "微小每付7R男复测", 0.41, "7R 男复测", 30),
+        "wx_7r_male_retest": ("wx_7r_male", "微小每付7R男低转化复测", 0.41, "7R 男低转化复测", 0),
+        "wx_7r_male_no_conversion_retest": ("wx_7r_male", "微小每付7R男无转化复测", 0.41, "7R 男无转化复测", 0),
         "wx_pay_general_scale": ("wx_pay_general", "微小每付通投历史放量", None, "每付通投历史放量", 30),
         "wx_pay_general_recent_scale": ("wx_pay_general", "微小每付通投近期放量", None, "每付通投近期放量", 7),
         "wx_pay_general_test_new": ("wx_pay_general", "微小每付通投测新", None, "每付通投测新", 30),
-        "wx_pay_general_retest": ("wx_pay_general", "微小每付通投复测", None, "每付通投复测", 30),
+        "wx_pay_general_retest": ("wx_pay_general", "微小每付通投低转化复测", None, "每付通投低转化复测", 0),
+        "wx_pay_general_no_conversion_retest": ("wx_pay_general", "微小每付通投无转化复测", None, "每付通投无转化复测", 0),
         "wx_pay_male_scale": ("wx_pay_male", "微小每付男历史放量", None, "每付男历史放量", 30),
         "wx_pay_male_recent_scale": ("wx_pay_male", "微小每付男近期放量", None, "每付男近期放量", 7),
         "wx_pay_male_test_new": ("wx_pay_male", "微小每付男测新", None, "每付男测新", 30),
-        "wx_pay_male_retest": ("wx_pay_male", "微小每付男复测", None, "每付男复测", 30),
+        "wx_pay_male_retest": ("wx_pay_male", "微小每付男低转化复测", None, "每付男低转化复测", 0),
+        "wx_pay_male_no_conversion_retest": ("wx_pay_male", "微小每付男无转化复测", None, "每付男无转化复测", 0),
     }
     for mode_key, (template_key, project_template_name, roi_goal, display_name, lookback_days) in expected.items():
         mode_config = json.loads(Path(f"configs/create-modes/{mode_key}.example.json").read_text(encoding="utf-8"))
@@ -163,9 +167,22 @@ def test_bundled_create_modes_cover_7r_and_pay_scale_and_test_new():
         assert request["material_selection"]["lookback_days"] == lookback_days
         assert request["material_selection"]["source_scope"] == "source_material_account"
         assert request["material_selection"]["exclude_recent_used_days"] == 0
+        if mode_key.endswith("_test_new"):
+            assert request["target_accounts"][0]["project_count"] == 5
+            assert request["material_selection"]["candidate_pool_limit"] == 200
+            assert request["material_selection"]["first_seen_days"] == 30
         if mode_key.endswith("_retest"):
+            assert request["target_accounts"][0]["project_count"] == 5
+        if mode_key.endswith("_recent_scale"):
             assert request["material_selection"]["min_stat_cost"] == 200
-            assert request["material_selection"]["max_stat_cost"] == 1000
+        if mode_key.endswith("_retest") and "no_conversion" not in mode_key:
+            assert request["material_selection"]["min_convert_cnt"] == 1
+            assert request["material_selection"]["max_convert_cnt"] == 5
+        if mode_key.endswith("_no_conversion_retest"):
+            assert request["material_selection"]["min_convert_cnt"] == 0
+            assert request["material_selection"]["max_convert_cnt"] == 0
+            assert request["material_selection"]["max_stat_cost"] == 500
+            assert request["material_selection"]["min_create_age_days"] == 7
         assert request["material_requirements"]["dedupe_scope"] == "max_account_overlap"
         assert request["material_requirements"]["allow_reuse_across_accounts"] is True
         assert request["field_defaults"]["action_track_url"].startswith("https://backend.gravity-engine.com/")
@@ -186,9 +203,11 @@ def test_bundled_create_modes_cover_7r_and_pay_scale_and_test_new():
 def test_create_mode_resolves_complete_chinese_aliases_and_rejects_ambiguous_names():
     assert load_create_mode_config({"mode_key": "7R 通投历史放量"})["mode_key"] == "wx_7r_general_scale"
     assert load_create_mode_config({"mode_key": "7R 通投近期放量"})["mode_key"] == "wx_7r_general_recent_scale"
-    assert load_create_mode_config({"mode_key": "7R 通投复测"})["mode_key"] == "wx_7r_general_retest"
+    assert load_create_mode_config({"mode_key": "7R 通投低转化复测"})["mode_key"] == "wx_7r_general_retest"
+    assert load_create_mode_config({"mode_key": "7R 通投无转化复测"})["mode_key"] == "wx_7r_general_no_conversion_retest"
     assert load_create_mode_config({"mode_key": "7R 男测新"})["mode_key"] == "wx_7r_male_test_new"
-    assert load_create_mode_config({"mode_key": "每付通投复测"})["mode_key"] == "wx_pay_general_retest"
+    assert load_create_mode_config({"mode_key": "每付通投低转化复测"})["mode_key"] == "wx_pay_general_retest"
+    assert load_create_mode_config({"mode_key": "每付通投无转化复测"})["mode_key"] == "wx_pay_general_no_conversion_retest"
     assert load_create_mode_config({"mode_key": "每付男近期放量"})["mode_key"] == "wx_pay_male_recent_scale"
 
     try:
@@ -204,6 +223,13 @@ def test_create_mode_resolves_complete_chinese_aliases_and_rejects_ambiguous_nam
         assert "需要指定历史/近期" in str(exc)
     else:
         raise AssertionError("每付男放量 must be rejected as ambiguous")
+
+    try:
+        load_create_mode_config({"mode_key": "每付通投复测"})
+    except ValueError as exc:
+        assert "低转化/无转化" in str(exc)
+    else:
+        raise AssertionError("每付通投复测 must be rejected as ambiguous")
 
 
 def test_create_mode_generates_strategy_plan_with_enabled_initial_status_and_overlap_cap(tmp_path: Path):
@@ -362,7 +388,7 @@ def test_create_mode_treats_blank_source_material_review_status_as_usable(tmp_pa
     assert len(unit["materials"]) == 5
 
 
-def test_create_mode_retest_filters_material_cost_range(tmp_path: Path):
+def test_create_mode_low_conversion_retest_filters_convert_range(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     _seed_source_materials(db_path, count=12)
     with sqlite3.connect(db_path) as conn:
@@ -377,14 +403,14 @@ def test_create_mode_retest_filters_material_cost_range(tmp_path: Path):
                 (stat_cost, stat_cost, f"m-{index:03d}"),
             )
             conn.execute(
-                "UPDATE product_source_material_metric_rollups SET stat_cost = ? WHERE material_id = ?",
-                (stat_cost, f"m-{index:03d}"),
+                "UPDATE product_source_material_metric_rollups SET stat_cost = ?, convert_cnt = ? WHERE material_id = ?",
+                (stat_cost, index - 1, f"m-{index:03d}"),
             )
 
     result = run_create_mode_request(
         {
             "create_mode": {
-                "mode_key": "每付通投复测",
+                "mode_key": "每付通投低转化复测",
                 "target_accounts": ["acc-1"],
                 "target_date": "2026-05-13",
                 "owner": "郭靖",
@@ -398,9 +424,201 @@ def test_create_mode_retest_filters_material_cost_range(tmp_path: Path):
 
     assert result["ok"] is True
     unit = result["create_strategy_plan"]["strategy"]["projects"][0]["units"][0]
-    stat_costs = [material["stat_cost"] for material in unit["materials"]]
-    assert stat_costs
-    assert all(200 <= stat_cost <= 1000 for stat_cost in stat_costs)
+    convert_cnts = [material["convert_cnt"] for material in unit["materials"]]
+    assert convert_cnts
+    assert all(1 <= convert_cnt <= 5 for convert_cnt in convert_cnts)
+
+
+def test_create_mode_no_conversion_retest_filters_old_low_cost_zero_conversion_materials(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_source_materials(db_path, count=12)
+    with sqlite3.connect(db_path) as conn:
+        for index in range(1, 13):
+            stat_cost = 400
+            convert_cnt = 0
+            create_time = "2026-05-01T12:00:00+08:00"
+            if index <= 2:
+                convert_cnt = 1
+            if 3 <= index <= 4:
+                stat_cost = 600
+            if 5 <= index <= 6:
+                create_time = "2026-05-12T12:00:00+08:00"
+            conn.execute(
+                "UPDATE product_source_materials SET cost_lookback = ?, score = ?, create_time = ? WHERE material_id = ?",
+                (stat_cost, stat_cost, create_time, f"m-{index:03d}"),
+            )
+            conn.execute(
+                "UPDATE product_source_material_metric_rollups SET stat_cost = ?, convert_cnt = ?, create_time = ? WHERE material_id = ?",
+                (stat_cost, convert_cnt, create_time, f"m-{index:03d}"),
+            )
+
+    result = run_create_mode_request(
+        {
+            "create_mode": {
+                "mode_key": "每付通投无转化复测",
+                "target_accounts": ["acc-1"],
+                "target_date": "2026-05-13",
+                "owner": "郭靖",
+            }
+        },
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        policy={"create_strategy_plan": _policy()},
+        template_catalog_path=Path("configs/create-templates/wx-mini-game.json"),
+    )
+
+    assert result["ok"] is True
+    unit = result["create_strategy_plan"]["strategy"]["projects"][0]["units"][0]
+    assert unit["materials"]
+    assert all(material["convert_cnt"] == 0 for material in unit["materials"])
+    assert all(material["stat_cost"] <= 500 for material in unit["materials"])
+    assert all(material["create_time"].startswith("2026-05-01") for material in unit["materials"])
+
+
+def test_create_mode_candidate_pool_limit_uses_newest_materials_before_shuffle(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_source_materials(db_path, count=10)
+    with sqlite3.connect(db_path) as conn:
+        for index in range(1, 11):
+            create_time = f"2026-05-{index:02d}T12:00:00+08:00"
+            conn.execute(
+                "UPDATE product_source_materials SET create_time = ?, cost_lookback = 1000, score = 1000 WHERE material_id = ?",
+                (create_time, f"m-{index:03d}"),
+            )
+            conn.execute(
+                "UPDATE product_source_material_metric_rollups SET create_time = ?, stat_cost = 1000 WHERE material_id = ?",
+                (create_time, f"m-{index:03d}"),
+            )
+    mode_path = tmp_path / "mode.json"
+    mode_path.write_text(
+        json.dumps(
+            {
+                "mode_key": "test_recent_pool",
+                "display_name": "测试最近素材池",
+                "product": "勇者突进",
+                "platform": "WECHAT_GAME",
+                "template_key": "wx_pay_general",
+                "template_name_suffix": "测新",
+                "source_advertiser_id": "1856647522964490",
+                "organization_id": "1851650746645060",
+                "defaults": {"daily_budget": 10000, "cpa_bid": 105, "project_count": 1, "units_per_project": 1},
+                "material_requirements": {
+                    "material_type": "video",
+                    "materials_per_unit": 3,
+                    "dedupe_scope": "max_account_overlap",
+                    "max_cross_account_overlap_ratio": 0.3,
+                    "allow_reuse_across_accounts": True,
+                    "on_insufficient": "allow_reuse",
+                },
+                "material_selection": {
+                    "lookback_days": 30,
+                    "selection_type": "test_new",
+                    "sort_by": "create_time_desc",
+                    "random_shuffle": True,
+                    "candidate_pool_limit": 3,
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_create_mode_request(
+        {
+            "create_mode": {
+                "mode_config_path": str(mode_path),
+                "target_accounts": ["acc-1"],
+                "target_date": "2026-05-13",
+                "owner": "郭靖",
+            }
+        },
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        policy={"create_strategy_plan": _policy()},
+        template_catalog_path=Path("configs/create-templates/wx-mini-game.json"),
+    )
+
+    unit = result["create_strategy_plan"]["strategy"]["projects"][0]["units"][0]
+    selected_ids = {material["material_id"] for material in unit["materials"]}
+    assert selected_ids <= {"m-008", "m-009", "m-010"}
+
+
+def test_create_mode_test_new_uses_effective_create_date_from_rollup(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_source_materials(db_path, count=10)
+    with sqlite3.connect(db_path) as conn:
+        for index in range(1, 11):
+            first_seen_date = f"2026-05-{index:02d}"
+            conn.execute(
+                "UPDATE product_source_materials SET create_time = '2026-04-25 12:00:00', cost_lookback = 1000, score = 1000 WHERE material_id = ?",
+                (f"m-{index:03d}",),
+            )
+            conn.execute(
+                """
+                UPDATE product_source_material_metric_rollups
+                SET create_time = '2026-04-25 12:00:00',
+                    first_seen_metric_date = ?,
+                    effective_create_date = ?,
+                    effective_create_date_source = 'material_daily_metrics',
+                    stat_cost = 1000
+                WHERE material_id = ?
+                """,
+                (first_seen_date, first_seen_date, f"m-{index:03d}"),
+            )
+    mode_path = tmp_path / "mode.json"
+    mode_path.write_text(
+        json.dumps(
+            {
+                "mode_key": "test_effective_create_date",
+                "display_name": "测试有效创建日期",
+                "product": "勇者突进",
+                "platform": "WECHAT_GAME",
+                "template_key": "wx_pay_general",
+                "template_name_suffix": "测新",
+                "source_advertiser_id": "1856647522964490",
+                "organization_id": "1851650746645060",
+                "defaults": {"daily_budget": 10000, "cpa_bid": 105, "project_count": 1, "units_per_project": 1},
+                "material_requirements": {
+                    "material_type": "video",
+                    "materials_per_unit": 3,
+                    "dedupe_scope": "max_account_overlap",
+                    "max_cross_account_overlap_ratio": 0.3,
+                    "allow_reuse_across_accounts": True,
+                    "on_insufficient": "allow_reuse",
+                },
+                "material_selection": {
+                    "lookback_days": 30,
+                    "first_seen_days": 7,
+                    "selection_type": "test_new",
+                    "sort_by": "create_time_desc",
+                    "random_shuffle": True,
+                    "candidate_pool_limit": 3,
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_create_mode_request(
+        {
+            "create_mode": {
+                "mode_config_path": str(mode_path),
+                "target_accounts": ["acc-1"],
+                "target_date": "2026-05-13",
+                "owner": "郭靖",
+            }
+        },
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        policy={"create_strategy_plan": _policy()},
+        template_catalog_path=Path("configs/create-templates/wx-mini-game.json"),
+    )
+
+    unit = result["create_strategy_plan"]["strategy"]["projects"][0]["units"][0]
+    selected_ids = {material["material_id"] for material in unit["materials"]}
+    assert selected_ids <= {"m-008", "m-009", "m-010"}
+    assert all(material["effective_create_date"].startswith("2026-05-") for material in unit["materials"])
 
 
 def test_run_create_mode_cli_prints_json_summary(tmp_path: Path, capsys):

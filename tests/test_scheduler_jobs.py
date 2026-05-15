@@ -12,8 +12,8 @@ def test_scheduler_registry_has_no_ai_execution_prompts():
 
     assert result == {
         "ok": True,
-        "jobs": 17,
-        "enabled_jobs": 6,
+        "jobs": 19,
+        "enabled_jobs": 8,
         "disabled_jobs": 11,
         "violations": [],
     }
@@ -192,12 +192,16 @@ def test_scheduler_registry_keeps_daily_jobs_and_restore_due_job():
         ("roibang-daily-report-pipeline", "0 4 * * *"),
         ("roibang-material-history-yesterday", "0 2 * * *"),
         ("roibang-operation-log-yesterday-sync", "30 2 * * *"),
+        ("roibang-material-kind-reconcile", "30 4 * * *"),
         ("roibang-source-material-account-auto-push", "0 5 * * *"),
+        ("roibang-source-material-rollup-rebuild", "30 5 * * *"),
         ("roibang-scheduler-status", "0 6 * * *"),
         ("roibang-project-schedule-restore-due", "10 0 * * *"),
     ]
 
     source_account_push = {job["id"]: job for job in registry["jobs"]}["roibang-source-material-account-auto-push"]
+    material_kind_reconcile = {job["id"]: job for job in registry["jobs"]}["roibang-material-kind-reconcile"]
+    source_material_rollup = {job["id"]: job for job in registry["jobs"]}["roibang-source-material-rollup-rebuild"]
     daily_job = {job["id"]: job for job in registry["jobs"]}["roibang-daily-report-pipeline"]
     status_job = {job["id"]: job for job in registry["jobs"]}["roibang-scheduler-status"]
     restore_due_job = {job["id"]: job for job in registry["jobs"]}["roibang-project-schedule-restore-due"]
@@ -230,6 +234,32 @@ def test_scheduler_registry_keeps_daily_jobs_and_restore_due_job():
     ]
     assert source_account_push["result_contract"]["workflow"] == "source_material_account_auto_push"
     assert source_account_push["result_contract"]["must_equal"] == {}
+    assert material_kind_reconcile["script"]["command"] == [
+        "python3",
+        "scripts/run_material_kind_reconcile.py",
+        "--config",
+        "configs/runtime.example.json",
+        "--request",
+        "configs/material-kind-reconcile.example.json",
+    ]
+    assert material_kind_reconcile["result_contract"]["workflow"] == "material_kind_reconcile"
+    assert material_kind_reconcile["result_contract"]["must_equal"] == {
+        "execution_enabled": False,
+        "external_api_calls": 0,
+    }
+    assert source_material_rollup["script"]["command"] == [
+        "python3",
+        "scripts/run_source_material_rollup_rebuild.py",
+        "--config",
+        "configs/runtime.example.json",
+        "--request",
+        "configs/product-source-material-rollup.example.json",
+    ]
+    assert source_material_rollup["result_contract"]["workflow"] == "product_source_material_rollup"
+    assert source_material_rollup["result_contract"]["must_equal"] == {
+        "execution_enabled": False,
+        "external_api_calls": 0,
+    }
     assert status_job["script"]["command"] == [
         "python3",
         "scripts/run_scheduler_status.py",

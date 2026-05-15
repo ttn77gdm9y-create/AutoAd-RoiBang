@@ -32,6 +32,29 @@ def bootstrap_database(database_path: str | Path) -> None:
         )
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS material_profile_lookup_failures (
+              material_id TEXT NOT NULL,
+              account_id TEXT NOT NULL DEFAULT '',
+              endpoint_key TEXT NOT NULL DEFAULT '',
+              reason TEXT NOT NULL DEFAULT '',
+              status TEXT NOT NULL DEFAULT 'failed',
+              fail_count INTEGER NOT NULL DEFAULT 0,
+              last_error TEXT NOT NULL DEFAULT '',
+              request_json TEXT NOT NULL DEFAULT '{}',
+              first_failed_at TEXT NOT NULL,
+              last_failed_at TEXT NOT NULL,
+              PRIMARY KEY (material_id, account_id, endpoint_key, reason)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_material_profile_lookup_failures_status
+              ON material_profile_lookup_failures (status, endpoint_key, account_id, last_failed_at DESC)
+            """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS material_duplicate_candidates (
               duplicate_group_key TEXT NOT NULL,
               material_id TEXT NOT NULL,
@@ -123,6 +146,9 @@ def bootstrap_database(database_path: str | Path) -> None:
               duration REAL NOT NULL DEFAULT 0,
               file_size REAL NOT NULL DEFAULT 0,
               create_time TEXT NOT NULL DEFAULT '',
+              first_seen_metric_date TEXT NOT NULL DEFAULT '',
+              effective_create_date TEXT NOT NULL DEFAULT '',
+              effective_create_date_source TEXT NOT NULL DEFAULT '',
               tag_ids_json TEXT NOT NULL DEFAULT '[]',
               account_count INTEGER NOT NULL DEFAULT 0,
               project_count INTEGER NOT NULL DEFAULT 0,
@@ -136,11 +162,16 @@ def bootstrap_database(database_path: str | Path) -> None:
               roi_7days_cost_weighted REAL NOT NULL DEFAULT 0,
               source TEXT NOT NULL,
               synced_at TEXT NOT NULL,
-              PRIMARY KEY (product, source_advertiser_id, window_key, period_start, period_end, material_id),
-              FOREIGN KEY (material_id) REFERENCES materials(material_id) ON DELETE CASCADE
+              PRIMARY KEY (product, source_advertiser_id, window_key, period_start, period_end, material_id)
             )
             """
         )
+        for column, definition in {
+            "first_seen_metric_date": "TEXT NOT NULL DEFAULT ''",
+            "effective_create_date": "TEXT NOT NULL DEFAULT ''",
+            "effective_create_date_source": "TEXT NOT NULL DEFAULT ''",
+        }.items():
+            _ensure_column(conn, "product_source_material_metric_rollups", column, definition)
         conn.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_product_source_material_active
@@ -151,6 +182,36 @@ def bootstrap_database(database_path: str | Path) -> None:
             """
             CREATE INDEX IF NOT EXISTS idx_product_source_material_rollup_rank
               ON product_source_material_metric_rollups (product, source_advertiser_id, window_key, stat_cost DESC)
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS material_source_mappings (
+              product TEXT NOT NULL,
+              source_advertiser_id TEXT NOT NULL,
+              source_material_id TEXT NOT NULL,
+              source_video_id TEXT NOT NULL DEFAULT '',
+              target_advertiser_id TEXT NOT NULL,
+              target_material_id TEXT NOT NULL,
+              target_video_id TEXT NOT NULL DEFAULT '',
+              source_workflow TEXT NOT NULL DEFAULT '',
+              payload_json TEXT NOT NULL DEFAULT '{}',
+              first_seen_at TEXT NOT NULL,
+              last_seen_at TEXT NOT NULL,
+              PRIMARY KEY (product, source_advertiser_id, target_advertiser_id, target_material_id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_material_source_mappings_source
+              ON material_source_mappings (product, source_advertiser_id, source_material_id)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_material_source_mappings_target
+              ON material_source_mappings (target_advertiser_id, target_material_id)
             """
         )
         conn.execute(

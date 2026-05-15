@@ -1,16 +1,15 @@
 {
-  "mode_key": "wx_7r_male_test_new",
-  "display_name": "7R 男测新",
+  "mode_key": "wx_pay_general_no_conversion_retest",
+  "display_name": "每付通投无转化复测",
   "product": "勇者突进",
   "platform": "WECHAT_GAME",
-  "template_key": "wx_7r_male",
-  "template_name_suffix": "测新",
+  "template_key": "wx_pay_general",
+  "template_name_suffix": "无转化复测",
   "source_advertiser_id": "1856647522964490",
   "organization_id": "1851650746645060",
   "defaults": {
     "daily_budget": 10000,
     "cpa_bid": 105,
-    "roi_coefficient": 0.41,
     "project_count": 5,
     "units_per_project": 1
   },
@@ -24,15 +23,16 @@
   },
   "material_selection": {
     "source_scope": "source_material_account",
-    "lookback_days": 30,
-    "first_seen_days": 30,
-    "selection_type": "test_new",
-    "min_stat_cost": 0,
+    "lookback_days": 0,
+    "selection_type": "no_conversion_retest",
+    "min_convert_cnt": 0,
+    "max_convert_cnt": 0,
+    "max_stat_cost": 500,
+    "min_create_age_days": 7,
     "sort_by": "create_time_desc",
     "random_shuffle": true,
     "exclude_recent_used": false,
-    "exclude_recent_used_days": 0,
-    "candidate_pool_limit": 200
+    "exclude_recent_used_days": 0
   },
   "initial_status": {
     "project_operation": "ENABLE",

@@ -34,6 +34,21 @@ def _profile_sync_config(cfg: dict[str, Any]) -> dict[str, Any]:
     return profile_cfg
 
 
+def _fallback_profile_sync_configs(cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = cfg.get("fallback_material_profile_syncs")
+    if not isinstance(rows, list):
+        return []
+    configs: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        fallback_cfg = deepcopy(row)
+        if str(fallback_cfg.get("kind") or "") != "openapi_video_materials":
+            raise ValueError("material_profile_backfill_batch fallback only supports openapi_video_materials")
+        configs.append(fallback_cfg)
+    return configs
+
+
 def _missing_material_count(*, db_path: str | Path, profile_cfg: dict[str, Any]) -> int:
     preflight = build_material_profile_sync_preflight({"material_profile_sync": profile_cfg}, db_path=db_path)
     return int(preflight["summary"]["missing_material_count"])
@@ -53,6 +68,7 @@ def run_material_profile_backfill_batch_request(
 ) -> dict[str, Any]:
     cfg = _config(request)
     profile_cfg = _profile_sync_config(cfg)
+    fallback_profile_cfgs = _fallback_profile_sync_configs(cfg)
     max_batches = _max_batches(cfg)
     stop_on_no_progress = bool(cfg.get("stop_on_no_progress", True))
     run_duplicate_analysis = bool(cfg.get("run_duplicate_analysis", True))
@@ -79,32 +95,78 @@ def run_material_profile_backfill_batch_request(
             stop_reason = "no_source_accounts"
             break
 
-        result = run_material_profile_sync_request(
-            {"material_profile_sync": profile_cfg},
-            db_path=db_path,
-            runs_dir=runs_dir,
-            transport=transport,
-        )
-        profiles_imported = int(result["summary"].get("profiles_imported") or 0)
-        attributes_imported = int(result["summary"].get("attributes_imported") or 0)
-        total_profiles_imported += profiles_imported
-        total_attributes_imported += attributes_imported
-        total_external_api_calls += int(result.get("external_api_calls") or 0)
-        missing_after_batch = _missing_material_count(db_path=db_path, profile_cfg=profile_cfg)
+        attempt_cfgs: list[tuple[str, dict[str, Any]]] = [("primary", profile_cfg)]
+        batch_profiles_imported = 0
+        batch_attributes_imported = 0
+        batch_external_api_calls = 0
+        batch_lookup_failures_recorded = 0
+        batch_attempts: list[dict[str, Any]] = []
+        missing_after_batch = missing_before_batch
+
+        for attempt_index, (lookup_path, attempt_cfg) in enumerate(attempt_cfgs):
+            result = run_material_profile_sync_request(
+                {"material_profile_sync": attempt_cfg},
+                db_path=db_path,
+                runs_dir=runs_dir,
+                transport=transport,
+            )
+            profiles_imported = int(result["summary"].get("profiles_imported") or 0)
+            attributes_imported = int(result["summary"].get("attributes_imported") or 0)
+            external_api_calls = int(result.get("external_api_calls") or 0)
+            lookup_failures_recorded = int(result["summary"].get("lookup_failures_recorded") or 0)
+            batch_profiles_imported += profiles_imported
+            batch_attributes_imported += attributes_imported
+            batch_external_api_calls += external_api_calls
+            batch_lookup_failures_recorded += lookup_failures_recorded
+            total_profiles_imported += profiles_imported
+            total_attributes_imported += attributes_imported
+            total_external_api_calls += external_api_calls
+            missing_after_batch = _missing_material_count(db_path=db_path, profile_cfg=profile_cfg)
+            batch_attempts.append(
+                {
+                    "lookup_path": lookup_path,
+                    "profiles_imported": profiles_imported,
+                    "attributes_imported": attributes_imported,
+                    "lookup_failures_recorded": lookup_failures_recorded,
+                    "external_api_calls": external_api_calls,
+                    "stages": result["summary"].get("stages") or [],
+                    "artifact_path": result.get("artifact_path", ""),
+                }
+            )
+            if profiles_imported > 0 or attributes_imported > 0 or missing_after_batch < missing_before_batch:
+                break
+            if attempt_index == 0 and fallback_profile_cfgs:
+                attempt_cfgs.extend((f"fallback_{index}", fallback_cfg) for index, fallback_cfg in enumerate(fallback_profile_cfgs, start=1))
+
         batches.append(
             {
                 "batch_index": batch_index,
                 "missing_material_count_before": missing_before_batch,
                 "missing_material_count_after": missing_after_batch,
                 "source_account_count": source_account_count,
-                "profiles_imported": profiles_imported,
-                "attributes_imported": attributes_imported,
-                "external_api_calls": int(result.get("external_api_calls") or 0),
-                "stages": result["summary"].get("stages") or [],
-                "artifact_path": result.get("artifact_path", ""),
+                "profiles_imported": batch_profiles_imported,
+                "attributes_imported": batch_attributes_imported,
+                "lookup_failures_recorded": batch_lookup_failures_recorded,
+                "external_api_calls": batch_external_api_calls,
+                "attempts": batch_attempts,
+                "stages": batch_attempts[-1]["stages"] if batch_attempts else [],
+                "artifact_path": batch_attempts[-1]["artifact_path"] if batch_attempts else "",
             }
         )
-        if stop_on_no_progress and missing_after_batch >= missing_before_batch and profiles_imported <= 0 and attributes_imported <= 0:
+        if (
+            batch_lookup_failures_recorded > 0
+            and batch_profiles_imported <= 0
+            and batch_attributes_imported <= 0
+            and missing_after_batch >= missing_before_batch
+        ):
+            stop_reason = "lookup_failures_recorded"
+        if (
+            stop_on_no_progress
+            and missing_after_batch >= missing_before_batch
+            and batch_profiles_imported <= 0
+            and batch_attributes_imported <= 0
+            and batch_lookup_failures_recorded <= 0
+        ):
             stop_reason = "no_import_progress"
             break
         if batch_index == max_batches:
@@ -133,6 +195,7 @@ def run_material_profile_backfill_batch_request(
             "batches_run": len(batches),
             "profiles_imported": total_profiles_imported,
             "attributes_imported": total_attributes_imported,
+            "lookup_failures_recorded": sum(int(batch.get("lookup_failures_recorded") or 0) for batch in batches),
             "profile_count_before": profile_count_before,
             "profile_count_after": profile_count_after,
             "missing_material_count_before": missing_before,

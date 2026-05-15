@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import ssl
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta
@@ -261,8 +262,26 @@ def discover_spending_accounts(
         attempts = max_retries + 1
         response: HttpResponse | None = None
         for attempt in range(1, attempts + 1):
-            response = real_opener(url, body, headers, timeout_seconds)
             transport_calls += 1
+            try:
+                response = real_opener(url, body, headers, timeout_seconds)
+            except (OSError, TimeoutError, urllib.error.URLError) as exc:
+                _append_audit(
+                    audit_path,
+                    _audit_record(
+                        url=url,
+                        body=body,
+                        status_code=0,
+                        response_json={"error": type(exc).__name__, "message": str(exc)},
+                        attempt=attempt,
+                    ),
+                )
+                if attempt == attempts:
+                    raise WorkbenchAccountDiscoveryError(
+                        f"workbench account list transport failed after {attempts} attempt(s): {exc}"
+                    ) from exc
+                real_sleeper(retry_sleep_seconds)
+                continue
             _append_audit(
                 audit_path,
                 _audit_record(

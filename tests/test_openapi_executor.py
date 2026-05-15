@@ -40,6 +40,23 @@ def _operation_log_plan():
     )
 
 
+def _promotion_list_plan():
+    return build_openapi_readonly_plan(
+        accounts=[
+            {
+                "advertiser_id": "1858371222574218",
+                "account_name": "黑旗-勇者突进-微小-傲星-306",
+                "product": "勇者突进",
+                "platform": "WECHAT_GAME",
+            }
+        ],
+        dates=["2026-02-10"],
+        endpoints=["promotion_list"],
+        platforms=["WECHAT_GAME"],
+        page_size=20,
+    )
+
+
 def test_execute_openapi_readonly_plan_follows_report_pagination():
     seen_pages = []
 
@@ -68,6 +85,34 @@ def test_execute_openapi_readonly_plan_follows_report_pagination():
     assert result["ok"] is True
     assert result["execution_enabled"] is False
     assert result["external_api_calls"] == 0
+    assert result["summary"]["transport_calls"] == 2
+    assert result["summary"]["rows_received"] == 2
+    assert seen_pages == [1, 2]
+
+
+def test_execute_openapi_readonly_plan_follows_promotion_list_pagination():
+    seen_pages = []
+
+    def fake_transport(request):
+        page = int(request["query_params"]["page"])
+        seen_pages.append(page)
+        return {
+            "code": 0,
+            "data": {
+                "list": [
+                    {
+                        "project_id": f"project_{page}",
+                        "project_name": f"项目 {page}",
+                        "promotion_id": f"promotion_{page}",
+                        "promotion_name": f"单元 {page}",
+                    }
+                ],
+                "page_info": {"page": page, "page_size": 20, "total_page": 2},
+            },
+        }
+
+    result = execute_openapi_readonly_plan(_promotion_list_plan(), transport=fake_transport)
+
     assert result["summary"]["transport_calls"] == 2
     assert result["summary"]["rows_received"] == 2
     assert seen_pages == [1, 2]

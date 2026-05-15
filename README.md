@@ -23,7 +23,7 @@ AI（人工智能）只负责写代码、修脚本、看数据生成配置、复
 
 ## 创建模式
 
-创建时必须明确模板类型，不能省略“通投/男”。放量还要明确“历史/近期”。例如 `7R 放量` 是歧义说法，脚本会阻断；必须写成 `7R 通投历史放量` 或 `7R 通投近期放量`。
+创建时必须明确模板类型，不能省略“通投/男”。放量还要明确“历史/近期”，复测还要明确“低转化/无转化”。例如 `7R 放量` 是歧义说法，脚本会阻断；必须写成 `7R 通投历史放量` 或 `7R 通投近期放量`。
 
 当前固定模式：
 
@@ -32,19 +32,23 @@ AI（人工智能）只负责写代码、修脚本、看数据生成配置、复
 | 7R 通投历史放量 | `wx_7r_general_scale` | `wx_7r_general（微小每付 7R 通投）` |
 | 7R 通投近期放量 | `wx_7r_general_recent_scale` | `wx_7r_general（微小每付 7R 通投）` |
 | 7R 通投测新 | `wx_7r_general_test_new` | `wx_7r_general（微小每付 7R 通投）` |
-| 7R 通投复测 | `wx_7r_general_retest` | `wx_7r_general（微小每付 7R 通投）` |
+| 7R 通投低转化复测 | `wx_7r_general_retest` | `wx_7r_general（微小每付 7R 通投）` |
+| 7R 通投无转化复测 | `wx_7r_general_no_conversion_retest` | `wx_7r_general（微小每付 7R 通投）` |
 | 7R 男历史放量 | `wx_7r_male_scale` | `wx_7r_male（微小每付 7R 男）` |
 | 7R 男近期放量 | `wx_7r_male_recent_scale` | `wx_7r_male（微小每付 7R 男）` |
 | 7R 男测新 | `wx_7r_male_test_new` | `wx_7r_male（微小每付 7R 男）` |
-| 7R 男复测 | `wx_7r_male_retest` | `wx_7r_male（微小每付 7R 男）` |
+| 7R 男低转化复测 | `wx_7r_male_retest` | `wx_7r_male（微小每付 7R 男）` |
+| 7R 男无转化复测 | `wx_7r_male_no_conversion_retest` | `wx_7r_male（微小每付 7R 男）` |
 | 每付通投历史放量 | `wx_pay_general_scale` | `wx_pay_general（微小每付通投）` |
 | 每付通投近期放量 | `wx_pay_general_recent_scale` | `wx_pay_general（微小每付通投）` |
 | 每付通投测新 | `wx_pay_general_test_new` | `wx_pay_general（微小每付通投）` |
-| 每付通投复测 | `wx_pay_general_retest` | `wx_pay_general（微小每付通投）` |
+| 每付通投低转化复测 | `wx_pay_general_retest` | `wx_pay_general（微小每付通投）` |
+| 每付通投无转化复测 | `wx_pay_general_no_conversion_retest` | `wx_pay_general（微小每付通投）` |
 | 每付男历史放量 | `wx_pay_male_scale` | `wx_pay_male（微小每付男）` |
 | 每付男近期放量 | `wx_pay_male_recent_scale` | `wx_pay_male（微小每付男）` |
 | 每付男测新 | `wx_pay_male_test_new` | `wx_pay_male（微小每付男）` |
-| 每付男复测 | `wx_pay_male_retest` | `wx_pay_male（微小每付男）` |
+| 每付男低转化复测 | `wx_pay_male_retest` | `wx_pay_male（微小每付男）` |
+| 每付男无转化复测 | `wx_pay_male_no_conversion_retest` | `wx_pay_male（微小每付男）` |
 
 放量默认：
 
@@ -52,8 +56,8 @@ AI（人工智能）只负责写代码、修脚本、看数据生成配置、复
 - `cpa_bid（项目出价）`：103
 - `roi_coefficient（ROI 系数）`：7R 模板为 0.419
 - 每账户 5 个项目，每项目 1 个单元，每单元 5 个素材
-- 历史放量：素材回看 30 天，按高消耗素材选择
-- 近期放量：素材回看 7 天，按高消耗素材选择
+- 历史放量：素材回看 30 天，只选 `stat_cost（素材消耗）` 大于等于 1000 的高消耗素材
+- 近期放量：素材回看 7 天，只选 `stat_cost（素材消耗）` 大于等于 200 的高消耗素材
 - 禁止旧说法 `7R 通投放量`、`每付男放量` 这类不带历史/近期的放量模式，脚本会阻断
 
 测新默认：
@@ -61,14 +65,22 @@ AI（人工智能）只负责写代码、修脚本、看数据生成配置、复
 - `daily_budget（日预算）`：10000
 - `cpa_bid（项目出价）`：105
 - `roi_coefficient（ROI 系数）`：7R 模板为 0.41
-- 每账户 8 个项目，每项目 1 个单元，每单元 6 个素材
-- 素材回看 30 天，按测新素材选择
+- 每账户 5 个项目，每项目 1 个单元，每单元 6 个素材
+- 素材回看 30 天，并要求 `effective_create_date（有效创建日期）` 在近 30 天内；按有效创建日期倒序取最近 200 条候选，再稳定随机打乱
 
-复测默认：
+低转化复测默认：
 
 - 预算、出价、ROI 系数、项目数、单元数、素材数和测新一致
-- 素材回看 30 天
-- 只选择 `stat_cost（素材消耗）` 大于等于 200 且小于等于 1000 的素材
+- 素材回看全部历史
+- 只选择 `convert_cnt（转化数）` 大于等于 1 且小于等于 5 的素材
+- 按 `effective_create_date（有效创建日期）` 倒序排序后稳定随机打乱
+
+无转化复测默认：
+
+- 预算、出价、ROI 系数、项目数、单元数、素材数和测新一致
+- 素材回看全部历史
+- 只选择 `convert_cnt（转化数）` 等于 0、`stat_cost（素材消耗）` 小于等于 500、且有效创建日期距目标日期至少 7 天的素材
+- 按 `effective_create_date（有效创建日期）` 倒序排序后稳定随机打乱
 
 单元层固定规则：
 
@@ -79,6 +91,37 @@ AI（人工智能）只负责写代码、修脚本、看数据生成配置、复
 - `anchor（锚点）`、`landing_url（落地页）`、`fixed_video_cover_id（固定封面）`、`product_image_id（产品图）`：固定来自模板。
 - `effective_touch_url（有效触点链接）`：产品级固定字段，生成到项目层 `action_track_url（点击监测链接）`。
 - 稳定随机的意思是：同一个 `plan_id（计划 ID）` 和 `unit_key（单元键）` 预演和执行结果一致。
+
+## 素材表现汇总
+
+`product_source_material_metric_rollups（源素材表现汇总表）` 的消耗、转化、ROI（付费回收）口径以 `material_daily_metrics（素材日维度数据）` 为准，按 `material_id（素材 ID）` 汇总全量日维度表现，不再只统计 `product_source_materials（源素材表）` 已覆盖的素材。
+
+- `material_id（素材 ID）` 是素材表现归因主键。
+- `video_id / vid（视频 ID）` 只作为素材推送、回查和创建接口字段，不作为历史表现归因主键。
+- `product_source_materials（源素材表）`、`account_materials（账户素材表）`、`material_profiles（素材详情表）` 只用于补素材名称、审核状态、创建时间等信息。
+- `material_source_mappings（素材源映射表）` 只处理少数目标素材 ID 需要回源的情况，不作为主统计口径。
+- `first_seen_metric_date（首次出现数据日期）` 来自 `material_daily_metrics（素材日维度数据）` 中该素材第一次出现的日期。
+- `effective_create_date（有效创建日期）` 优先使用 `first_seen_metric_date（首次出现数据日期）`，用于修正源素材账户集中导入导致的创建时间失真。
+- 创建选素材仍从源素材账户可用素材出发，避免选到当前源素材账户不可用的历史素材。
+- 每天新增数据先跑 `material_kind_reconcile（素材类型校正）`，把文案、非视频、无法确认的视频素材从创建候选里剔除。
+- 再跑 `product_source_material_rollup（源素材表现汇总）`，只把有 `video_id（视频 ID）` 的视频素材写入创建选材主表。
+
+素材详情覆盖率检查：
+
+```bash
+PYTHONPATH=src python3 scripts/run_material_profile_coverage.py \
+  --config configs/runtime.example.json \
+  --request configs/material-profile-coverage.example.json
+```
+
+素材详情缺口只读回补：
+
+```bash
+PYTHONPATH=src python3 scripts/run_material_profile_backfill_batch.py \
+  --config configs/runtime.openapi-execute.local.example.json \
+  --request configs/material-profile-backfill-batch.disabled.example.json \
+  --enable-readonly
+```
 
 生成创建计划示例：
 
@@ -248,6 +291,17 @@ PYTHONPATH=src python3 scripts/watch_create_live_progress.py --clear --recent-ev
 - 未成熟任务 `enabled=false（停用）`。
 - 每个 job（定时任务）必须写固定 `script.command（脚本命令）`。
 - 定时日报只读执行结果，不参与业务判断。
+
+当前启用链路：
+
+- `00:10` 项目时段到期恢复。
+- `02:00` 昨日有消耗账户素材明细与计费当日 ROI（付费回收）同步。
+- `02:30` 昨日有消耗账户操作日志同步。
+- `04:00` 每日报表同步。
+- `04:30` 素材类型校正。
+- `05:00` 源素材账户自动补材。
+- `05:30` 源素材表现汇总重建。
+- `06:00` 定时任务日报。
 
 常用检查：
 

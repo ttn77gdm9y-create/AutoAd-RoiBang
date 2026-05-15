@@ -1,0 +1,55 @@
+{
+  "delivery_patrol": {
+    "target_date": "2026-05-15",
+    "yesterday_date": "2026-05-14",
+    "product_keyword": "勇者突进",
+    "allowed_target_accounts_path": "configs/control-allowed-accounts.local.json",
+    "account_scope": {
+      "source": "workbench_account_list",
+      "account_remark_equals": "勇者突进-微小-郭靖",
+      "min_spend": 0
+    },
+    "active_account_discovery": {
+      "enabled": true,
+      "source": "workbench_account_list",
+      "min_spend": 0,
+      "workbench": {
+        "enabled": true,
+        "session_file": "data/secrets/oceanengine-workbench-session.local.json",
+        "keyword": "勇者突进-微小",
+        "limit": 100,
+        "max_pages": 20,
+        "stop_when_sorted_cost_reaches_zero": true,
+        "timeout_seconds": 20,
+        "max_retries": 2,
+        "retry_sleep_seconds": 1,
+        "retry_statuses": [429, 500, 502, 503, 504],
+        "response_audit_dir": "data/runs/workbench_account_discovery/delivery-patrol"
+      }
+    },
+    "page_size": 100,
+    "execution": {
+      "status": "execute",
+      "external_api_enabled": true
+    },
+    "openapi_http": {
+      "enabled": true,
+      "token_store": {
+        "enabled": true,
+        "store_file": "data/secrets/oceanengine-tokens.local.json",
+        "user_id": "default",
+        "auto_refresh": true,
+        "refresh_lead_seconds": 900,
+        "credentials_file": "data/secrets/oceanengine-app.local.json"
+      },
+      "timeout_seconds": 20,
+      "max_retries": 2,
+      "retry_api_codes": [40100, 50000, 51010],
+      "max_api_retries": 5,
+      "retry_sleep_seconds": 15,
+      "min_interval_seconds": 0.2,
+      "retry_statuses": [429, 500, 502, 503, 504],
+      "response_audit_dir": "data/runs/openapi_http/delivery-patrol"
+    }
+  }
+}

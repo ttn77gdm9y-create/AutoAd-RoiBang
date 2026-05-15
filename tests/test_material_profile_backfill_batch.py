@@ -209,6 +209,152 @@ def test_profile_sync_preflight_can_lookup_missing_material_ids_from_source_acco
     assert {request["query_params"]["account_id"] for request in requests[1:]} == {"target-a1", "target-a2"}
 
 
+def test_profile_sync_records_and_skips_failed_material_lookup_ids(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+    with sqlite3.connect(db_path) as conn:
+        _insert_metric(conn, advertiser_id="target-a1", material_id="1001", cost=300)
+        _insert_metric(conn, advertiser_id="target-a2", material_id="1002", cost=200)
+
+    calls = []
+
+    def empty_transport(request: dict) -> dict:
+        calls.append(request)
+        return {
+            "code": 0,
+            "data": {"page_info": {"page": 1, "page_size": 100, "total_number": 0, "total_page": 1}, "list": []},
+        }
+
+    result = run_material_profile_backfill_batch_request(
+        {
+            "material_profile_backfill_batch": {
+                "max_batches": 1,
+                "material_profile_sync": {
+                    "kind": "openapi_video_materials",
+                    "enabled": True,
+                    "account_source": "material_daily_metrics",
+                    "lookup_mode": "missing_material_ids",
+                    "lookup_accounts_from": "source_accounts",
+                    "source_accounts": [{"source_advertiser_id": "source-1"}],
+                    "endpoint_sequence": ["video_material_get"],
+                    "date_range": {"start": "2026-02-10", "end": "2026-02-10"},
+                    "limits": {"max_accounts": 1, "max_pages": 1},
+                    "material_id_chunk_size": 100,
+                },
+            }
+        },
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        transport=empty_transport,
+    )
+
+    assert result["batches"][0]["stages"][0]["lookup_failures_recorded"] == 2
+    with sqlite3.connect(db_path) as conn:
+        failures = conn.execute(
+            """
+            SELECT material_id, account_id, endpoint_key, reason, fail_count
+            FROM material_profile_lookup_failures
+            ORDER BY material_id
+            """
+        ).fetchall()
+    assert failures == [
+        ("1001", "source-1", "video_material_get", "not_found", 1),
+        ("1002", "source-1", "video_material_get", "not_found", 1),
+    ]
+
+    preflight = build_material_profile_sync_preflight(
+        {
+            "material_profile_sync": {
+                "kind": "openapi_video_materials",
+                "enabled": False,
+                "account_source": "material_daily_metrics",
+                "lookup_mode": "missing_material_ids",
+                "lookup_accounts_from": "source_accounts",
+                "source_accounts": [{"source_advertiser_id": "source-1"}],
+                "endpoint_sequence": ["video_material_get"],
+                "date_range": {"start": "2026-02-10", "end": "2026-02-10"},
+                "limits": {"max_accounts": 1, "max_pages": 1},
+                "material_id_chunk_size": 100,
+            }
+        },
+        db_path=db_path,
+    )
+
+    assert calls
+    assert preflight["summary"]["planned_request_count"] == 0
+
+
+def test_profile_backfill_batch_falls_back_to_target_accounts_after_source_no_progress(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+    with sqlite3.connect(db_path) as conn:
+        _insert_metric(conn, advertiser_id="target-a1", material_id="1001", cost=300)
+
+    calls: list[tuple[str, str]] = []
+
+    def transport(request: dict) -> dict:
+        advertiser_id = str(request["query_params"].get("advertiser_id") or "")
+        calls.append((str(request["endpoint_key"]), advertiser_id))
+        if advertiser_id == "target-a1":
+            return {
+                "code": 0,
+                "data": {
+                    "page_info": {"page": 1, "page_size": 100, "total_number": 1, "total_page": 1},
+                    "list": [
+                        {
+                            "material_id": 1001,
+                            "id": "video-1001",
+                            "filename": "1001.mp4",
+                            "signature": "sig-1001",
+                        }
+                    ],
+                },
+            }
+        return {
+            "code": 0,
+            "data": {"page_info": {"page": 1, "page_size": 100, "total_number": 0, "total_page": 1}, "list": []},
+        }
+
+    result = run_material_profile_backfill_batch_request(
+        {
+            "material_profile_backfill_batch": {
+                "max_batches": 1,
+                "material_profile_sync": {
+                    "kind": "openapi_video_materials",
+                    "enabled": True,
+                    "account_source": "material_daily_metrics",
+                    "lookup_mode": "missing_material_ids",
+                    "lookup_accounts_from": "source_accounts",
+                    "source_accounts": [{"source_advertiser_id": "source-1"}],
+                    "endpoint_sequence": ["video_material_get"],
+                    "date_range": {"start": "2026-02-10", "end": "2026-02-10"},
+                    "limits": {"max_accounts": 1, "max_pages": 1},
+                },
+                "fallback_material_profile_syncs": [
+                    {
+                        "kind": "openapi_video_materials",
+                        "enabled": True,
+                        "account_source": "material_daily_metrics",
+                        "lookup_mode": "missing_material_ids",
+                        "lookup_accounts_from": "material_daily_metrics",
+                        "endpoint_sequence": ["video_material_get"],
+                        "date_range": {"start": "2026-02-10", "end": "2026-02-10"},
+                        "limits": {"max_accounts": 1, "max_pages": 1},
+                    }
+                ],
+            }
+        },
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        transport=transport,
+    )
+
+    assert calls == [("video_material_get", "source-1"), ("video_material_get", "target-a1")]
+    assert result["summary"]["profiles_imported"] == 1
+    assert result["summary"]["missing_material_count_after"] == 0
+    assert [attempt["lookup_path"] for attempt in result["batches"][0]["attempts"]] == ["primary", "fallback_1"]
+
+
 def test_profile_sync_tiered_lookup_imports_attributes_without_marking_profiles_complete(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     bootstrap_database(db_path)
