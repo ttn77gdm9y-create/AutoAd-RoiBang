@@ -553,7 +553,8 @@ def test_create_mode_test_new_uses_effective_create_date_from_rollup(tmp_path: P
     _seed_source_materials(db_path, count=10)
     with sqlite3.connect(db_path) as conn:
         for index in range(1, 11):
-            first_seen_date = f"2026-05-{index:02d}"
+            window_seen_date = "2026-05-13" if index <= 7 else f"2026-05-{index:02d}"
+            global_seen_date = f"2026-02-{index:02d}" if index <= 7 else f"2026-05-{index:02d}"
             conn.execute(
                 "UPDATE product_source_materials SET create_time = '2026-04-25 12:00:00', cost_lookback = 1000, score = 1000 WHERE material_id = ?",
                 (f"m-{index:03d}",),
@@ -568,7 +569,26 @@ def test_create_mode_test_new_uses_effective_create_date_from_rollup(tmp_path: P
                     stat_cost = 1000
                 WHERE material_id = ?
                 """,
-                (first_seen_date, first_seen_date, f"m-{index:03d}"),
+                (window_seen_date, window_seen_date, f"m-{index:03d}"),
+            )
+            conn.execute(
+                """
+                INSERT INTO product_source_material_metric_rollups (
+                  product, source_advertiser_id, organization_id, window_key, window_days,
+                  period_start, period_end, material_id, material_type, source_video_id,
+                  name, review_status, stat_cost, source, synced_at,
+                  first_seen_metric_date, effective_create_date, effective_create_date_source
+                ) VALUES ('勇者突进', '1856647522964490', '1851650746645060', 'all_history', 0,
+                  '2026-02-10', '2026-05-13', ?, 'video', ?, ?, 'APPROVED', 1000, 'test', 'now',
+                  ?, ?, 'material_daily_metrics')
+                """,
+                (
+                    f"m-{index:03d}",
+                    f"v28033gi0000d7m72bvog65s5f9la{index:03d}",
+                    f"素材{index:03d}",
+                    global_seen_date,
+                    global_seen_date,
+                ),
             )
     mode_path = tmp_path / "mode.json"
     mode_path.write_text(
@@ -624,6 +644,7 @@ def test_create_mode_test_new_uses_effective_create_date_from_rollup(tmp_path: P
     selected_ids = {material["material_id"] for material in unit["materials"]}
     assert selected_ids <= {"m-008", "m-009", "m-010"}
     assert all(material["effective_create_date"].startswith("2026-05-") for material in unit["materials"])
+    assert "m-001" not in selected_ids
 
 
 def test_run_create_mode_cli_prints_json_summary(tmp_path: Path, capsys):

@@ -14,7 +14,6 @@ from roibang_v2.workflows.create_material_bind_ledger import (
     record_create_material_bind_from_payload,
 )
 from roibang_v2.workflows.create_provider_id_ledger import (
-    archive_create_provider_ids,
     record_create_provider_id,
     resolve_provider_payload_drafts,
 )
@@ -511,13 +510,17 @@ def _archive_round_project_unit_ids(
     stage: str,
 ) -> dict[str, Any]:
     summary = _summary(create_execute_artifact)
-    archive_result = archive_create_provider_ids(
-        db_path=db_path,
-        plan_id=str(summary.get("plan_id") or ""),
-        request_id=str(summary.get("request_id") or ""),
-        entity_types=("project", "promotion"),
-    )
-    return {"stage": stage, **archive_result}
+    return {
+        "stage": stage,
+        "status": "plan_scoped_no_archive",
+        "archived_count": 0,
+        "plan_id": str(summary.get("plan_id") or ""),
+        "request_id": str(summary.get("request_id") or ""),
+        "entity_types": ["project", "promotion"],
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "actions": [],
+    }
 
 
 def _post_run_retry_transient_create_units(

@@ -295,8 +295,18 @@ def _candidate_rows(*, db_path: str | Path, request: dict[str, Any], policy: dic
               psm.create_time,
               psm.first_seen_at,
               COALESCE(MAX(CASE WHEN psmr.window_days = ? THEN psmr.first_seen_metric_date END), MAX(psmr.first_seen_metric_date), '') AS first_seen_metric_date,
-              COALESCE(MAX(CASE WHEN psmr.window_days = ? THEN psmr.effective_create_date END), MAX(psmr.effective_create_date), psm.create_time, psm.first_seen_at, '') AS effective_create_date,
-              COALESCE(MAX(CASE WHEN psmr.window_days = ? THEN psmr.effective_create_date_source END), MAX(psmr.effective_create_date_source), '') AS effective_create_date_source
+              COALESCE(
+                MAX(CASE WHEN (psmr.window_key = 'all_history' OR psmr.window_days = 0) AND psmr.effective_create_date != '' THEN psmr.effective_create_date END),
+                MIN(CASE WHEN psmr.effective_create_date != '' THEN psmr.effective_create_date END),
+                psm.create_time,
+                psm.first_seen_at,
+                ''
+              ) AS effective_create_date,
+              COALESCE(
+                MAX(CASE WHEN (psmr.window_key = 'all_history' OR psmr.window_days = 0) AND psmr.effective_create_date_source != '' THEN psmr.effective_create_date_source END),
+                MAX(CASE WHEN psmr.effective_create_date_source != '' THEN psmr.effective_create_date_source END),
+                ''
+              ) AS effective_create_date_source
             FROM product_source_materials psm
             LEFT JOIN product_source_material_metric_rollups psmr
               ON psmr.product = psm.product
@@ -311,8 +321,6 @@ def _candidate_rows(*, db_path: str | Path, request: dict[str, Any], policy: dic
               psm.review_status, psm.source, psm.cost_lookback, psm.score, psm.create_time, psm.first_seen_at
             """,
             (
-                lookback_days,
-                lookback_days,
                 lookback_days,
                 lookback_days,
                 lookback_days,

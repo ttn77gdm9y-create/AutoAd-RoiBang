@@ -1280,7 +1280,7 @@ def test_create_live_execute_once_retries_transient_unit_failure_after_batch(tmp
             WHERE entity_type = 'promotion' AND local_key = 'target-2-p001-u01'
             """
         ).fetchone()
-    assert row == ("promotion-target-2-2", "archived")
+    assert row == ("promotion-target-2-2", "active")
 
 
 def test_create_live_execute_once_retries_create_project_after_lookup_confirms_missing(tmp_path: Path):
@@ -1563,6 +1563,7 @@ def test_create_live_execute_once_resumes_existing_project_in_same_round(tmp_pat
         "test_transport_call_count": 0,
     }
     assert result["ledger_archive"][0]["stage"] == "after_run"
+    assert result["ledger_archive"][0]["status"] == "plan_scoped_no_archive"
 
     with sqlite3.connect(db_path) as conn:
         rows = conn.execute(
@@ -1573,11 +1574,59 @@ def test_create_live_execute_once_resumes_existing_project_in_same_round(tmp_pat
             """
         ).fetchall()
     assert rows == [
-        ("project", "target-1-p001", "project-existing", "archived"),
-        ("promotion", "target-1-p001-u01", "promotion-001", "archived"),
+        ("project", "target-1-p001", "project-existing", "active"),
+        ("promotion", "target-1-p001-u01", "promotion-001", "active"),
         ("target_video", "target_video:target-1:video-1", "target-video-001", "active"),
         ("target_video_cover", "target_video_cover:target-1:video-1", "target-cover-001", "active"),
     ]
+
+
+def test_create_live_execute_once_same_plan_rerun_skips_recorded_project_and_unit(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+    calls: list[dict] = []
+
+    def fake_transport(call: dict) -> dict:
+        calls.append(call)
+        if call["operation"] == "create_project":
+            return {"code": 0, "data": {"project_id": "project-001"}}
+        if call["operation"] == "bind_material":
+            return {"code": 0, "data": {"task_id": "bind-001"}}
+        if call["operation"] == "lookup_target_material":
+            return {"code": 0, "data": {"target_video_id": "target-video-001", "target_video_cover_id": "target-cover-001"}}
+        if call["operation"] == "create_unit":
+            return {"code": 0, "data": {"promotion_id": "promotion-001"}}
+        raise AssertionError(call["operation"])
+
+    request = {
+        "create_live_execute_once": {
+            "create_execute_artifact": _execute_artifact(),
+            "policy": _policy(),
+            "runtime": {"execution_enabled": True, "external_api_enabled": True},
+        }
+    }
+    first = run_create_live_execute_once_request(
+        request,
+        runs_dir=tmp_path / "runs",
+        db_path=db_path,
+        transport=fake_transport,
+    )
+    second = run_create_live_execute_once_request(
+        request,
+        runs_dir=tmp_path / "runs",
+        db_path=db_path,
+        transport=fake_transport,
+    )
+
+    assert first["ok"] is True
+    assert second["ok"] is True
+    assert [call["operation"] for call in calls] == [
+        "create_project",
+        "lookup_target_material",
+        "create_unit",
+    ]
+    assert second["idempotency"]["skipped_existing_provider_id_count"] == 4
+    assert second["idempotency"]["skipped_existing_material_bind_count"] == 1
 
 
 def test_create_live_execute_once_ignores_mock_provider_ids_during_live_run(tmp_path: Path):
@@ -1838,9 +1887,9 @@ def test_create_live_execute_once_does_not_reuse_project_or_unit_from_different_
         ).fetchall()
     assert rows == [
         ("project", "target-1-p001", "project-from-old-plan", "old-plan", "active"),
-        ("project", "target-1-p001", "project-new-plan", "plan-1", "archived"),
+        ("project", "target-1-p001", "project-new-plan", "plan-1", "active"),
         ("promotion", "target-1-p001-u01", "promotion-from-old-plan", "old-plan", "active"),
-        ("promotion", "target-1-p001-u01", "promotion-new-plan", "plan-1", "archived"),
+        ("promotion", "target-1-p001-u01", "promotion-new-plan", "plan-1", "active"),
     ]
 
 
