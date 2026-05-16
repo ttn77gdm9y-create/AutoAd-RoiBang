@@ -243,6 +243,21 @@ def _execute_artifact() -> dict:
     }
 
 
+def _fixed_cover_execute_artifact() -> dict:
+    artifact = json.loads(json.dumps(_execute_artifact(), ensure_ascii=False))
+    create_unit = next(
+        draft for draft in artifact["resolved_provider_payload_drafts"] if draft["operation"] == "create_unit"
+    )
+    material = create_unit["payload"]["promotion_materials"]["video_material_list"][0]
+    material["video_cover_id"] = "fixed-cover-001"
+    artifact["provider_id_ledger_requirements"]["required_before_create_unit"] = [
+        row
+        for row in artifact["provider_id_ledger_requirements"]["required_before_create_unit"]
+        if row.get("entity_type") != "target_video_cover"
+    ]
+    return artifact
+
+
 def _policy() -> dict:
     return {
         "create_plan": {
@@ -518,6 +533,47 @@ def test_create_live_execute_once_direct_mode_runs_fixed_sequence_with_transport
     assert result["execution_enabled"] is True
     assert result["live_execute_enabled"] is True
     assert result["external_api_calls"] == 3
+    assert [call["operation"] for call in calls] == [
+        "create_project",
+        "lookup_target_material",
+        "create_unit",
+    ]
+    assert result["ordered_steps"][1]["status"] == "skipped_existing_target_material"
+
+
+def test_create_live_execute_once_skips_bind_when_fixed_cover_lookup_finds_target_video(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+    calls: list[dict] = []
+
+    def fake_transport(call: dict) -> dict:
+        calls.append(call)
+        if call["operation"] == "create_project":
+            return {"code": 0, "data": {"project_id": "project-001"}}
+        if call["operation"] == "lookup_target_material":
+            return {"code": 0, "data": {"list": [{"material_id": "material-1", "id": "target-video-001"}]}}
+        if call["operation"] == "bind_material":
+            raise AssertionError("fixed-cover lookup already found target video; bind_material should be skipped")
+        if call["operation"] == "create_unit":
+            assert call["payload"]["promotion_materials"]["video_material_list"][0]["video_id"] == "target-video-001"
+            assert call["payload"]["promotion_materials"]["video_material_list"][0]["video_cover_id"] == "fixed-cover-001"
+            return {"code": 0, "data": {"promotion_id": "promotion-001"}}
+        raise AssertionError(call["operation"])
+
+    result = run_create_live_execute_once_request(
+        {
+            "create_live_execute_once": {
+                "create_execute_artifact": _fixed_cover_execute_artifact(),
+                "policy": _policy(),
+                "runtime": {"execution_enabled": True, "external_api_enabled": True},
+            }
+        },
+        runs_dir=tmp_path / "runs",
+        db_path=db_path,
+        transport=fake_transport,
+    )
+
+    assert result["ok"] is True
     assert [call["operation"] for call in calls] == [
         "create_project",
         "lookup_target_material",

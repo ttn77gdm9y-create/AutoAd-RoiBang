@@ -44,6 +44,15 @@
         }
       },
       {
+        "job_id": "roibang-source-material-preload-to-guojing-spent",
+        "display_name": "05:20 源素材预推送到昨日有消耗郭靖账户",
+        "data_check": {
+          "type": "source_material_preload",
+          "source_advertiser_id": "1856647522964490",
+          "product": "勇者突进"
+        }
+      },
+      {
         "job_id": "roibang-source-material-rollup-rebuild",
         "display_name": "05:30 源素材表现汇总重建",
         "data_check": {

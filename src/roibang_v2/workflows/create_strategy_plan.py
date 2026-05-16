@@ -179,6 +179,8 @@ def _candidate_effective_create_datetime(row: dict[str, Any]) -> datetime | None
 
 def _filter_candidate_rows_for_request(rows: list[dict[str, Any]], *, request: dict[str, Any], policy: dict[str, Any]) -> list[dict[str, Any]]:
     filtered = _filter_candidate_rows(rows, policy=policy)
+    requirements = _material_requirements(request)
+    material_type = str(requirements.get("material_type") or "video").strip()
     min_stat_cost = _candidate_min_stat_cost(request, _candidate_filters(policy))
     max_stat_cost = _candidate_max_stat_cost(request)
     min_convert_cnt = _candidate_min_convert_cnt(request)
@@ -188,7 +190,12 @@ def _filter_candidate_rows_for_request(rows: list[dict[str, Any]], *, request: d
     create_before = (target_date - timedelta(days=min_create_age_days)).date()
     first_seen_days = _candidate_first_seen_days(request)
     first_seen_since = (target_date - timedelta(days=max(first_seen_days - 1, 0))).date()
-    result = [row for row in filtered if float(row.get("stat_cost") or 0) >= min_stat_cost]
+    result = [
+        row
+        for row in filtered
+        if (not material_type or str(row.get("material_type") or material_type).strip() == material_type)
+        and float(row.get("stat_cost") or 0) >= min_stat_cost
+    ]
     if max_stat_cost is not None:
         result = [row for row in result if float(row.get("stat_cost") or 0) <= max_stat_cost]
     if min_convert_cnt is not None:
@@ -496,6 +503,7 @@ def _next_candidate(
     used_request_material_ids: set[str],
     used_unit_material_ids: set[str],
     material_accounts_used: dict[str, set[str]],
+    material_account_use_counts: dict[str, dict[str, int]],
     existing_by_account: dict[str, set[str]],
     dedupe_scope: str,
     max_accounts_per_material: int,
@@ -503,7 +511,9 @@ def _next_candidate(
 ) -> dict[str, Any] | None:
     existing_material_ids = existing_by_account.get(advertiser_id, set())
     for enforce_overlap in ([True, False] if allow_reuse_on_shortage else [True]):
-        for row in candidates:
+        best_reuse_row: dict[str, Any] | None = None
+        best_reuse_key: tuple[int, int] | None = None
+        for order, row in enumerate(candidates):
             material_id = str(row.get("material_id") or "")
             if material_id in used_unit_material_ids:
                 continue
@@ -517,7 +527,16 @@ def _next_candidate(
                     continue
                 if max_accounts_per_material > 0 and len(accounts) >= max_accounts_per_material:
                     continue
+            if not enforce_overlap:
+                account_use_count = int(material_account_use_counts.get(material_id, {}).get(advertiser_id, 0))
+                reuse_key = (account_use_count, order)
+                if best_reuse_key is None or reuse_key < best_reuse_key:
+                    best_reuse_key = reuse_key
+                    best_reuse_row = row
+                continue
             return row
+        if best_reuse_row is not None:
+            return best_reuse_row
     return None
 
 
@@ -553,6 +572,7 @@ def _build_projects(
     dedupe_scope = str(requirements.get("dedupe_scope") or "request")
     used_request_material_ids: set[str] = set()
     material_accounts_used: dict[str, set[str]] = {}
+    material_account_use_counts: dict[str, dict[str, int]] = {}
     max_accounts_per_material = _max_accounts_per_material(request, dedupe_scope)
     allow_reuse_on_shortage = _allow_reuse_on_shortage(request)
     projects: list[dict[str, Any]] = []
@@ -584,6 +604,7 @@ def _build_projects(
                         used_request_material_ids=used_request_material_ids,
                         used_unit_material_ids=used_unit_material_ids,
                         material_accounts_used=material_accounts_used,
+                        material_account_use_counts=material_account_use_counts,
                         existing_by_account=existing_by_account,
                         dedupe_scope=dedupe_scope,
                         max_accounts_per_material=max_accounts_per_material,
@@ -596,6 +617,10 @@ def _build_projects(
                         used_request_material_ids.add(material_id)
                     if dedupe_scope == "max_account_overlap":
                         material_accounts_used.setdefault(material_id, set()).add(advertiser_id)
+                    material_account_use_counts.setdefault(material_id, {})
+                    material_account_use_counts[material_id][advertiser_id] = (
+                        int(material_account_use_counts[material_id].get(advertiser_id, 0)) + 1
+                    )
                     used_unit_material_ids.add(material_id)
                     materials.append(_material_entry(row))
                 units.append(

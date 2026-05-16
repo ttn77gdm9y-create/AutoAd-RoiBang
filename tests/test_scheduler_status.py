@@ -41,6 +41,20 @@ def _registry() -> dict:
                 },
             },
             {
+                "id": "roibang-source-material-preload-to-guojing-spent",
+                "name": "源素材预推送到昨日有消耗郭靖账户",
+                "enabled": True,
+                "schedule": {"type": "cron", "expr": "20 5 * * *", "tz": "Asia/Shanghai"},
+                "script": {"command": ["python3", "scripts/run_source_material_preload_to_accounts.py"], "mode": "foreground"},
+                "policy": {},
+                "result_contract": {
+                    "workflow": "source_material_preload_to_accounts",
+                    "artifact_dir": "data/runs/source_material_preload_to_accounts",
+                    "must_include": ["ok", "workflow", "execution_enabled", "external_api_calls", "summary"],
+                    "must_equal": {"execution_enabled": True},
+                },
+            },
+            {
                 "id": "roibang-operation-log-yesterday-sync",
                 "name": "昨日有消耗账户操作日志同步",
                 "enabled": True,
@@ -94,6 +108,15 @@ def _request() -> dict:
                     },
                 },
                 {
+                    "job_id": "roibang-source-material-preload-to-guojing-spent",
+                    "display_name": "05:20 源素材预推送到昨日有消耗郭靖账户",
+                    "data_check": {
+                        "type": "source_material_preload",
+                        "source_advertiser_id": "src",
+                        "product": "勇者突进",
+                    },
+                },
+                {
                     "job_id": "roibang-operation-log-yesterday-sync",
                     "display_name": "02:30 昨日有消耗账户操作日志同步",
                     "data_check": {"type": "operation_logs"},
@@ -134,6 +157,17 @@ def test_scheduler_status_reports_data_freshness_and_contracts(tmp_path):
         )
         conn.execute(
             """
+            INSERT INTO source_material_preload_ledger (
+              product, source_advertiser_id, target_advertiser_id, source_material_id,
+              source_video_id, status, batch_key, response_payload_json, first_seen_at, last_seen_at
+            ) VALUES (
+              '勇者突进', 'src', 'target-1', 'm1',
+              'v1', 'completed', 'batch-1', '{}', 'now', 'now'
+            )
+            """
+        )
+        conn.execute(
+            """
             INSERT INTO operation_logs
               (operation_id, occurred_at, advertiser_id, entity_type, entity_id, action, source, synced_at)
             VALUES ('op1', '2026-05-11 12:00:00', '1', 'project', 'p1', '更新项目', 'test', 'now')
@@ -146,6 +180,10 @@ def test_scheduler_status_reports_data_freshness_and_contracts(tmp_path):
     _write_artifact(
         tmp_path / "data/runs/source_material_account_auto_push/20260512T020000Z.json",
         {"ok": True, "workflow": "source_material_account_auto_push", "execution_enabled": True, "external_api_calls": 1, "summary": {}},
+    )
+    _write_artifact(
+        tmp_path / "data/runs/source_material_preload_to_accounts/20260512T022000Z.json",
+        {"ok": True, "workflow": "source_material_preload_to_accounts", "execution_enabled": True, "external_api_calls": 1, "summary": {}},
     )
     _write_artifact(
         tmp_path / "data/runs/control_operation_log_history_sync/20260512T023000Z.json",
@@ -174,10 +212,12 @@ def test_scheduler_status_reports_data_freshness_and_contracts(tmp_path):
 
     assert result["ok"] is True
     assert result["summary"]["expected_data_date"] == "2026-05-11"
-    assert [job["status"] for job in result["jobs"]] == ["ok", "ok", "ok", "ok"]
+    assert [job["status"] for job in result["jobs"]] == ["ok", "ok", "ok", "ok", "ok"]
     assert "RoiBang-V2 定时任务日报 2026-05-12" in result["message"]
     assert "02:30 昨日有消耗账户操作日志同步：正常" in result["message"]
     assert "05:00 源素材账户自动补材：正常" in result["message"]
+    assert "05:20 源素材预推送到昨日有消耗郭靖账户：正常" in result["message"]
+    assert "已记录预推送 1 条，目标账户 1 个" in result["message"]
     assert "00:10 项目时段到期恢复：正常" in result["message"]
     assert "待恢复 0，已恢复 0，失败待处理 0" in result["message"]
 

@@ -1430,6 +1430,37 @@ def _target_material_pair_exists(
     )
 
 
+def _target_material_records_exist(
+    *,
+    db_path: str | Path,
+    create_execute_artifact: dict[str, Any],
+    target_advertiser_id: str,
+    source_video_id: str,
+) -> bool:
+    keys = _target_material_local_keys(target_advertiser_id, source_video_id)
+    record_pair = [
+        row
+        for row in _target_material_records(create_execute_artifact)
+        if str(row.get("local_key") or "") == keys.get(str(row.get("entity_type") or ""), "")
+    ]
+    if not record_pair:
+        return _target_material_pair_exists(
+            db_path=db_path,
+            target_advertiser_id=target_advertiser_id,
+            source_video_id=source_video_id,
+        )
+    return all(
+        bool(
+            _existing_provider_id(
+                db_path=db_path,
+                entity_type=str(row.get("entity_type") or ""),
+                local_key=str(row.get("local_key") or ""),
+            )
+        )
+        for row in record_pair
+    )
+
+
 def _missing_provider_id_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [row for row in records if str(row.get("status") or "") == "missing_provider_id"]
 
@@ -1495,8 +1526,9 @@ def _precheck_existing_target_materials_for_bind(
             source_video_id
             for source_video_id in source_video_ids
             if all(
-                _target_material_pair_exists(
+                _target_material_records_exist(
                     db_path=db_path,
+                    create_execute_artifact=create_execute_artifact,
                     target_advertiser_id=target_advertiser_id,
                     source_video_id=source_video_id,
                 )
@@ -1580,8 +1612,9 @@ def _precheck_existing_target_materials_for_bind(
             source_video_id
             for source_video_id in missing_source_video_ids
             if all(
-                _target_material_pair_exists(
+                _target_material_records_exist(
                     db_path=db_path,
+                    create_execute_artifact=create_execute_artifact,
                     target_advertiser_id=target_advertiser_id,
                     source_video_id=source_video_id,
                 )

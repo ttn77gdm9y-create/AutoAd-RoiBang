@@ -28,6 +28,20 @@ mode request（创建模式请求）或 strategy.json（策略配置）
 - `configs/create-modes/*.example.json`
 - `configs/create-templates/wx-mini-game.json`
 
+标准创建口令，例如“185xxx、185xxx 跑每付通投历史放量”，必须直接使用 `--mode` + `--accounts` 参数入口，不手写新的 `request（请求配置）` 文件：
+
+```bash
+PYTHONPATH=src python3 scripts/run_create_mode.py \
+  --config configs/runtime.example.json \
+  --mode "每付通投历史放量" \
+  --accounts "185xxx,185xxx" \
+  --target-date 2026-05-15 \
+  --policy policies/create-policy.example.json \
+  --template-catalog configs/create-templates/wx-mini-game.json
+```
+
+`configs/create-mode-requests（创建模式请求目录）` 只保留给示例、批量复现、或用户明确要求落文件的场景；标准创建主路径不再临时新增 `data/requests/create-mode/*.local.json`。
+
 命令：
 
 ```bash

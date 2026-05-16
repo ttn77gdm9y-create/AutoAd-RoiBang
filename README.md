@@ -268,8 +268,33 @@ PYTHONPATH=src python3 scripts/watch_create_live_progress.py --clear --recent-ev
 - `scripts/run_material_history_backfill_overnight.sh`：素材历史数据回补。
 - `scripts/run_control_operation_log_history_sync.py`：操作日志同步。
 - `scripts/run_source_material_account_auto_push.py`：源素材账户自动补材。
+- `scripts/run_source_material_preload_to_accounts.py`：把源素材账户里的视频素材预推送到目标账户，减少创建时等待素材推送的时间。
 
 源素材账户自动补材只处理视频素材，不处理文案素材；脚本会输出推送数量、失败样例和外部接口调用数。
+
+源素材预推送分两种固定用法：
+
+- 每日定时：源素材账户自动补材完成后，把新增源素材推送到昨天有消耗的 `account_remark（账户备注）=勇者突进-微小-郭靖` 账户。脚本会先查本地 `source_material_preload_ledger（源素材预推送账本）`、`account_materials（账户素材表）` 和 `material_bindings（素材绑定表）`，已经存在的素材不会重复推送。
+- 新增账户手动：新增目标账户后，把源素材账户全部视频素材推送到指定新增账户。
+
+新增账户手动预推送命令：
+
+```bash
+PYTHONPATH=src python3 scripts/run_source_material_preload_to_accounts.py \
+  --config configs/runtime.openapi-execute.local.example.json \
+  --request configs/source-material-preload-to-accounts.daily-guojing-yesterday-spent.example.json \
+  --accounts "185xxxxxxxxxxxxx,185yyyyyyyyyyyyy" \
+  --target-date today \
+  --full-source \
+  --execute \
+  --yes
+```
+
+参数说明：
+
+- `--accounts`：新增目标账户 ID，多个账户用英文逗号分隔。
+- `--full-source`：使用源素材账户全部视频素材；已推送过的素材会被账本跳过。
+- `--execute --yes`：真实执行素材推送；不加这两个参数时只生成本地 JSON 结果，不调用外部接口。
 
 ## 投放账户巡检
 
@@ -329,6 +354,7 @@ PYTHONPATH=src python3 scripts/run_delivery_patrol_suggestions.py \
 - `04:00` 每日报表同步。
 - `04:30` 素材类型校正。
 - `05:00` 源素材账户自动补材。
+- `05:20` 新增源素材预推送到昨天有消耗的郭靖账户。
 - `05:30` 源素材表现汇总重建。
 - `06:00` 定时任务日报。
 - `08:30-23:30` 每小时投放账户巡检并推送飞书。

@@ -520,3 +520,23 @@ CREATE INDEX IF NOT EXISTS idx_create_material_bind_ledger_plan
 
 CREATE INDEX IF NOT EXISTS idx_create_material_bind_ledger_source
   ON create_material_bind_ledger (source_advertiser_id, status);
+
+CREATE TABLE IF NOT EXISTS source_material_preload_ledger (
+  product TEXT NOT NULL,
+  source_advertiser_id TEXT NOT NULL,
+  target_advertiser_id TEXT NOT NULL,
+  source_material_id TEXT NOT NULL,
+  source_video_id TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL,
+  batch_key TEXT NOT NULL DEFAULT '',
+  response_payload_json TEXT NOT NULL DEFAULT '{}',
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  PRIMARY KEY (product, source_advertiser_id, target_advertiser_id, source_material_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_source_material_preload_ledger_target
+  ON source_material_preload_ledger (target_advertiser_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_source_material_preload_ledger_source
+  ON source_material_preload_ledger (product, source_advertiser_id, source_material_id, status);

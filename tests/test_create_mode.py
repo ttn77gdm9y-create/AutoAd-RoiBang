@@ -124,6 +124,36 @@ def test_create_mode_builds_scale_create_request_from_mode_config():
     assert request["initial_status"] == {"project_operation": "ENABLE", "unit_operation": "ENABLE"}
 
 
+def test_create_mode_plan_id_is_unique_per_batch_generated_at():
+    mode_config = json.loads(Path("configs/create-modes/wx_pay_general_test_new.example.json").read_text(encoding="utf-8"))
+    template_catalog = json.loads(Path("configs/create-templates/wx-mini-game.json").read_text(encoding="utf-8"))
+    base_request = {
+        "mode_key": "wx_pay_general_test_new",
+        "target_accounts": ["acc-1", "acc-2"],
+        "target_date": "2026-05-15",
+        "owner": "郭靖",
+    }
+
+    first = build_create_mode_request(
+        {**base_request, "batch_generated_at": "2026-05-15T10:00:00+00:00"},
+        mode_config=mode_config,
+        template_catalog=template_catalog,
+    )
+    second = build_create_mode_request(
+        {**base_request, "batch_generated_at": "2026-05-15T10:01:00+00:00"},
+        mode_config=mode_config,
+        template_catalog=template_catalog,
+    )
+
+    assert first["batch_code"].startswith("B")
+    assert len(first["batch_code"]) == 9
+    assert first["batch_code"] != second["batch_code"]
+    assert first["request_id"].endswith(first["batch_code"])
+    assert second["request_id"].endswith(second["batch_code"])
+    assert first["plan_id"] == f"create-plan-{first['request_id']}"
+    assert first["plan_id"] != second["plan_id"]
+
+
 def test_bundled_create_modes_cover_7r_and_pay_scale_and_test_new():
     template_catalog = json.loads(Path("configs/create-templates/wx-mini-game.json").read_text(encoding="utf-8"))
     expected = {
@@ -334,6 +364,76 @@ def test_create_mode_allows_reuse_without_duplicate_material_inside_one_unit(tmp
     assert template_catalog["templates"][mode_config["template_key"]]
 
 
+def test_create_mode_reuse_shortage_rotates_materials_in_same_account(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_source_materials(db_path, count=65)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE product_source_materials SET cost_lookback = 2000, score = 2000")
+        conn.execute("UPDATE product_source_material_metric_rollups SET stat_cost = 2000")
+    mode_path = tmp_path / "mode.json"
+    mode_path.write_text(
+        json.dumps(
+            {
+                "mode_key": "reuse_shortage_rotation",
+                "display_name": "复用短缺轮转",
+                "product": "勇者突进",
+                "platform": "WECHAT_GAME",
+                "template_key": "wx_pay_general",
+                "template_name_suffix": "测新",
+                "source_advertiser_id": "1856647522964490",
+                "organization_id": "1851650746645060",
+                "defaults": {"daily_budget": 10000, "cpa_bid": 111, "project_count": 5, "units_per_project": 1},
+                "material_requirements": {
+                    "material_type": "video",
+                    "materials_per_unit": 6,
+                    "dedupe_scope": "max_account_overlap",
+                    "max_cross_account_overlap_ratio": 0.3,
+                    "allow_reuse_across_accounts": True,
+                    "on_insufficient": "allow_reuse",
+                },
+                "material_selection": {
+                    "lookback_days": 60,
+                    "selection_type": "high_spend",
+                    "sort_by": "stat_cost_desc",
+                    "random_shuffle": True,
+                },
+                "initial_status": {"project_operation": "ENABLE", "unit_operation": "ENABLE"},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_create_mode_request(
+        {
+            "create_mode": {
+                "mode_config_path": str(mode_path),
+                "target_accounts": ["acc-1", "acc-2", "acc-3"],
+                "target_date": "2026-05-15",
+                "owner": "郭靖",
+                "batch_generated_at": "2026-05-15T10:00:00+00:00",
+            }
+        },
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        policy={"create_strategy_plan": _policy()},
+        template_catalog_path=Path("configs/create-templates/wx-mini-game.json"),
+    )
+
+    assert result["ok"] is True
+    third_account_projects = [
+        project
+        for project in result["create_strategy_plan"]["strategy"]["projects"]
+        if project["advertiser_id"] == "acc-3"
+    ]
+    unit_material_sets = [
+        tuple(material["material_id"] for material in project["units"][0]["materials"])
+        for project in third_account_projects
+    ]
+    assert len(unit_material_sets) == 5
+    assert len(set(unit_material_sets)) > 2
+
+
 def test_create_mode_excludes_fixture_source_and_fake_video_ids(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     _seed_source_materials(db_path, count=12)
@@ -342,6 +442,7 @@ def test_create_mode_excludes_fixture_source_and_fake_video_ids(tmp_path: Path):
             "UPDATE product_source_materials SET source = 'data/fixtures/product-source-materials.sample.json' WHERE material_id = 'm-001'"
         )
         conn.execute("UPDATE product_source_materials SET video_id = 'v001' WHERE material_id = 'm-002'")
+        conn.execute("UPDATE product_source_materials SET material_type = 'title' WHERE material_id = 'm-003'")
 
     result = run_create_mode_request(
         {
@@ -363,6 +464,7 @@ def test_create_mode_excludes_fixture_source_and_fake_video_ids(tmp_path: Path):
     material_ids = {material["material_id"] for material in unit["materials"]}
     assert "m-001" not in material_ids
     assert "m-002" not in material_ids
+    assert "m-003" not in material_ids
     assert all(material["source_video_id"] != "v001" for material in unit["materials"])
 
 

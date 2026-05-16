@@ -140,6 +140,33 @@ def _source_material_account_check(conn: sqlite3.Connection, check: dict[str, An
     }
 
 
+def _source_material_preload_check(conn: sqlite3.Connection, check: dict[str, Any]) -> dict[str, Any]:
+    product = str(check.get("product") or "勇者突进")
+    source_advertiser_id = str(check.get("source_advertiser_id") or "")
+    row = conn.execute(
+        """
+        SELECT COUNT(*), COUNT(DISTINCT target_advertiser_id), MAX(last_seen_at)
+        FROM source_material_preload_ledger
+        WHERE product = ?
+          AND source_advertiser_id = ?
+          AND status = 'completed'
+        """,
+        (product, source_advertiser_id),
+    ).fetchone()
+    preload_count = int(row[0] or 0) if row else 0
+    target_account_count = int(row[1] or 0) if row else 0
+    latest_seen_at = str(row[2] or "") if row else ""
+    return {
+        "type": "source_material_preload",
+        "status": "ok",
+        "product": product,
+        "source_advertiser_id": source_advertiser_id,
+        "preload_count": preload_count,
+        "target_account_count": target_account_count,
+        "latest_seen_at": latest_seen_at,
+    }
+
+
 def _material_kind_reconcile_check(conn: sqlite3.Connection, expected_date: str) -> dict[str, Any]:
     max_date = str(_scalar(conn, "SELECT MAX(metric_date) FROM material_daily_metrics") or "")
     rows = conn.execute(
@@ -293,6 +320,8 @@ def _data_check(
         return _daily_report_check(conn, expected_date)
     if check_type == "source_material_account":
         return _source_material_account_check(conn, check)
+    if check_type == "source_material_preload":
+        return _source_material_preload_check(conn, check)
     if check_type == "material_kind_reconcile":
         return _material_kind_reconcile_check(conn, expected_date)
     if check_type == "source_material_rollup":
@@ -366,6 +395,12 @@ def _format_data_line(data_check: dict[str, Any]) -> str:
             f"汇总到 {data_check.get('latest_date') or '无'}，"
             f"视频素材 {data_check.get('row_count', 0)} 个，"
             f"全历史消耗 {data_check.get('stat_cost', 0)}"
+        )
+    if check_type == "source_material_preload":
+        return (
+            f"已记录预推送 {data_check.get('preload_count', 0)} 条，"
+            f"目标账户 {data_check.get('target_account_count', 0)} 个，"
+            f"最近更新 {data_check.get('latest_seen_at') or '无'}"
         )
     if check_type == "material_kind_reconcile":
         by_kind = data_check.get("by_kind") if isinstance(data_check.get("by_kind"), dict) else {}

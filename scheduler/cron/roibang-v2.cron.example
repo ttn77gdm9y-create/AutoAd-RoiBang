@@ -20,6 +20,9 @@
 # roibang-source-material-account-auto-push - RoiBang-v2 源素材账户自动补材 [Asia/Shanghai]
 0 5 * * * cd /Users/hongen/Projects/RoiBang-v2 && mkdir -p logs/scheduler && PYTHONPATH=src python3 scripts/run_scheduler_job.py --registry configs/scheduler/roibang-v2.jobs.example.json --job-id roibang-source-material-account-auto-push --repo-root /Users/hongen/Projects/RoiBang-v2 >> logs/scheduler/roibang-source-material-account-auto-push.out.log 2>> logs/scheduler/roibang-source-material-account-auto-push.err.log
 
+# roibang-source-material-preload-to-guojing-spent - RoiBang-v2 源素材预推送到昨日有消耗郭靖账户 [Asia/Shanghai]
+20 5 * * * cd /Users/hongen/Projects/RoiBang-v2 && mkdir -p logs/scheduler && PYTHONPATH=src python3 scripts/run_scheduler_job.py --registry configs/scheduler/roibang-v2.jobs.example.json --job-id roibang-source-material-preload-to-guojing-spent --repo-root /Users/hongen/Projects/RoiBang-v2 >> logs/scheduler/roibang-source-material-preload-to-guojing-spent.out.log 2>> logs/scheduler/roibang-source-material-preload-to-guojing-spent.err.log
+
 # roibang-source-material-rollup-rebuild - RoiBang-v2 源素材表现汇总重建 [Asia/Shanghai]
 30 5 * * * cd /Users/hongen/Projects/RoiBang-v2 && mkdir -p logs/scheduler && PYTHONPATH=src python3 scripts/run_scheduler_job.py --registry configs/scheduler/roibang-v2.jobs.example.json --job-id roibang-source-material-rollup-rebuild --repo-root /Users/hongen/Projects/RoiBang-v2 >> logs/scheduler/roibang-source-material-rollup-rebuild.out.log 2>> logs/scheduler/roibang-source-material-rollup-rebuild.err.log
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -90,6 +91,11 @@ def _float(value: Any, default: float = 0) -> float:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _batch_code(source_fields: dict[str, Any]) -> str:
+    canonical = json.dumps(source_fields, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return "B" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:8].upper()
 
 
 def _template(template_catalog: dict[str, Any], template_key: str) -> dict[str, Any]:
@@ -248,7 +254,17 @@ def build_create_mode_request(
     mode_key = _text(mode_config.get("mode_key"))
     target_date = _text(cfg.get("target_date"))
     batch_generated_at = _text(cfg.get("batch_generated_at")) or _now_iso()
-    request_id = _text(cfg.get("request_id")) or f"{mode_key}-{target_date or 'date'}"
+    target_accounts = _target_accounts(cfg, defaults)
+    batch_code = _text(cfg.get("batch_code")) or _batch_code(
+        {
+            "mode_key": mode_key,
+            "target_date": target_date,
+            "owner": _text(cfg.get("owner") or mode_config.get("owner")),
+            "target_accounts": [row["advertiser_id"] for row in target_accounts],
+            "batch_generated_at": batch_generated_at,
+        }
+    )
+    request_id = _text(cfg.get("request_id")) or f"{mode_key}-{target_date or 'date'}-{batch_code}"
     return {
         "request_id": request_id,
         "plan_id": _text(cfg.get("plan_id")) or f"create-plan-{request_id}",
@@ -262,8 +278,9 @@ def build_create_mode_request(
         "pool_key": _text(mode_config.get("pool_key")) or f"{mode_key}-source-materials",
         "owner": _text(cfg.get("owner") or mode_config.get("owner")),
         "project_template_name": _template_name(mode_config, template),
+        "batch_code": batch_code,
         "batch_generated_at": batch_generated_at,
-        "target_accounts": _target_accounts(cfg, defaults),
+        "target_accounts": target_accounts,
         "material_requirements": _material_requirements(mode_config),
         "material_selection": _material_selection(mode_config),
         "field_defaults": _field_defaults(mode_config, template),

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import sys
 from pathlib import Path
 from typing import Any
@@ -308,6 +309,60 @@ def _create_execute_payload_drafts(create_execute: dict) -> list[dict]:
     return [row for row in drafts if isinstance(row, dict)] if isinstance(drafts, list) else []
 
 
+def _existing_plan_ledger(*, db_path: Path, create_execute: dict) -> dict[str, Any]:
+    summary = _create_execute_summary(create_execute)
+    plan_id = str(summary.get("plan_id") or "").strip()
+    request_id = str(summary.get("request_id") or "").strip()
+    if not plan_id or not request_id:
+        return {"count": 0, "plan_id": plan_id, "request_id": request_id, "by_entity_type": {}, "samples": []}
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT entity_type, COUNT(*)
+            FROM create_provider_id_ledger
+            WHERE plan_id = ?
+              AND request_id = ?
+              AND status = 'active'
+              AND entity_type IN ('project', 'promotion')
+              AND provider_id NOT LIKE 'mock_%'
+              AND source_workflow != 'create_mock_execute'
+            GROUP BY entity_type
+            """,
+            (plan_id, request_id),
+        ).fetchall()
+        samples = conn.execute(
+            """
+            SELECT entity_type, local_key, provider_id, advertiser_id
+            FROM create_provider_id_ledger
+            WHERE plan_id = ?
+              AND request_id = ?
+              AND status = 'active'
+              AND entity_type IN ('project', 'promotion')
+              AND provider_id NOT LIKE 'mock_%'
+              AND source_workflow != 'create_mock_execute'
+            ORDER BY entity_type, first_seen_at
+            LIMIT 10
+            """,
+            (plan_id, request_id),
+        ).fetchall()
+    by_entity_type = {str(entity_type): int(count) for entity_type, count in rows}
+    return {
+        "count": sum(by_entity_type.values()),
+        "plan_id": plan_id,
+        "request_id": request_id,
+        "by_entity_type": by_entity_type,
+        "samples": [
+            {
+                "entity_type": str(row[0]),
+                "local_key": str(row[1]),
+                "provider_id": str(row[2]),
+                "advertiser_id": str(row[3]),
+            }
+            for row in samples
+        ],
+    }
+
+
 def _plan_blocking_reasons(*, create_plan: dict, create_execute: dict | None, policy: dict, db_path: Path) -> tuple[list[str], dict]:
     validation = validate_create_plan(create_plan, policy=policy, db_path=db_path)
     reasons = [str(item) for item in validation.get("violations") or []]
@@ -399,6 +454,8 @@ def _print_result(result: dict) -> None:
         output["local_config_readiness"] = result["local_config_readiness"]
     if "pre_create_execute_ledger_archive" in result:
         output["pre_create_execute_ledger_archive"] = result["pre_create_execute_ledger_archive"]
+    if "existing_plan_ledger" in result:
+        output["existing_plan_ledger"] = result["existing_plan_ledger"]
     if "create_plan_validation" in result:
         validation = result["create_plan_validation"] if isinstance(result["create_plan_validation"], dict) else {}
         output["allowed_account_contract"] = validation.get("allowed_account_contract", {})
@@ -418,6 +475,11 @@ def run_from_args(argv: list[str] | None = None) -> int:
     parser.add_argument("--plan", required=True)
     parser.add_argument("--create-execute-artifact", default="")
     parser.add_argument("--check-config-only", action="store_true")
+    parser.add_argument(
+        "--resume-existing-plan",
+        action="store_true",
+        help="Allow continuing a plan that already has project/unit provider IDs in the local ledger.",
+    )
     args = parser.parse_args(argv)
 
     config = load_runtime_config(args.config)
@@ -496,6 +558,22 @@ def run_from_args(argv: list[str] | None = None) -> int:
         )
         _print_result(result)
         return 0
+    existing_plan_ledger = _existing_plan_ledger(db_path=config.database_path, create_execute=create_execute)
+    if int(existing_plan_ledger.get("count") or 0) > 0 and not args.resume_existing_plan:
+        result = _blocked_plan_result(
+            runs_dir=config.runs_dir,
+            blocking_reasons=[
+                "existing active project/unit provider IDs found for this plan_id/request_id; generate a new create_mode plan or pass --resume-existing-plan to continue the old plan"
+            ],
+            create_plan_validation=validation,
+            local_config_readiness=local_config_readiness,
+        )
+        result["existing_plan_ledger"] = existing_plan_ledger
+        if isinstance(create_execute.get("pre_create_execute_ledger_archive"), dict):
+            result["pre_create_execute_ledger_archive"] = create_execute["pre_create_execute_ledger_archive"]
+        _persist_result_update(result)
+        _print_result(result)
+        return 1
     transport = None
     if _should_construct_direct_transport(
         policy=policy,

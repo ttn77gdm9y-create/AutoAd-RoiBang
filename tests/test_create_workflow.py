@@ -1576,6 +1576,46 @@ def test_create_dry_run_applies_mode_unit_creative_selection_rules(tmp_path: Pat
     assert first["candidate_tasks"][0]["redacted_payload_drafts"] == second["candidate_tasks"][0]["redacted_payload_drafts"]
 
 
+def test_create_dry_run_rotates_titles_within_account_before_reuse(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    request = _create_request()["create_request"]
+    request["target_accounts"][0]["project_count"] = 2
+    request["target_accounts"][0]["units_per_project"] = 1
+    request["material_requirements"]["materials_per_unit"] = 2
+    request["template_parameters"] = {
+        "product_name": "勇者突进-福利版",
+        "title_pool": ["标题1", "标题2", "标题3", "标题4"],
+        "product_selling_points": ["卖点1", "卖点2", "卖点3"],
+        "cta_pool": ["点击即玩", "不用下载", "全场免费"],
+        "unit_creative_selection": {
+            "title_strategy": "deterministic_shuffle_per_unit",
+            "cta_min_count": 2,
+            "cta_max_count": 3,
+            "product_selling_point_min_count": 2,
+            "product_selling_point_max_count": 3,
+        },
+    }
+    plan = build_create_strategy_plan(request=request, db_path=db_path, policy={})
+    preflight = build_create_preflight(create_strategy_plan_artifact=plan, db_path=db_path, policy={})
+
+    result = build_create_dry_run(create_strategy_plan_artifact=plan, create_preflight_artifact=preflight, policy={})
+
+    unit_drafts = [
+        draft
+        for task in result["candidate_tasks"]
+        for draft in task["redacted_payload_drafts"]
+        if draft["operation"] == "create_unit"
+    ]
+    assert len(unit_drafts) == 2
+    title_sets = [
+        {row["title"] for row in draft["payload"]["promotion_materials"]["title_material_list"]}
+        for draft in unit_drafts
+    ]
+    assert title_sets[0].isdisjoint(title_sets[1])
+    assert "_account_unit_ordinal" not in unit_drafts[0]["payload"]
+
+
 def test_wx_mini_game_templates_keep_unit_material_contract_clean():
     catalog = json.loads(Path("configs/create-templates/wx-mini-game.json").read_text(encoding="utf-8"))
 

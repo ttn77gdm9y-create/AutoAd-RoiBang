@@ -1,0 +1,55 @@
+{
+  "source_material_preload_to_accounts": {
+    "product": "勇者突进",
+    "source_advertiser_id": "1856647522964490",
+    "organization_id": "1851650746645060",
+    "target_date": "yesterday",
+    "target_accounts": {
+      "source": "delivery_patrol_artifact",
+      "artifact_path": "data/runs/delivery_patrol/latest.json",
+      "account_remark_equals": "勇者突进-微小-郭靖",
+      "spend_window": "today",
+      "min_spend": 0
+    },
+    "material_source": {
+      "material_type": "video",
+      "limit": 0,
+      "max_bind_materials": 0,
+      "batch_size": 50
+    },
+    "execute": {
+      "enabled": false,
+      "approved": false,
+      "allow_mutation": false,
+      "retry_api_codes": [40100],
+      "max_api_retries": 1,
+      "retry_sleep_seconds": 20,
+      "concurrency": 3,
+      "create_http_transport": {
+        "enabled": true,
+        "allow_mutation": true,
+        "run_id": "source-material-preload-to-accounts-daily-guojing-yesterday-spent",
+        "operator": "roibang-v2-scheduler",
+        "token_store": {
+          "enabled": true,
+          "store_file": "data/secrets/oceanengine-tokens.local.json",
+          "user_id": "default",
+          "credentials_file": "data/secrets/oceanengine-app.local.json",
+          "auto_refresh": true,
+          "refresh_lead_seconds": 900
+        },
+        "timeout_seconds": 20,
+        "max_retries": 1,
+        "retry_sleep_seconds": 1,
+        "retry_transient_operations": ["bind_material"],
+        "min_interval_seconds_by_operation": {
+          "bind_material": 0.2
+        },
+        "retry_api_codes_by_operation": {
+          "bind_material": [40100]
+        },
+        "base_url": "https://api.oceanengine.com"
+      }
+    }
+  }
+}

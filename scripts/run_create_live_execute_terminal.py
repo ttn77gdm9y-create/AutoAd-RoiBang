@@ -73,6 +73,7 @@ def run_from_args(argv: list[str] | None = None) -> int:
     parser.add_argument("--plan", required=True)
     parser.add_argument("--create-execute-artifact", default="")
     parser.add_argument("--check-config-only", action="store_true")
+    parser.add_argument("--resume-existing-plan", action="store_true")
     parser.add_argument("--interval", type=float, default=1.0)
     parser.add_argument("--recent-events", type=int, default=5)
     parser.add_argument("--clear", action="store_true")
@@ -97,6 +98,8 @@ def run_from_args(argv: list[str] | None = None) -> int:
         command.extend(["--create-execute-artifact", args.create_execute_artifact])
     if args.check_config_only:
         command.append("--check-config-only")
+    if args.resume_existing_plan:
+        command.append("--resume-existing-plan")
 
     _reset_terminal_progress(progress_dir)
     _write_terminal_progress(

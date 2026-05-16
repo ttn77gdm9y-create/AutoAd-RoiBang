@@ -17,6 +17,10 @@
         "max_pages": 20,
         "stop_when_sorted_cost_reaches_zero": true,
         "session_file": "data/secrets/oceanengine-workbench-session.local.json",
+        "timeout_seconds": 20,
+        "max_retries": 3,
+        "retry_sleep_seconds": 5,
+        "retry_statuses": [429, 500, 502, 503, 504],
         "response_audit_dir": "data/runs/workbench_account_discovery/material-history-yesterday"
       }
     },

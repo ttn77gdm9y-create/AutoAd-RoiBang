@@ -58,6 +58,22 @@ def _projects(plan: dict[str, Any]) -> list[dict[str, Any]]:
     return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
 
 
+def _projects_with_account_unit_ordinals(projects: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    account_unit_counts: dict[str, int] = {}
+    annotated: list[dict[str, Any]] = []
+    for project in projects:
+        project_copy = dict(project)
+        advertiser_id = str(project_copy.get("advertiser_id") or "")
+        units = project_copy.get("units") if isinstance(project_copy.get("units"), list) else []
+        annotated_units: list[dict[str, Any]] = []
+        for unit in [row for row in units if isinstance(row, dict)]:
+            account_unit_counts[advertiser_id] = account_unit_counts.get(advertiser_id, 0) + 1
+            annotated_units.append({**unit, "_account_unit_ordinal": account_unit_counts[advertiser_id]})
+        project_copy["units"] = annotated_units
+        annotated.append(project_copy)
+    return annotated
+
+
 def _source_advertiser_id(plan: dict[str, Any]) -> str:
     strategy = plan.get("strategy") if isinstance(plan.get("strategy"), dict) else {}
     return str(strategy.get("source_advertiser_id") or "")
@@ -139,6 +155,14 @@ def _stable_pick_string_list(values: list[str], *, count: int, seed: str) -> lis
     return [value for _index, value in ranked[: min(count, len(ranked))]]
 
 
+def _rotating_pick_string_list(values: list[str], *, count: int, seed: str, ordinal: int) -> list[str]:
+    if count <= 0 or not values:
+        return []
+    shuffled = _stable_pick_string_list(values, count=len(values), seed=seed)
+    start = ((max(ordinal, 1) - 1) * count) % len(shuffled)
+    return [shuffled[(start + index) % len(shuffled)] for index in range(min(count, len(shuffled)))]
+
+
 def _unit_seed(plan: dict[str, Any], project: dict[str, Any], unit: dict[str, Any], field: str) -> str:
     return ":".join(
         [
@@ -175,6 +199,25 @@ def _unit_titles(
         return []
     selection = _unit_creative_selection(template_parameters)
     if str(selection.get("title_strategy") or "") == "deterministic_shuffle_per_unit":
+        try:
+            account_unit_ordinal = int(unit.get("_account_unit_ordinal") or 0)
+        except (TypeError, ValueError):
+            account_unit_ordinal = 0
+        if account_unit_ordinal > 0:
+            picked = _rotating_pick_string_list(
+                title_pool,
+                count=max(count, 1),
+                seed=":".join(
+                    [
+                        str(plan.get("plan_id") or ""),
+                        str(plan.get("request_id") or ""),
+                        str(project.get("advertiser_id") or ""),
+                        "title_pool_account",
+                    ]
+                ),
+                ordinal=account_unit_ordinal,
+            )
+            return [{"title": title} for title in picked]
         picked = _stable_pick_string_list(
             title_pool,
             count=max(count, 1),
@@ -359,8 +402,9 @@ def _with_idempotency(plan: dict[str, Any], project: dict[str, Any]) -> dict[str
                 }
             )
         promotion_materials = _unit_promotion_materials(plan=plan, project=project, unit=unit, materials=materials)
+        unit_public = {key: value for key, value in unit.items() if not str(key).startswith("_")}
         unit_payload = {
-                **unit,
+                **unit_public,
                 "project_id": project_id_placeholder,
                 "promotion_id": promotion_id_placeholder,
                 "source": _unit_source(plan),
@@ -897,7 +941,7 @@ def build_create_dry_run(
     policy: dict[str, Any],
 ) -> dict[str, Any]:
     plan = create_plan_payload(create_strategy_plan_artifact)
-    projects = _projects(plan)
+    projects = _projects_with_account_unit_ordinals(_projects(plan))
     plan_ref = create_ref(workflow="create_strategy_plan", artifact=create_strategy_plan_artifact)
     preflight_ref = create_ref(workflow="create_preflight", artifact=create_preflight_artifact)
     payload_schema = disabled_create_payload_schema(policy)

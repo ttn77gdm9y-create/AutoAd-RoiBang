@@ -12,8 +12,8 @@ def test_scheduler_registry_has_no_ai_execution_prompts():
 
     assert result == {
         "ok": True,
-        "jobs": 21,
-        "enabled_jobs": 9,
+        "jobs": 22,
+        "enabled_jobs": 10,
         "disabled_jobs": 12,
         "violations": [],
     }
@@ -106,6 +106,9 @@ def test_scheduler_registry_phase1_contracts_pin_safe_execution_values():
         if job["id"] == "roibang-source-material-account-auto-push":
             assert contract["must_equal"] == {}
             continue
+        if job["id"] == "roibang-source-material-preload-to-guojing-spent":
+            assert contract["must_equal"] == {"execution_enabled": True}
+            continue
         assert contract["must_equal"]["execution_enabled"] is False
         if job["id"] in {
             "roibang-daily-report-pipeline",
@@ -195,6 +198,7 @@ def test_scheduler_registry_keeps_daily_jobs_and_restore_due_job():
         ("roibang-operation-log-yesterday-sync", "30 2 * * *"),
         ("roibang-material-kind-reconcile", "30 4 * * *"),
         ("roibang-source-material-account-auto-push", "0 5 * * *"),
+        ("roibang-source-material-preload-to-guojing-spent", "20 5 * * *"),
         ("roibang-source-material-rollup-rebuild", "30 5 * * *"),
         ("roibang-scheduler-status", "0 6 * * *"),
         ("roibang-project-schedule-restore-due", "10 0 * * *"),
@@ -202,6 +206,9 @@ def test_scheduler_registry_keeps_daily_jobs_and_restore_due_job():
     ]
 
     source_account_push = {job["id"]: job for job in registry["jobs"]}["roibang-source-material-account-auto-push"]
+    source_material_preload = {job["id"]: job for job in registry["jobs"]}[
+        "roibang-source-material-preload-to-guojing-spent"
+    ]
     material_kind_reconcile = {job["id"]: job for job in registry["jobs"]}["roibang-material-kind-reconcile"]
     source_material_rollup = {job["id"]: job for job in registry["jobs"]}["roibang-source-material-rollup-rebuild"]
     daily_job = {job["id"]: job for job in registry["jobs"]}["roibang-daily-report-pipeline"]
@@ -236,6 +243,19 @@ def test_scheduler_registry_keeps_daily_jobs_and_restore_due_job():
     ]
     assert source_account_push["result_contract"]["workflow"] == "source_material_account_auto_push"
     assert source_account_push["result_contract"]["must_equal"] == {}
+    assert source_material_preload["script"]["command"] == [
+        "python3",
+        "scripts/run_source_material_preload_to_accounts.py",
+        "--config",
+        "configs/runtime.openapi-execute.local.example.json",
+        "--request",
+        "configs/source-material-preload-to-accounts.daily-guojing-yesterday-spent.example.json",
+        "--execute",
+        "--yes",
+    ]
+    assert source_material_preload["policy"]["approval_policy"] == "fixed_daily_source_material_preload"
+    assert source_material_preload["result_contract"]["workflow"] == "source_material_preload_to_accounts"
+    assert source_material_preload["result_contract"]["must_equal"] == {"execution_enabled": True}
     assert material_kind_reconcile["script"]["command"] == [
         "python3",
         "scripts/run_material_kind_reconcile.py",
