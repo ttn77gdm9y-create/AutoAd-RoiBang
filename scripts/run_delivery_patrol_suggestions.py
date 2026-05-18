@@ -23,6 +23,7 @@ def run_from_args(argv: list[str] | None = None) -> int:
     parser.add_argument("--patrol-artifact", required=True)
     parser.add_argument("--request", default="")
     parser.add_argument("--target-date", default="")
+    parser.add_argument("--db", default="")
     parser.add_argument("--runs-dir", default="data/runs")
     args = parser.parse_args(argv)
 
@@ -34,6 +35,8 @@ def run_from_args(argv: list[str] | None = None) -> int:
     }
     if args.target_date:
         payload["target_date"] = args.target_date
+    if args.db:
+        payload["db_path"] = args.db
     result = run_delivery_patrol_suggestions_request(payload, runs_dir=args.runs_dir)
     print(
         json.dumps(

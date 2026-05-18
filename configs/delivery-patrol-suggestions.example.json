@@ -1,15 +1,85 @@
 {
   "delivery_patrol_suggestions": {
-    "target_date": "2026-05-15",
     "rules": {
-      "zero_billing_convert": {
-        "enabled": true,
-        "min_stat_cost": 500
+      "project": {
+        "continue_running": {
+          "enabled": true,
+          "min_stat_cost": 500,
+          "min_billing_convert_cnt": 1,
+          "min_billing_1day_pay_roi": 0.05
+        },
+        "watch": {
+          "enabled": true,
+          "min_stat_cost": 300,
+          "max_stat_cost": 800,
+          "max_billing_convert_cnt": 0
+        },
+        "close_zero_convert": {
+          "enabled": true,
+          "min_two_day_stat_cost": 1000,
+          "max_two_day_billing_convert_cnt": 0
+        },
+        "close_low_roi": {
+          "enabled": true,
+          "min_stat_cost": 800,
+          "roi_lt": 0.05,
+          "max_billing_convert_cnt": 0
+        },
+        "delete_inactive_closed": {
+          "enabled": true,
+          "max_today_stat_cost": 100,
+          "max_yesterday_stat_cost": 100,
+          "max_two_day_billing_convert_cnt": 0,
+          "min_project_age_days": 3
+        },
+        "lower_budget": {
+          "enabled": true,
+          "min_stat_cost": 1000,
+          "min_billing_convert_cnt": 1,
+          "roi_lt": 0.05,
+          "adjustment_ratio": -0.2
+        },
+        "lower_bid": {
+          "enabled": true,
+          "min_stat_cost": 1000,
+          "min_billing_convert_cnt": 2,
+          "min_billing_conversion_cost": 400,
+          "adjustment_ratio": -0.1
+        }
       },
-      "low_billing_roi": {
+      "promotion": {
+        "bad_signal": {
+          "enabled": true,
+          "min_stat_cost": 300,
+          "max_billing_convert_cnt": 0
+        },
+        "good_signal": {
+          "enabled": true,
+          "min_stat_cost": 300,
+          "min_billing_convert_cnt": 1,
+          "min_billing_1day_pay_roi": 0.05
+        }
+      }
+    },
+    "account_health": {
+      "can_scale": {
         "enabled": true,
-        "min_stat_cost": 800,
+        "min_stat_cost": 1000,
+        "min_billing_1day_pay_roi": 0.05
+      },
+      "pause_creation": {
+        "enabled": true,
+        "min_stat_cost": 1000,
         "roi_lt": 0.05
+      }
+    },
+    "evidence": {
+      "operation_logs": {
+        "enabled": true,
+        "sample_limit": 3
+      },
+      "project_lifecycle": {
+        "enabled": true
       }
     }
   }

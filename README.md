@@ -142,6 +142,39 @@ PYTHONPATH=src python3 scripts/run_create_mode.py \
 
 素材选择会自动排除 `fixtures（测试样例）` 来源，以及明显无效的 `video_id（视频 ID）`，例如 `v001`。
 
+## AI 创建模板草稿
+
+`AI 创建模板` 和上面的人工固定 `create-modes（创建模式）` 是两套东西，不能混在一起。
+
+固定入口：
+
+```bash
+PYTHONPATH=src python3 scripts/run_ai_create_template_drafts.py \
+  --config configs/runtime.example.json \
+  --request configs/ai-create-template-drafts/example.json
+```
+
+这个脚本只做只读分析：
+
+- 读取本地 `product_source_material_metric_rollups（源素材表现汇总表）`。
+- 读取现有 `configs/create-modes（人工创建模式目录）` 作为对照。
+- 输出 `ai_create_template_drafts（AI 创建模板草稿）` JSON 到 `data/runs/ai_create_template_drafts/`。
+- `external_api_calls（外部接口调用数）=0`，不调用平台接口。
+- `execution_enabled（执行开关）=false`，不能执行真实创建。
+- 不写入 `configs/create-modes（人工创建模式目录）`。
+- 不写入 `configs/create-mode-requests（创建请求配置目录）`。
+- 不生成 `create_mode（创建计划）` 或 `create_execute（创建执行）` 产物。
+
+草稿 JSON 里每个候选模板都会带：
+
+- `status=draft_only（仅草稿）`
+- `human_review_required=true（需要人工确认）`
+- `usage_blocking_reasons（使用阻断原因）`
+- `evidence（数据证据）`
+- `differences_from_manual_template（和人工模板差异）`
+
+后续如果要使用 AI 草稿，必须新增一个单独的 `promote（转正）` 脚本，由人工明确选择某个草稿后，才允许显式转换成新的人工模板；AI 草稿不会自动覆盖现有模板。
+
 ## 创建执行
 
 创建真实执行仍走固定脚本，真实执行前必须由用户明确说“确认执行”。
@@ -219,6 +252,17 @@ PYTHONPATH=src python3 scripts/watch_create_live_progress.py --clear --recent-ev
 - `retry_sleep_seconds_by_operation（按操作重试等待秒数）`：素材推送和素材回查可以分别配置 40100（请求频率超限）后的等待时间。
 - `min_interval_seconds_by_operation（按操作最小调用间隔）`：项目创建、素材推送、素材回查、单元创建可以分别配置调用间隔。
 - 当前 example（示例配置）已把素材推送和素材回查间隔压到 0.5 秒，单元创建间隔从 20 秒降到 8 秒；如果生产环境再出现 40100，可以只调这些 JSON 参数，不改脚本。
+- `post_run_retry（跑完后补跑）`：只对临时失败的 `create_unit（创建单元）` 做补跑，默认包含 50000（服务内部错误）、网络超时、连接断开等临时错误；素材无权限、参数错误、项目不存在这类确定失败不会自动补跑。
+
+创建执行结果 JSON 会输出 `efficiency_report（执行效率报告）`：
+
+- `api_calls（接口调用）`：总调用数、各步骤调用数、真实 `bind_material（素材推送）` 次数、创建前目标素材库回查次数。
+- `material_push（素材推送）`：实际推送、已推过跳过、目标账户已有素材跳过。
+- `lookup（目标素材回查）`：目标素材 ID/封面 ID 落账数量、素材延迟可见等待重试次数。
+- `failure_recovery（失败恢复）`：跳过账户数、跑完后补跑尝试数、恢复数、仍失败数。
+- `timing（耗时）`：整体耗时和每个固定步骤耗时。
+
+`create_live_execute_report（创建执行报告）` 会只读执行产物，输出 `next_steps（后续处理建议）`，比如是否需要补跑失败单元、排查素材权限、继续提高预推送覆盖率。
 
 创建时如果平台返回“已创建30个项目”，固定脚本会：
 
@@ -243,6 +287,7 @@ PYTHONPATH=src python3 scripts/watch_create_live_progress.py --clear --recent-ev
 - `scripts/run_project_roi_coeff_update.py`：7R 项目 ROI 系数调整。
 - `scripts/run_project_delete.py`：项目删除。
 - `scripts/run_project_management_update_config.py`：按账户和项目名称查询后生成项目管理配置。
+- `scripts/run_project_realtime_filter_config.py`：按平台实时数据筛选项目后生成项目管理配置。
 - `scripts/run_project_update_execute.py`：项目更新执行。
 - `scripts/run_project_schedule_restore_due.py`：到期时段恢复。
 
@@ -256,7 +301,70 @@ PYTHONPATH=src python3 scripts/watch_create_live_progress.py --clear --recent-ev
 - `scripts/run_project_budget_update_config.py`：按名称生成预算调整配置。
 - `scripts/run_project_bid_update_config.py`：按名称生成出价调整配置。
 - `scripts/run_project_roi_coeff_update_config.py`：按名称生成 ROI 系数调整配置。
-- `scripts/run_project_delete_config.py`：按名称生成删除项目配置，默认只查 `PROJECT_STATUS_DISABLE（已关闭）` 项目。
+- `scripts/run_project_delete_config.py`：按名称生成删除项目配置，默认不额外限定项目状态。
+
+按实时数据筛选项目的固定入口：
+
+```bash
+PYTHONPATH=src python3 scripts/run_project_realtime_filter_config.py \
+  --config configs/runtime.openapi-execute.local.example.json \
+  --project-update-id delete-0515-today-low-cost \
+  --advertiser-id 185xxxxxxxxxxxxx \
+  --action-type delete_project \
+  --name-contains 0515 \
+  --spend-window today \
+  --metric-filter "stat_cost:lt:100" \
+  --output configs/project-updates/delete-0515-today-low-cost.local.json
+```
+
+第一版只支持 3 个实时窗口：
+
+- `today（今天）`
+- `yesterday（昨天）`
+- `last_3_days（近 3 天，包含今天、昨天、前天）`
+
+支持的指标筛选字段：
+
+- `stat_cost（消耗）`
+- `active_register（注册数）`
+- `register_cost（注册成本）`
+- `billing_convert_cnt（转化数：计费时间）`
+- `billing_conversion_cost（转化成本：计费时间）`
+- `billing_1day_pay_roi（计费当日付费 ROI）`
+
+`--metric-filter` 格式：
+
+```text
+字段:比较符:数值
+```
+
+比较符支持：
+
+```text
+lt（小于）
+lte（小于等于）
+gt（大于）
+gte（大于等于）
+eq（等于）
+```
+
+示例：
+
+```bash
+--metric-filter "billing_convert_cnt:eq:0"
+--metric-filter "stat_cost:lt:200"
+--metric-filter "register_cost:gte:100"
+```
+
+生成配置后，真实执行仍走固定执行脚本，并且必须人工确认：
+
+```bash
+PYTHONPATH=src python3 scripts/run_project_update_execute.py \
+  --config configs/project-update-execute.local.json \
+  --project-update configs/project-updates/delete-0515-today-low-cost.local.json \
+  --execute \
+  --yes
+```
 
 项目时段更新已经是固定脚本能力；当天拉空后，恢复逻辑固定在脚本和定时任务里，不靠 AI 记忆。
 
@@ -302,9 +410,27 @@ PYTHONPATH=src python3 scripts/run_source_material_preload_to_accounts.py \
 
 - `scripts/run_delivery_patrol.py`：读取账户、项目、单元实时数据，输出 `delivery_patrol（投放巡检结果）`。
 - `configs/delivery-patrol.daily-readonly.example.json`：真实只读配置，按 `account_remark（账户备注）= 勇者突进-微小-郭靖` 发现今天有消耗账户。
-- 输出字段包含 `accounts（账户）`、`projects（项目）`、`promotions（单元）`、`message（可读报告）`、`delivery（推送结果）`。
+- 输出字段包含 `accounts（账户）`、`projects（项目）`、`promotions（单元）`、`attention_items（重点关注项）`、`message（可读报告）`、`delivery（推送结果）`。
+- 每个账户、项目、单元都会输出 `business_status（业务状态）`、`severity（严重程度）`、`status_reasons（状态原因）`。
 - `scripts/run_delivery_patrol_suggestions.py`：读取巡检结果生成 `delivery_patrol_suggestions（投放巡检建议）`，只输出建议 JSON，不生成执行动作。
-- `configs/delivery-patrol-suggestions.example.json`：建议规则配置，当前只做关注提示，不直接转成真实修改。
+- `configs/delivery-patrol-suggestions.example.json`：建议规则配置，用于生成 `continue_running（继续跑）`、`watch（观察）`、`suggest_close_project（建议关闭项目）`、`suggest_delete_project（建议删除项目）`、`suggest_lower_budget（建议下调预算）`、`suggest_lower_bid（建议下调出价）`、`unit_good_signal（单元好信号）`、`unit_bad_signal（单元差信号）`。
+- 建议脚本会读取本地 `operation_logs（操作日志）` 和 `material_daily_metrics（素材/项目/单元日维度数据）` 作为证据，但 `external_api_calls（外部接口调用数）` 必须为 `0`。
+- 建议结果只供人工确认和后续回测，不直接转成真实修改。
+
+业务巡检状态只做归类，不做真实操作。常见状态：
+
+- `normal（正常）`
+- `zero_billing_convert（有消耗无计费时间转化）`
+- `high_cost_low_return（高消耗低回收）`
+- `drop_from_yesterday（较昨日明显下滑）`
+- `high_cost_zero_convert（项目高消耗无计费时间转化）`
+- `low_roi（低 ROI）`
+- `running_good（跑量有效）`
+- `inactive_enabled（启用但无消耗）`
+- `unit_high_cost_zero_convert（单元高消耗无计费时间转化）`
+
+飞书只推业务摘要，包括整体表现、状态分布、重点账户、重点项目、重点单元和完整 JSON 路径；完整明细保存在 `data/runs/delivery_patrol/latest.json`。
+正式巡检配置已开启同频建议生成：每次 `scripts/run_delivery_patrol.py（投放账户巡检脚本）` 跑完后，会本地生成 `delivery_patrol_suggestions（投放巡检建议）`，并把“今日建议”摘要合并到同一条飞书消息里，不单独推第二条。
 
 只生成巡检计划：
 
@@ -328,8 +454,21 @@ PYTHONPATH=src python3 scripts/run_delivery_patrol.py \
 ```bash
 PYTHONPATH=src python3 scripts/run_delivery_patrol_suggestions.py \
   --patrol-artifact data/runs/delivery_patrol/latest.json \
-  --request configs/delivery-patrol-suggestions.example.json
+  --request configs/delivery-patrol-suggestions.example.json \
+  --db data/roibang_v2.sqlite3
 ```
+
+建议 JSON 会写入 `data/runs/delivery_patrol_suggestions/`，其中每条建议都带：
+
+- `suggested_action（建议动作）`
+- `confidence（置信度）`
+- `reason（原因）`
+- `metrics（指标证据）`
+- `evidence.operation_history（操作日志证据）`
+- `evidence.lifecycle（生命周期证据）`
+- `execution.enabled=false（不允许执行）`
+
+正式每小时巡检无需单独运行建议脚本；`configs/delivery-patrol.daily-readonly.example.json` 已通过 `suggestions（建议配置）` 指向 `configs/delivery-patrol-suggestions.example.json`，并使用本地 `data/roibang_v2.sqlite3` 补充操作日志和生命周期证据。
 
 ## 定时任务
 

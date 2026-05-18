@@ -34,6 +34,8 @@ def _idempotency(source: dict[str, Any]) -> dict[str, Any]:
 
 def _source_summary(source: dict[str, Any]) -> dict[str, Any]:
     runner = source.get("runner_result") if isinstance(source.get("runner_result"), dict) else {}
+    efficiency = source.get("efficiency_report") if isinstance(source.get("efficiency_report"), dict) else {}
+    failure_recovery = efficiency.get("failure_recovery") if isinstance(efficiency.get("failure_recovery"), dict) else {}
     provider_records = [
         *_rows(source.get("provider_id_records")),
         *_rows(_idempotency(source).get("skipped_provider_id_records")),
@@ -59,7 +61,42 @@ def _source_summary(source: dict[str, Any]) -> dict[str, Any]:
         "blocking_reasons": [str(item) for item in source.get("blocking_reasons") or []],
         "failure": failure,
         "runner_status": _status(runner),
+        "skipped_account_count": len(_rows(source.get("skipped_accounts"))),
+        "post_run_retry_status": str(failure_recovery.get("post_run_retry_status") or ""),
+        "post_run_retry_attempted_count": int(failure_recovery.get("post_run_retry_attempted_count") or 0),
+        "post_run_retry_recovered_count": int(failure_recovery.get("post_run_retry_recovered_count") or 0),
+        "post_run_retry_failed_count": int(failure_recovery.get("post_run_retry_failed_count") or 0),
     }
+
+
+def _efficiency(source: dict[str, Any]) -> dict[str, Any]:
+    return dict(source.get("efficiency_report")) if isinstance(source.get("efficiency_report"), dict) else {}
+
+
+def _next_steps(*, summary: dict[str, Any], efficiency: dict[str, Any]) -> list[str]:
+    steps: list[str] = []
+    failure = summary.get("failure") if isinstance(summary.get("failure"), dict) else None
+    recovery = efficiency.get("failure_recovery") if isinstance(efficiency.get("failure_recovery"), dict) else {}
+    material_push = efficiency.get("material_push") if isinstance(efficiency.get("material_push"), dict) else {}
+    if int(recovery.get("post_run_retry_failed_count") or 0) > 0:
+        steps.append("有跑后补跑仍失败的单元，需要按失败记录单独排查或补跑。")
+    if int(recovery.get("post_run_retry_recovered_count") or 0) > 0:
+        steps.append("已有临时失败单元在跑后补跑中恢复，优先看最终单元数是否满足计划。")
+    if int(summary.get("skipped_account_count") or 0) > 0 and int(recovery.get("post_run_retry_recovered_count") or 0) == 0:
+        steps.append("存在跳过账户，先看跳过原因是素材、接口还是项目上限。")
+    if failure:
+        operation = str(failure.get("operation") or "")
+        if operation in {"bind_material", "lookup_target_material"}:
+            steps.append("失败发生在素材推送或目标素材回查，优先检查素材权限和目标账户素材库。")
+        elif operation == "create_unit":
+            steps.append("失败发生在创建单元，优先确认项目 ID、素材 ID、封面 ID 是否已落账。")
+        else:
+            steps.append("存在创建失败，需要查看 source_artifact_path 对应执行产物。")
+    if int(material_push.get("skipped_existing_target_material_count") or 0) > 0:
+        steps.append("目标账户已存在部分素材，后续可继续提高预推送覆盖率减少实时推送。")
+    if not steps:
+        steps.append("无需人工处理。")
+    return steps
 
 
 def _plan_summary(create_plan: dict[str, Any] | None) -> dict[str, Any]:
@@ -125,11 +162,18 @@ def _message(summary: dict[str, Any]) -> str:
     status = str(summary.get("source_status") or "")
     failure = summary.get("failure") if isinstance(summary.get("failure"), dict) else None
     if status == "create_http_completed":
+        retry_text = ""
+        if int(summary.get("post_run_retry_attempted_count") or 0) > 0:
+            retry_text = (
+                f"跑后补跑{int(summary.get('post_run_retry_attempted_count') or 0)}个，"
+                f"恢复{int(summary.get('post_run_retry_recovered_count') or 0)}个，"
+                f"失败{int(summary.get('post_run_retry_failed_count') or 0)}个；"
+            )
         return (
             "真实创建结果：完成项目"
             f"{int(summary.get('created_project_count') or 0)}个、单元"
             f"{int(summary.get('created_unit_count') or 0)}个、素材推送"
-            f"{int(summary.get('material_bind_count') or 0)}组；执行脚本外部调用"
+            f"{int(summary.get('material_bind_count') or 0)}组；{retry_text}执行脚本外部调用"
             f"{int(summary.get('source_external_api_calls') or 0)}次。"
         )
     if failure:
@@ -273,6 +317,7 @@ def build_create_live_execute_report(
     source = dict(create_live_execute_once_artifact)
     source_path = str(source_artifact_path or source.get("artifact_path") or "")
     summary = _source_summary(source)
+    efficiency = _efficiency(source)
     source_summary = source.get("create_execute_summary") if isinstance(source.get("create_execute_summary"), dict) else {}
     if not source_summary:
         source_summary = source.get("summary") if isinstance(source.get("summary"), dict) else {}
@@ -289,6 +334,8 @@ def build_create_live_execute_report(
         else "reported_not_completed",
         "message": _message(summary),
         "summary": summary,
+        "efficiency_report": efficiency,
+        "next_steps": _next_steps(summary=summary, efficiency=efficiency),
         "create_plan_summary": create_plan_summary,
         "create_plan_contract": _plan_contract(plan_summary=create_plan_summary, source_plan_id=plan_id),
         "db_ledger_summary": _db_ledger_summary(db_path=db_path, plan_id=plan_id) if db_path is not None else {},

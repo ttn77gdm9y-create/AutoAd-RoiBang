@@ -1,0 +1,14 @@
+{
+  "ai_create_template_drafts": {
+    "product": "勇者突进",
+    "source_advertiser_id": "1856647522964490",
+    "manual_mode_dir": "configs/create-modes",
+    "max_drafts": 5,
+    "output_only": true,
+    "human_review_required": true,
+    "notes": [
+      "只生成 AI 创建模板草稿，不写入 configs/create-modes（人工创建模式目录）。",
+      "草稿不能被创建脚本直接使用，后续必须人工确认后再单独显式转正。"
+    ]
+  }
+}

@@ -330,6 +330,7 @@ def test_scheduler_registry_includes_delivery_patrol_jobs():
     assert patrol["result_contract"]["workflow"] == "delivery_patrol"
     assert "message" in patrol["result_contract"]["must_include"]
     assert "delivery" in patrol["result_contract"]["must_include"]
+    assert "delivery_patrol_suggestions" in patrol["result_contract"]["must_include"]
     assert patrol["result_contract"]["must_equal"] == {"execution_enabled": False}
 
     assert suggestions["enabled"] is False
@@ -340,6 +341,8 @@ def test_scheduler_registry_includes_delivery_patrol_jobs():
         "data/runs/delivery_patrol/latest.json",
         "--request",
         "configs/delivery-patrol-suggestions.example.json",
+        "--db",
+        "data/roibang_v2.sqlite3",
     ]
     assert suggestions["result_contract"]["workflow"] == "delivery_patrol_suggestions"
     assert suggestions["result_contract"]["must_equal"] == {

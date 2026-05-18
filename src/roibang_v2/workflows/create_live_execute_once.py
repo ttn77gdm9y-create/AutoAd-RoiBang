@@ -21,6 +21,16 @@ from roibang_v2.workflows.create_provider_id_ledger import (
 Transport = Callable[[dict[str, Any]], dict[str, Any]]
 OPERATION_ORDER = ["create_project", "bind_material", "lookup_target_material", "create_unit"]
 TRANSIENT_POST_RUN_RETRY_CODES = {50000}
+TRANSIENT_POST_RUN_RETRY_MESSAGE_FRAGMENTS = {
+    "服务内部错误",
+    "Internal service",
+    "transient network error",
+    "Connection reset",
+    "timed out",
+    "timeout",
+    "UNEXPECTED_EOF",
+    "EOF occurred",
+}
 RECOVERY_ENDPOINTS = {
     "lookup_existing_project": "/open_api/v3.0/project/list/",
     "lookup_existing_unit": "/open_api/v3.0/promotion/list/",
@@ -137,6 +147,28 @@ def _payload_schema_policy(policy: dict[str, Any]) -> dict[str, Any]:
 def _runner_policy(policy: dict[str, Any]) -> dict[str, Any]:
     value = policy.get("create_live_execute_once")
     return dict(value) if isinstance(value, dict) else {}
+
+
+def _post_run_retry_policy(policy: dict[str, Any]) -> dict[str, Any]:
+    value = _runner_policy(policy).get("post_run_retry")
+    data = dict(value) if isinstance(value, dict) else {}
+    retry_codes_raw = data.get("retry_api_codes")
+    retry_codes = (
+        {int(item) for item in retry_codes_raw if str(item).strip()}
+        if isinstance(retry_codes_raw, list)
+        else set(TRANSIENT_POST_RUN_RETRY_CODES)
+    )
+    fragments_raw = data.get("retry_error_fragments")
+    fragments = (
+        {str(item) for item in fragments_raw if str(item)}
+        if isinstance(fragments_raw, list)
+        else set(TRANSIENT_POST_RUN_RETRY_MESSAGE_FRAGMENTS)
+    )
+    return {
+        "enabled": bool(data.get("enabled", True)),
+        "retry_api_codes": retry_codes,
+        "retry_error_fragments": fragments,
+    }
 
 
 def _project_cap_cleanup_policy(policy: dict[str, Any]) -> dict[str, Any]:
@@ -503,6 +535,24 @@ def _default_post_run_retry() -> dict[str, Any]:
     }
 
 
+def _should_post_run_retry_unit_failure(row: dict[str, Any], policy: dict[str, Any]) -> bool:
+    retry_policy = _post_run_retry_policy(policy)
+    if not bool(retry_policy["enabled"]):
+        return False
+    if str(row.get("operation") or "") != "create_unit":
+        return False
+    if str(row.get("status") or "") != "skipped_account_after_live_step_failure":
+        return False
+    try:
+        code = int(row.get("code") or 0)
+    except (TypeError, ValueError):
+        code = 0
+    if code in retry_policy["retry_api_codes"]:
+        return True
+    message = str(row.get("message") or "")
+    return any(fragment in message for fragment in retry_policy["retry_error_fragments"])
+
+
 def _archive_round_project_unit_ids(
     *,
     db_path: str | Path,
@@ -534,16 +584,24 @@ def _post_run_retry_transient_create_units(
     sequence: int,
     transport_call_count: int,
 ) -> dict[str, Any]:
+    retry_policy = _post_run_retry_policy(policy)
     retry_account_ids = {
         str(row.get("advertiser_id") or "")
         for row in skipped_account_records
-        if str(row.get("operation") or "") == "create_unit"
-        and str(row.get("status") or "") == "skipped_account_after_live_step_failure"
-        and int(row.get("code") or 0) in TRANSIENT_POST_RUN_RETRY_CODES
+        if _should_post_run_retry_unit_failure(row, policy)
     }
     retry_account_ids.discard("")
     if not retry_account_ids:
-        return {**_default_post_run_retry(), "sequence": sequence, "transport_call_count": transport_call_count}
+        return {
+            **_default_post_run_retry(),
+            "retry_policy": {
+                "enabled": bool(retry_policy["enabled"]),
+                "retry_api_codes": sorted(int(item) for item in retry_policy["retry_api_codes"]),
+                "retry_error_fragments": sorted(str(item) for item in retry_policy["retry_error_fragments"]),
+            },
+            "sequence": sequence,
+            "transport_call_count": transport_call_count,
+        }
 
     pending: list[tuple[int, dict[str, Any]]] = []
     summary = _summary(create_execute_artifact)
@@ -568,6 +626,11 @@ def _post_run_retry_transient_create_units(
         return {
             **_default_post_run_retry(),
             "status": "nothing_missing",
+            "retry_policy": {
+                "enabled": bool(retry_policy["enabled"]),
+                "retry_api_codes": sorted(int(item) for item in retry_policy["retry_api_codes"]),
+                "retry_error_fragments": sorted(str(item) for item in retry_policy["retry_error_fragments"]),
+            },
             "sequence": sequence,
             "transport_call_count": transport_call_count,
         }
@@ -586,6 +649,11 @@ def _post_run_retry_transient_create_units(
             "failed_count": len(pending),
             "external_api_calls": 0,
             "records": _rows(resolution.get("unresolved_lookups")),
+            "retry_policy": {
+                "enabled": bool(retry_policy["enabled"]),
+                "retry_api_codes": sorted(int(item) for item in retry_policy["retry_api_codes"]),
+                "retry_error_fragments": sorted(str(item) for item in retry_policy["retry_error_fragments"]),
+            },
             "sequence": sequence,
             "transport_call_count": transport_call_count,
         }
@@ -698,6 +766,11 @@ def _post_run_retry_transient_create_units(
         "external_api_calls": retry_call_count,
         "records": records,
         "provider_id_records": provider_id_records,
+        "retry_policy": {
+            "enabled": bool(retry_policy["enabled"]),
+            "retry_api_codes": sorted(int(item) for item in retry_policy["retry_api_codes"]),
+            "retry_error_fragments": sorted(str(item) for item in retry_policy["retry_error_fragments"]),
+        },
         "sequence": sequence,
         "transport_call_count": transport_call_count,
     }
@@ -1680,12 +1753,19 @@ def _resumable_create_http_run(
     ordered_steps: list[dict[str, Any]] = []
     transport_call_count = 0
     sequence = 0
+    run_started = time.monotonic()
+    lookup_visibility_retry_total = 0
+    precheck_existing_target_material_call_total = 0
 
     for operation in OPERATION_ORDER:
+        operation_started = time.monotonic()
         drafts = _drafts_for_operation(create_execute_artifact, operation)
         if not drafts:
             continue
         operation_call_count = 0
+        operation_direct_call_count = 0
+        operation_lookup_visibility_retry_count = 0
+        operation_precheck_call_count = 0
         if operation == "bind_material":
             pending, skipped_binds = _split_existing_material_binds(db_path=db_path, drafts=drafts)
             skipped_material_bind_records.extend(skipped_binds)
@@ -1724,6 +1804,10 @@ def _resumable_create_http_run(
                     "planned_count": len(drafts),
                     "status": skipped_status,
                     "test_transport_call_count": 0,
+                    "direct_api_call_count": operation_direct_call_count,
+                    "precheck_existing_target_material_call_count": operation_precheck_call_count,
+                    "lookup_visibility_retry_count": operation_lookup_visibility_retry_count,
+                    "duration_seconds": round(time.monotonic() - operation_started, 4),
                 }
             )
             continue
@@ -1763,7 +1847,11 @@ def _resumable_create_http_run(
                         "planned_count": len(drafts),
                         "status": "completed_with_skipped_accounts",
                         "test_transport_call_count": 0,
+                        "direct_api_call_count": operation_direct_call_count,
+                        "precheck_existing_target_material_call_count": operation_precheck_call_count,
+                        "lookup_visibility_retry_count": operation_lookup_visibility_retry_count,
                         "skipped_account_count": operation_skipped_account_count,
+                        "duration_seconds": round(time.monotonic() - operation_started, 4),
                     }
                 )
                 continue
@@ -1782,6 +1870,8 @@ def _resumable_create_http_run(
             precheck_call_count = int(precheck["transport_call_count"])
             transport_call_count += precheck_call_count
             operation_call_count += precheck_call_count
+            operation_precheck_call_count += precheck_call_count
+            precheck_existing_target_material_call_total += precheck_call_count
             precheck_skipped = _rows(precheck.get("skipped"))
             skipped.extend(precheck_skipped)
             skipped_material_bind_records.extend(precheck_skipped)
@@ -1803,6 +1893,10 @@ def _resumable_create_http_run(
                         "planned_count": len(drafts),
                         "status": "skipped_existing_target_material",
                         "test_transport_call_count": operation_call_count,
+                        "direct_api_call_count": operation_direct_call_count,
+                        "precheck_existing_target_material_call_count": operation_precheck_call_count,
+                        "lookup_visibility_retry_count": operation_lookup_visibility_retry_count,
+                        "duration_seconds": round(time.monotonic() - operation_started, 4),
                     }
                 )
                 continue
@@ -1896,6 +1990,7 @@ def _resumable_create_http_run(
                     sequence += 1
                     transport_call_count += 1
                     operation_call_count += 1
+                    operation_direct_call_count += 1
                     failure_response = {"code": -1, "message": str(exc)}
                     recovered_response: dict[str, Any] = {}
                     if _is_recoverable_create_failure(operation, failure_response):
@@ -1994,6 +2089,7 @@ def _resumable_create_http_run(
                     sequence += 1
                     transport_call_count += 1
                     operation_call_count += 1
+                    operation_direct_call_count += 1
                     if _response_code(response) != 0 and _is_recoverable_create_failure(operation, response):
                         recovered_response = {}
                         lookup_operation = _recovery_lookup_operation(operation)
@@ -2066,6 +2162,7 @@ def _resumable_create_http_run(
                         sequence += 1
                         transport_call_count += 1
                         operation_call_count += 1
+                        operation_direct_call_count += 1
                         cleanup_result["status"] = "deleted_retry_failed"
                         cleanup_result["retry_message"] = str(exc)
                         return {
@@ -2092,6 +2189,7 @@ def _resumable_create_http_run(
                     sequence += 1
                     transport_call_count += 1
                     operation_call_count += 1
+                    operation_direct_call_count += 1
                     call = retry_call
                     cleanup_result["retry_response_code"] = _response_code(response)
                     cleanup_result["retry_message"] = _response_message(response)
@@ -2196,6 +2294,8 @@ def _resumable_create_http_run(
                 and lookup_visibility_retry_count < int(lookup_visibility_wait["max_retries"])
             ):
                 lookup_visibility_retry_count += 1
+                operation_lookup_visibility_retry_count += 1
+                lookup_visibility_retry_total += 1
                 _write_progress(
                     policy,
                     status="waiting",
@@ -2226,6 +2326,7 @@ def _resumable_create_http_run(
                     sequence += 1
                     transport_call_count += 1
                     operation_call_count += 1
+                    operation_direct_call_count += 1
                     return _runner_failure_result(
                         operation=operation,
                         index=original_index,
@@ -2241,6 +2342,7 @@ def _resumable_create_http_run(
                 sequence += 1
                 transport_call_count += 1
                 operation_call_count += 1
+                operation_direct_call_count += 1
                 call = retry_call
                 if _response_code(response) != 0:
                     break
@@ -2304,6 +2406,10 @@ def _resumable_create_http_run(
             "planned_count": len(drafts),
             "status": "completed_with_skipped_accounts" if operation_skipped_account_count else "completed",
             "test_transport_call_count": operation_call_count,
+            "direct_api_call_count": operation_direct_call_count,
+            "precheck_existing_target_material_call_count": operation_precheck_call_count,
+            "lookup_visibility_retry_count": operation_lookup_visibility_retry_count,
+            "duration_seconds": round(time.monotonic() - operation_started, 4),
         }
         if operation_skipped_account_count:
             step["skipped_account_count"] = operation_skipped_account_count
@@ -2344,6 +2450,11 @@ def _resumable_create_http_run(
         "post_run_retry": post_run_retry,
         "ledger_archive": ledger_archive_records,
         "project_cap_cleanup": _project_cap_cleanup_summary(project_cap_cleanup_records),
+        "timing": {
+            "total_duration_seconds": round(time.monotonic() - run_started, 4),
+            "lookup_visibility_retry_count": lookup_visibility_retry_total,
+            "precheck_existing_target_material_call_count": precheck_existing_target_material_call_total,
+        },
         "idempotency": _idempotency_summary(
             skipped_provider_id_records=skipped_provider_id_records,
             skipped_material_bind_records=skipped_material_bind_records,
@@ -2385,6 +2496,104 @@ def _direct_blocking_reasons(
     return reasons
 
 
+def _status_count(rows: list[dict[str, Any]], status: str) -> int:
+    return sum(1 for row in rows if str(row.get("status") or "") == status)
+
+
+def _efficiency_report(
+    *,
+    create_execute_artifact: dict[str, Any],
+    runner_result: dict[str, Any],
+) -> dict[str, Any]:
+    ordered_steps = _rows(runner_result.get("ordered_steps"))
+    idempotency = runner_result.get("idempotency") if isinstance(runner_result.get("idempotency"), dict) else {}
+    skipped_provider_records = _rows(idempotency.get("skipped_provider_id_records"))
+    skipped_bind_records = _rows(idempotency.get("skipped_material_bind_records"))
+    material_bind_records = _rows(runner_result.get("material_bind_records"))
+    skipped_accounts = _rows(runner_result.get("skipped_accounts"))
+    post_run_retry = (
+        dict(runner_result.get("post_run_retry"))
+        if isinstance(runner_result.get("post_run_retry"), dict)
+        else _default_post_run_retry()
+    )
+    timing = runner_result.get("timing") if isinstance(runner_result.get("timing"), dict) else {}
+    step_api_calls = {
+        str(row.get("operation") or ""): int(row.get("test_transport_call_count") or 0)
+        for row in ordered_steps
+    }
+    direct_api_calls = {
+        str(row.get("operation") or ""): int(row.get("direct_api_call_count") or 0)
+        for row in ordered_steps
+    }
+    step_durations = {
+        str(row.get("operation") or ""): float(row.get("duration_seconds") or 0)
+        for row in ordered_steps
+    }
+    lookup_visibility_retry_count = sum(int(row.get("lookup_visibility_retry_count") or 0) for row in ordered_steps)
+    if not lookup_visibility_retry_count:
+        lookup_visibility_retry_count = int(timing.get("lookup_visibility_retry_count") or 0)
+    precheck_call_count = sum(
+        int(row.get("precheck_existing_target_material_call_count") or 0) for row in ordered_steps
+    )
+    if not precheck_call_count:
+        precheck_call_count = int(timing.get("precheck_existing_target_material_call_count") or 0)
+
+    skipped_existing_target_material_count = _status_count(skipped_bind_records, "skipped_existing_target_material")
+    existing_target_material_bind_record_count = sum(
+        1 for row in material_bind_records if str(row.get("provider_task_id") or "") == "existing_target_material"
+    )
+    return {
+        "planned": {
+            "project_count": len(_drafts_for_operation(create_execute_artifact, "create_project")),
+            "bind_material_batch_count": len(_drafts_for_operation(create_execute_artifact, "bind_material")),
+            "lookup_target_material_count": len(_drafts_for_operation(create_execute_artifact, "lookup_target_material")),
+            "unit_count": len(_drafts_for_operation(create_execute_artifact, "create_unit")),
+        },
+        "api_calls": {
+            "total": int(runner_result.get("external_api_calls") or runner_result.get("transport_call_count") or 0),
+            "by_step": step_api_calls,
+            "direct_by_step": direct_api_calls,
+            "bind_material_direct": int(direct_api_calls.get("bind_material") or 0),
+            "lookup_target_material_direct": int(direct_api_calls.get("lookup_target_material") or 0),
+            "precheck_existing_target_material": precheck_call_count,
+        },
+        "material_push": {
+            "recorded_bind_count": _status_count(material_bind_records, "recorded"),
+            "skipped_existing_material_bind_count": int(idempotency.get("skipped_existing_material_bind_count") or 0),
+            "skipped_existing_target_material_count": skipped_existing_target_material_count,
+            "existing_target_material_bind_record_count": existing_target_material_bind_record_count,
+        },
+        "lookup": {
+            "visibility_retry_count": lookup_visibility_retry_count,
+            "target_video_recorded_count": sum(
+                1
+                for row in _rows(runner_result.get("provider_id_records"))
+                if str(row.get("entity_type") or "") == "target_video" and str(row.get("status") or "") == "recorded"
+            ),
+            "target_video_cover_recorded_count": sum(
+                1
+                for row in _rows(runner_result.get("provider_id_records"))
+                if str(row.get("entity_type") or "") == "target_video_cover"
+                and str(row.get("status") or "") == "recorded"
+            ),
+            "skipped_existing_target_video_count": sum(
+                1 for row in skipped_provider_records if str(row.get("entity_type") or "") == "target_video"
+            ),
+        },
+        "failure_recovery": {
+            "skipped_account_count": len(skipped_accounts),
+            "post_run_retry_status": str(post_run_retry.get("status") or "not_triggered"),
+            "post_run_retry_attempted_count": int(post_run_retry.get("attempted_count") or 0),
+            "post_run_retry_recovered_count": int(post_run_retry.get("recovered_count") or 0),
+            "post_run_retry_failed_count": int(post_run_retry.get("failed_count") or 0),
+        },
+        "timing": {
+            "total_duration_seconds": float(timing.get("total_duration_seconds") or 0),
+            "by_step_seconds": step_durations,
+        },
+    }
+
+
 def build_create_live_execute_once_direct(
     *,
     create_execute_artifact: dict[str, Any],
@@ -2411,6 +2620,10 @@ def build_create_live_execute_once_direct(
         db_path=db_path,
         transport=transport,
     )
+    efficiency_report = _efficiency_report(
+        create_execute_artifact=create_execute_artifact,
+        runner_result=runner_result,
+    )
     external_api_calls = int(runner_result.get("external_api_calls") or 0)
     execution_attempted = external_api_calls > 0
     ok = bool(runner_result.get("ok", False)) and str(runner_result.get("status") or "") == "create_http_completed"
@@ -2436,6 +2649,7 @@ def build_create_live_execute_once_direct(
         "project_cap_cleanup": runner_result.get("project_cap_cleanup")
         if isinstance(runner_result.get("project_cap_cleanup"), dict)
         else _project_cap_cleanup_summary([]),
+        "efficiency_report": efficiency_report,
         "transport_call_count": int(runner_result.get("transport_call_count") or 0),
         "idempotency": runner_result.get("idempotency")
         if isinstance(runner_result.get("idempotency"), dict)

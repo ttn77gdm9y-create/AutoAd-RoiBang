@@ -45,6 +45,20 @@ def _transport_config(runtime: dict) -> dict:
     return {}
 
 
+def _parse_metric_filter(value: str) -> dict:
+    parts = str(value or "").split(":", 2)
+    if len(parts) != 3:
+        raise argparse.ArgumentTypeError("--metric-filter must use field:op:value format")
+    field, op, raw_value = [part.strip() for part in parts]
+    if not field or not op or not raw_value:
+        raise argparse.ArgumentTypeError("--metric-filter must use field:op:value format")
+    try:
+        numeric_value = float(raw_value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("--metric-filter value must be numeric") from exc
+    return {"field": field, "op": op, "value": numeric_value}
+
+
 def run_from_args(argv: list[str] | None = None, *, default_action_type: str = "status_update") -> int:
     parser = argparse.ArgumentParser(description="Generate project_update.json from live project list by account/name.")
     parser.add_argument("--project-update-id", required=True)
@@ -64,11 +78,12 @@ def run_from_args(argv: list[str] | None = None, *, default_action_type: str = "
     parser.add_argument("--name-contains", action="append", default=[])
     parser.add_argument(
         "--spend-window",
-        choices=["today", "yesterday", "last_3_days", "last_7_days", "last_15_days", "last_30_days", "last_week", "this_month"],
+        choices=["today", "yesterday", "last_3_days"],
         default="",
     )
     parser.add_argument("--spend-end-date", default="")
     parser.add_argument("--max-stat-cost", default="")
+    parser.add_argument("--metric-filter", action="append", type=_parse_metric_filter, default=[])
     parser.add_argument("--filter-status-first", default="")
     parser.add_argument("--filter-status-second", default="")
     parser.add_argument("--server-name-query", default="")
@@ -107,12 +122,17 @@ def run_from_args(argv: list[str] | None = None, *, default_action_type: str = "
         "output_path": args.output,
         "workflow": "project_management_update_config" if args.action_type != "status_update" else "project_status_update_config",
     }
-    if args.spend_window or args.max_stat_cost:
-        request["spend_filter"] = {
+    if args.spend_window or args.max_stat_cost or args.metric_filter:
+        realtime_filter = {
             "window": args.spend_window or "today",
             "end_date": args.spend_end_date,
-            "max_stat_cost_exclusive": args.max_stat_cost,
         }
+        if args.metric_filter:
+            realtime_filter["metric_filters"] = args.metric_filter
+        if args.max_stat_cost:
+            realtime_filter["max_stat_cost_exclusive"] = args.max_stat_cost
+        request["realtime_filter"] = realtime_filter
+        request["workflow"] = "project_realtime_filter_config"
     if filtering:
         request["filtering"] = filtering
 

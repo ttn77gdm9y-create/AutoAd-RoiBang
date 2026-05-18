@@ -30,6 +30,24 @@ STATUS_LABELS = {
     "PROMOTION_STATUS_DISABLE": "已关闭",
     "PROMOTION_STATUS_DELETE": "已删除",
 }
+BUSINESS_STATUS_LABELS = {
+    "normal": "正常",
+    "zero_billing_convert": "有消耗无计费时间转化",
+    "high_cost_low_return": "高消耗低回收",
+    "drop_from_yesterday": "较昨日明显下滑",
+    "inactive_today": "今天无消耗",
+    "high_cost_zero_convert": "项目高消耗无计费时间转化",
+    "low_roi": "项目低 ROI",
+    "running_good": "项目跑量有效",
+    "inactive_enabled": "项目启用但无消耗",
+    "running_watch": "项目跑量观察",
+    "unit_high_cost_zero_convert": "单元高消耗无计费时间转化",
+    "unit_low_roi": "单元低 ROI",
+    "unit_running_good": "单元跑量有效",
+    "unit_inactive_enabled": "单元启用但无消耗",
+    "unit_watch": "单元观察",
+}
+SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2, "none": 3}
 
 
 def _config(request: dict[str, Any] | None) -> dict[str, Any]:
@@ -240,6 +258,217 @@ def _number(value: Any) -> float:
         return 0.0
 
 
+def _business_rules(cfg: dict[str, Any]) -> dict[str, Any]:
+    value = cfg.get("business_rules") if isinstance(cfg.get("business_rules"), dict) else {}
+    return {
+        "account_rules": dict(value.get("account_rules") if isinstance(value.get("account_rules"), dict) else {}),
+        "project_rules": dict(value.get("project_rules") if isinstance(value.get("project_rules"), dict) else {}),
+        "promotion_rules": dict(value.get("promotion_rules") if isinstance(value.get("promotion_rules"), dict) else {}),
+        "message": dict(value.get("message") if isinstance(value.get("message"), dict) else {}),
+    }
+
+
+def _rule(rules: dict[str, Any], key: str, default: dict[str, Any]) -> dict[str, Any]:
+    value = rules.get(key) if isinstance(rules.get(key), dict) else {}
+    merged = {**default, **value}
+    merged["enabled"] = bool(merged.get("enabled", True))
+    return merged
+
+
+def _metric_value(item: dict[str, Any], field: str) -> Any:
+    today = item.get("metrics", {}).get("today", {})
+    return today.get(field) if isinstance(today, dict) else None
+
+
+def _status_payload(status: str, severity: str, reason: str = "") -> dict[str, Any]:
+    reasons = [reason] if reason else []
+    return {"business_status": status, "severity": severity, "status_reasons": reasons}
+
+
+def _classify_account(account: dict[str, Any], rules: dict[str, Any]) -> dict[str, Any]:
+    today = account.get("metrics", {}).get("today", {})
+    yesterday = account.get("metrics", {}).get("yesterday", {})
+    stat_cost = _number(today.get("stat_cost"))
+    billing_convert_cnt = _number(today.get("billing_convert_cnt"))
+    roi_raw = today.get("billing_1day_pay_roi")
+    roi = None if roi_raw is None else _number(roi_raw)
+    zero_convert = _rule(rules, "zero_billing_convert", {"enabled": True, "min_stat_cost": 1000})
+    if zero_convert["enabled"] and stat_cost >= _number(zero_convert.get("min_stat_cost")) and billing_convert_cnt <= 0:
+        return _status_payload(
+            "zero_billing_convert",
+            "high",
+            f"今天消耗>={_number(zero_convert.get('min_stat_cost')):g} 且计费时间转化数为0",
+        )
+    low_roi = _rule(rules, "low_roi", {"enabled": True, "min_stat_cost": 1500, "roi_lt": 0.05})
+    if (
+        low_roi["enabled"]
+        and stat_cost >= _number(low_roi.get("min_stat_cost"))
+        and roi is not None
+        and roi < _number(low_roi.get("roi_lt"))
+    ):
+        return _status_payload(
+            "high_cost_low_return",
+            "high",
+            f"今天消耗>={_number(low_roi.get('min_stat_cost')):g} 且计费当日ROI<{_number(low_roi.get('roi_lt')):g}",
+        )
+    drop = _rule(
+        rules,
+        "drop_from_yesterday",
+        {"enabled": True, "yesterday_min_stat_cost": 1000, "today_vs_yesterday_ratio_lt": 0.3},
+    )
+    yesterday_cost = _number(yesterday.get("stat_cost"))
+    if (
+        drop["enabled"]
+        and yesterday_cost >= _number(drop.get("yesterday_min_stat_cost"))
+        and stat_cost < yesterday_cost * _number(drop.get("today_vs_yesterday_ratio_lt"))
+    ):
+        return _status_payload(
+            "drop_from_yesterday",
+            "medium",
+            f"今日消耗低于昨日消耗的{_number(drop.get('today_vs_yesterday_ratio_lt')):g}",
+        )
+    if stat_cost <= 0:
+        return _status_payload("inactive_today", "medium", "今天无消耗")
+    return _status_payload("normal", "none")
+
+
+def _classify_project(project: dict[str, Any], rules: dict[str, Any]) -> dict[str, Any]:
+    stat_cost = _number(_metric_value(project, "stat_cost"))
+    billing_convert_cnt = _number(_metric_value(project, "billing_convert_cnt"))
+    roi_raw = _metric_value(project, "billing_1day_pay_roi")
+    roi = None if roi_raw is None else _number(roi_raw)
+    status = str(project.get("status") or "").strip()
+    zero_convert = _rule(rules, "high_cost_zero_convert", {"enabled": True, "min_stat_cost": 500})
+    if zero_convert["enabled"] and stat_cost >= _number(zero_convert.get("min_stat_cost")) and billing_convert_cnt <= 0:
+        return _status_payload(
+            "high_cost_zero_convert",
+            "high",
+            f"今天消耗>={_number(zero_convert.get('min_stat_cost')):g} 且计费时间转化数为0",
+        )
+    low_roi = _rule(rules, "low_roi", {"enabled": True, "min_stat_cost": 800, "billing_1day_pay_roi_lt": 0.05})
+    if (
+        low_roi["enabled"]
+        and stat_cost >= _number(low_roi.get("min_stat_cost"))
+        and roi is not None
+        and roi < _number(low_roi.get("billing_1day_pay_roi_lt"))
+    ):
+        return _status_payload(
+            "low_roi",
+            "high",
+            f"今天消耗>={_number(low_roi.get('min_stat_cost')):g} 且计费当日ROI<{_number(low_roi.get('billing_1day_pay_roi_lt')):g}",
+        )
+    good = _rule(rules, "running_good", {"enabled": True, "min_stat_cost": 500, "billing_convert_cnt_gte": 1})
+    if (
+        good["enabled"]
+        and stat_cost >= _number(good.get("min_stat_cost"))
+        and billing_convert_cnt >= _number(good.get("billing_convert_cnt_gte"))
+    ):
+        return _status_payload("running_good", "none", "今天有消耗且有计费时间转化")
+    inactive = _rule(rules, "inactive_enabled", {"enabled": True, "max_stat_cost": 0})
+    if inactive["enabled"] and status == "PROJECT_STATUS_ENABLE" and stat_cost <= _number(inactive.get("max_stat_cost")):
+        return _status_payload("inactive_enabled", "medium", "项目启用但今天无消耗")
+    if status == "PROJECT_STATUS_ENABLE" and stat_cost > 0:
+        return _status_payload("running_watch", "low", "项目启用且今天有消耗，继续观察")
+    return _status_payload("normal", "none")
+
+
+def _classify_promotion(promotion: dict[str, Any], rules: dict[str, Any]) -> dict[str, Any]:
+    stat_cost = _number(_metric_value(promotion, "stat_cost"))
+    billing_convert_cnt = _number(_metric_value(promotion, "billing_convert_cnt"))
+    roi_raw = _metric_value(promotion, "billing_1day_pay_roi")
+    roi = None if roi_raw is None else _number(roi_raw)
+    status = str(promotion.get("status") or "").strip()
+    zero_convert = _rule(rules, "high_cost_zero_convert", {"enabled": True, "min_stat_cost": 300})
+    if zero_convert["enabled"] and stat_cost >= _number(zero_convert.get("min_stat_cost")) and billing_convert_cnt <= 0:
+        return _status_payload(
+            "unit_high_cost_zero_convert",
+            "high",
+            f"今天消耗>={_number(zero_convert.get('min_stat_cost')):g} 且计费时间转化数为0",
+        )
+    low_roi = _rule(rules, "low_roi", {"enabled": True, "min_stat_cost": 500, "billing_1day_pay_roi_lt": 0.05})
+    if (
+        low_roi["enabled"]
+        and stat_cost >= _number(low_roi.get("min_stat_cost"))
+        and roi is not None
+        and roi < _number(low_roi.get("billing_1day_pay_roi_lt"))
+    ):
+        return _status_payload(
+            "unit_low_roi",
+            "high",
+            f"今天消耗>={_number(low_roi.get('min_stat_cost')):g} 且计费当日ROI<{_number(low_roi.get('billing_1day_pay_roi_lt')):g}",
+        )
+    good = _rule(rules, "running_good", {"enabled": True, "min_stat_cost": 300, "billing_convert_cnt_gte": 1})
+    if (
+        good["enabled"]
+        and stat_cost >= _number(good.get("min_stat_cost"))
+        and billing_convert_cnt >= _number(good.get("billing_convert_cnt_gte"))
+    ):
+        return _status_payload("unit_running_good", "none", "今天有消耗且有计费时间转化")
+    if status == "PROMOTION_STATUS_ENABLE" and stat_cost <= 0:
+        return _status_payload("unit_inactive_enabled", "medium", "单元启用但今天无消耗")
+    if status == "PROMOTION_STATUS_ENABLE" and stat_cost > 0:
+        return _status_payload("unit_watch", "low", "单元启用且今天有消耗，继续观察")
+    return _status_payload("normal", "none")
+
+
+def _apply_business_classification(entities: dict[str, list[dict[str, Any]]], rules: dict[str, Any]) -> None:
+    for account in entities["accounts"]:
+        account.update(_classify_account(account, rules["account_rules"]))
+    for project in entities["projects"]:
+        project.update(_classify_project(project, rules["project_rules"]))
+    for promotion in entities["promotions"]:
+        promotion.update(_classify_promotion(promotion, rules["promotion_rules"]))
+
+
+def _status_counts(items: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in items:
+        status = str(item.get("business_status") or "unknown")
+        counts[status] = counts.get(status, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _attention_item(entity_type: str, item: dict[str, Any]) -> dict[str, Any]:
+    if entity_type == "account":
+        entity_id = str(item.get("advertiser_id") or "")
+        entity_name = str(item.get("account_name") or entity_id)
+    elif entity_type == "project":
+        entity_id = str(item.get("project_id") or "")
+        entity_name = str(item.get("project_name") or entity_id)
+    else:
+        entity_id = str(item.get("promotion_id") or "")
+        entity_name = str(item.get("promotion_name") or entity_id)
+    return {
+        "entity_type": entity_type,
+        "advertiser_id": str(item.get("advertiser_id") or ""),
+        "advertiser_name": str(item.get("account_name") or ""),
+        "entity_id": entity_id,
+        "entity_name": entity_name,
+        "business_status": str(item.get("business_status") or ""),
+        "severity": str(item.get("severity") or "none"),
+        "reason": "；".join(str(reason) for reason in item.get("status_reasons") or []),
+        "metrics": dict(item.get("metrics") or {}),
+    }
+
+
+def _attention_items(entities: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for entity_type, key in [("account", "accounts"), ("project", "projects"), ("promotion", "promotions")]:
+        for item in entities[key]:
+            if str(item.get("severity") or "none") == "none":
+                continue
+            items.append(_attention_item(entity_type, item))
+    return sorted(
+        items,
+        key=lambda item: (
+            SEVERITY_ORDER.get(str(item.get("severity") or "none"), 3),
+            -_number((item.get("metrics") or {}).get("today", {}).get("stat_cost")),
+            str(item.get("entity_type") or ""),
+            str(item.get("entity_id") or ""),
+        ),
+    )
+
+
 def _rate(numerator: float, denominator: float) -> float | None:
     if denominator <= 0:
         return None
@@ -319,6 +548,11 @@ def _status_text(value: Any) -> str:
     return STATUS_LABELS.get(status, status or "未知")
 
 
+def _business_status_text(value: Any) -> str:
+    status = str(value or "").strip()
+    return BUSINESS_STATUS_LABELS.get(status, status or "未知")
+
+
 def _aggregate_window_metrics(items: list[dict[str, Any]], window: str) -> dict[str, Any]:
     total = _empty_metrics()
     for item in items:
@@ -357,6 +591,31 @@ def _top_entities(items: list[dict[str, Any]], *, limit: int = 5) -> list[dict[s
         key=lambda item: float((item.get("metrics") or {}).get("today", {}).get("stat_cost") or 0),
         reverse=True,
     )[:limit]
+
+
+def _counts_text(counts: dict[str, int]) -> str:
+    if not counts:
+        return "无"
+    return " / ".join(f"{_business_status_text(key)} {value}" for key, value in counts.items())
+
+
+def _suggestion_counts_text(summary: dict[str, Any]) -> list[str]:
+    items = [
+        ("建议关闭项目", "suggest_close_project_count"),
+        ("建议删除项目", "suggest_delete_project_count"),
+        ("建议下调预算", "suggest_lower_budget_count"),
+        ("建议下调出价", "suggest_lower_bid_count"),
+        ("继续跑", "continue_running_count"),
+        ("观察", "watch_count"),
+        ("单元好信号", "unit_good_signal_count"),
+        ("单元差信号", "unit_bad_signal_count"),
+    ]
+    lines: list[str] = []
+    for label, key in items:
+        value = int(summary.get(key) or 0)
+        if value > 0:
+            lines.append(f"- {label} {value}")
+    return lines or ["- 暂无建议"]
 
 
 def _attention_projects(projects: list[dict[str, Any]], *, limit: int = 5) -> list[dict[str, Any]]:
@@ -403,23 +662,36 @@ def _format_delivery_patrol_message(payload: dict[str, Any]) -> str:
             f"昨日{_metric_text(yesterday_overall)}"
         ),
         "",
-        "账户数据",
+        "状态分布",
+        f"- 账户：{_counts_text((summary.get('business_status_counts') or {}).get('accounts', {}))}",
+        f"- 项目：{_counts_text((summary.get('business_status_counts') or {}).get('projects', {}))}",
+        f"- 单元：{_counts_text((summary.get('business_status_counts') or {}).get('promotions', {}))}",
+        "",
+        "重点账户",
     ]
+    message_cfg = payload.get("message_config") if isinstance(payload.get("message_config"), dict) else {}
+    top_account_limit = int(message_cfg.get("top_account_limit") or 5)
+    top_project_limit = int(message_cfg.get("top_project_limit") or 8)
+    top_promotion_limit = int(message_cfg.get("top_promotion_limit") or 8)
     accounts = payload.get("accounts") if isinstance(payload.get("accounts"), list) else []
-    for account in _top_entities([item for item in accounts if isinstance(item, dict)], limit=8):
+    for account in _top_entities([item for item in accounts if isinstance(item, dict)], limit=top_account_limit):
         today = account.get("metrics", {}).get("today", {})
-        lines.append(f"- 账户：{account.get('account_name') or account.get('advertiser_id')}，{_metric_text(today)}")
+        lines.append(
+            f"- 账户：{account.get('account_name') or account.get('advertiser_id')}，"
+            f"状态 {_business_status_text(account.get('business_status'))}，{_metric_text(today)}"
+        )
     if not any(line.startswith("- 账户：") for line in lines):
         lines.append("- 无今日消耗账户")
 
     lines.extend(["", "重点项目"])
     projects = payload.get("projects") if isinstance(payload.get("projects"), list) else []
-    for project in _top_entities([item for item in projects if isinstance(item, dict)], limit=8):
+    for project in _top_entities([item for item in projects if isinstance(item, dict)], limit=top_project_limit):
         today = project.get("metrics", {}).get("today", {})
         lines.append(
             f"- {project.get('project_name') or project.get('project_id')}，"
             f"项目ID {project.get('project_id') or '未知'}，"
-            f"状态 {_status_text(project.get('status'))}，{_metric_text(today)}"
+            f"状态 {_status_text(project.get('status'))}，"
+            f"业务状态 {_business_status_text(project.get('business_status'))}，{_metric_text(today)}"
         )
     if not any(line.startswith("- ") for line in lines[lines.index("重点项目") + 1 :]):
         lines.append("- 无今日消耗项目")
@@ -431,6 +703,7 @@ def _format_delivery_patrol_message(payload: dict[str, Any]) -> str:
             f"- {project.get('project_name') or project.get('project_id')}，"
             f"项目ID {project.get('project_id') or '未知'}，"
             f"状态 {_status_text(project.get('status'))}，"
+            f"业务状态 {_business_status_text(project.get('business_status'))}，"
             f"原因 {project.get('attention_reason')}，{_metric_text(today)}"
         )
     if not any(line.startswith("- ") for line in lines[lines.index("要注意的重点项目") + 1 :]):
@@ -438,14 +711,24 @@ def _format_delivery_patrol_message(payload: dict[str, Any]) -> str:
 
     lines.extend(["", "重点单元"])
     promotions = payload.get("promotions") if isinstance(payload.get("promotions"), list) else []
-    for promotion in _top_entities([item for item in promotions if isinstance(item, dict)], limit=8):
+    for promotion in _top_entities([item for item in promotions if isinstance(item, dict)], limit=top_promotion_limit):
         today = promotion.get("metrics", {}).get("today", {})
         lines.append(
             f"- {promotion.get('promotion_name') or promotion.get('promotion_id')}，"
-            f"状态 {_status_text(promotion.get('status'))}，{_metric_text(today)}"
+            f"单元ID {promotion.get('promotion_id') or '未知'}，"
+            f"项目ID {promotion.get('project_id') or '未知'}，"
+            f"状态 {_status_text(promotion.get('status'))}，"
+            f"业务状态 {_business_status_text(promotion.get('business_status'))}，{_metric_text(today)}"
         )
     if not any(line.startswith("- ") for line in lines[lines.index("重点单元") + 1 :]):
         lines.append("- 无今日消耗单元")
+    suggestions = payload.get("delivery_patrol_suggestions") if isinstance(payload.get("delivery_patrol_suggestions"), dict) else {}
+    if suggestions:
+        suggestion_summary = suggestions.get("summary") if isinstance(suggestions.get("summary"), dict) else {}
+        lines.extend(["", "今日建议", *_suggestion_counts_text(suggestion_summary)])
+        suggestion_artifact_path = str(suggestions.get("artifact_path") or "")
+        if suggestion_artifact_path:
+            lines.append(f"- 建议 JSON：{suggestion_artifact_path}")
     artifact_path = str(payload.get("artifact_path") or "")
     if artifact_path:
         lines.extend(["", f"完整 JSON：{artifact_path}"])
@@ -462,6 +745,39 @@ def _deliver_feishu(cfg: dict[str, Any], message: str, *, feishu_sender: FeishuS
     except Exception as exc:
         return {"enabled": True, "attempted": True, "ok": False, "reason": str(exc)}
     return {"enabled": True, "attempted": True, **result}
+
+
+def _build_suggestions_from_patrol(
+    payload: dict[str, Any],
+    cfg: dict[str, Any],
+    *,
+    db_path: str | Path,
+    runs_dir: str | Path,
+) -> dict[str, Any] | None:
+    suggestions_cfg = cfg.get("suggestions") if isinstance(cfg.get("suggestions"), dict) else {}
+    if not bool(suggestions_cfg.get("enabled", False)):
+        return None
+    request: dict[str, Any] = {}
+    request_path = str(suggestions_cfg.get("request_path") or "").strip()
+    if request_path:
+        loaded = json.loads(Path(request_path).read_text(encoding="utf-8"))
+        request = loaded.get("delivery_patrol_suggestions") if isinstance(loaded.get("delivery_patrol_suggestions"), dict) else loaded
+    if not isinstance(request, dict):
+        request = {}
+    inline_request = suggestions_cfg.get("request") if isinstance(suggestions_cfg.get("request"), dict) else {}
+    request = {**request, **inline_request}
+    request_payload = dict(request)
+    request_payload["target_date"] = str(payload.get("windows", {}).get("today") or payload.get("summary", {}).get("target_date") or "")
+    request_payload["db_path"] = str(suggestions_cfg.get("db_path") or db_path)
+    from roibang_v2.workflows.delivery_patrol_suggestions import build_delivery_patrol_suggestions
+
+    suggestions = build_delivery_patrol_suggestions(payload, request_payload)
+    artifact_path = write_run_artifact(runs_dir, "delivery_patrol_suggestions", suggestions)
+    suggestions = {**suggestions, "artifact_path": str(artifact_path)}
+    suggestions_dir = Path(runs_dir) / "delivery_patrol_suggestions"
+    suggestions_dir.mkdir(parents=True, exist_ok=True)
+    (suggestions_dir / "latest.json").write_text(json.dumps(suggestions, ensure_ascii=False, indent=2), encoding="utf-8")
+    return suggestions
 
 
 def _window_for_date(target_dates: dict[str, str], value: Any) -> str:
@@ -654,6 +970,14 @@ def _build_result(plan_payload: dict[str, Any], execution: dict[str, Any]) -> di
     }
 
 
+def _business_status_counts(entities: dict[str, list[dict[str, Any]]]) -> dict[str, dict[str, int]]:
+    return {
+        "accounts": _status_counts(entities["accounts"]),
+        "projects": _status_counts(entities["projects"]),
+        "promotions": _status_counts(entities["promotions"]),
+    }
+
+
 def _require_readonly_enabled(openapi_http: dict[str, Any], execution: dict[str, Any], transport: Transport | None) -> None:
     if transport is not None:
         return
@@ -714,9 +1038,13 @@ def run_delivery_patrol_request(
         sleeper=http_sleeper,
     )
     entities = _build_result(plan_payload, execution)
+    rules = _business_rules(cfg)
+    _apply_business_classification(entities, rules)
+    attention_items = _attention_items(entities)
     transport_calls = int(execution["summary"]["transport_calls"])
     discovery_calls = int((plan_payload.get("account_discovery") or {}).get("external_api_calls") or 0)
     overall_metrics = _overall_metrics(entities["accounts"])
+    status_counts = _business_status_counts(entities)
     payload = {
         "ok": True,
         "workflow": "delivery_patrol",
@@ -732,12 +1060,19 @@ def run_delivery_patrol_request(
             "project_count": len(entities["projects"]),
             "promotion_count": len(entities["promotions"]),
             "overall_metrics": overall_metrics,
+            "business_status_counts": status_counts,
+            "attention_count": len(attention_items),
         },
         "windows": {
             "today": plan_payload["target_dates"]["today"],
             "yesterday": plan_payload["target_dates"]["yesterday"],
         },
         **entities,
+        "attention_items": attention_items,
+        "top_accounts": _top_entities(entities["accounts"], limit=int(rules["message"].get("top_account_limit") or 5)),
+        "top_projects": _top_entities(entities["projects"], limit=int(rules["message"].get("top_project_limit") or 8)),
+        "top_promotions": _top_entities(entities["promotions"], limit=int(rules["message"].get("top_promotion_limit") or 8)),
+        "message_config": rules["message"],
         "plan_summary": plan_payload["summary"],
         "execution_summary": execution["summary"],
         "guardrails": [
@@ -746,6 +1081,11 @@ def run_delivery_patrol_request(
         ],
     }
     payload["artifact_path"] = str(write_run_artifact(runs_dir, "delivery_patrol", payload))
+    suggestions = _build_suggestions_from_patrol(payload, cfg, db_path=db_path, runs_dir=runs_dir)
+    if suggestions is not None:
+        payload["delivery_patrol_suggestions"] = suggestions
+        payload["summary"]["suggestion_count"] = int(suggestions.get("summary", {}).get("suggestion_count") or 0)
+        payload["summary"]["suggestion_artifact_path"] = str(suggestions.get("artifact_path") or "")
     payload["message"] = _format_delivery_patrol_message(payload)
     patrol_dir = Path(runs_dir) / "delivery_patrol"
     patrol_dir.mkdir(parents=True, exist_ok=True)

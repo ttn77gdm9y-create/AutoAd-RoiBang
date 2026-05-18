@@ -448,6 +448,7 @@ def _print_result(result: dict) -> None:
         "transport_call_count": result["transport_call_count"],
         "idempotency": result["idempotency"],
         "material_bind_records": result["material_bind_records"],
+        "efficiency_report": result.get("efficiency_report", {}),
         "artifact_path": result["artifact_path"],
     }
     if "local_config_readiness" in result:

@@ -67,6 +67,32 @@ def _completed_execute_once_artifact() -> dict:
         ],
         "material_bind_records": [{"status": "recorded", "bind_key": "bind-1"}],
         "transport_call_count": 4,
+        "efficiency_report": {
+            "api_calls": {
+                "total": 4,
+                "direct_by_step": {
+                    "create_project": 1,
+                    "bind_material": 1,
+                    "lookup_target_material": 1,
+                    "create_unit": 1,
+                },
+                "bind_material_direct": 1,
+                "lookup_target_material_direct": 1,
+                "precheck_existing_target_material": 0,
+            },
+            "material_push": {
+                "recorded_bind_count": 1,
+                "skipped_existing_material_bind_count": 0,
+                "skipped_existing_target_material_count": 0,
+            },
+            "failure_recovery": {
+                "skipped_account_count": 0,
+                "post_run_retry_status": "not_triggered",
+                "post_run_retry_attempted_count": 0,
+                "post_run_retry_recovered_count": 0,
+                "post_run_retry_failed_count": 0,
+            },
+        },
         "idempotency": {
             "status": "checked",
             "skipped_existing_provider_id_count": 0,
@@ -172,6 +198,8 @@ def test_create_live_execute_report_summarizes_completed_execution_without_api_c
     assert result["summary"]["created_project_count"] == 1
     assert result["summary"]["created_unit_count"] == 1
     assert result["summary"]["material_bind_count"] == 1
+    assert result["efficiency_report"]["api_calls"]["bind_material_direct"] == 1
+    assert result["next_steps"] == ["无需人工处理。"]
     assert result["create_plan_summary"]["plan_id"] == "plan-1"
     assert result["create_plan_summary"]["launch_mode"] == "create_only"
     assert result["create_plan_summary"]["target_account_count"] == 1

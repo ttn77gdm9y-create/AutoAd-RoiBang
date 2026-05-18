@@ -211,7 +211,7 @@
         "mode": "foreground"
       },
       "policy": {"config": "configs/runtime.openapi-execute.local.example.json", "request": "configs/delivery-patrol.daily-readonly.example.json", "readonly": true},
-      "result_contract": {"workflow": "delivery_patrol", "artifact_dir": "data/runs/delivery_patrol", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "summary", "accounts", "projects", "promotions", "message", "delivery"], "must_equal": {"execution_enabled": false}},
+      "result_contract": {"workflow": "delivery_patrol", "artifact_dir": "data/runs/delivery_patrol", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "summary", "accounts", "projects", "promotions", "message", "delivery", "delivery_patrol_suggestions"], "must_equal": {"execution_enabled": false}},
       "delivery": {"channel": "feishu"}
     },
     {
@@ -221,7 +221,7 @@
       "enabled": false,
       "schedule": {"type": "cron", "expr": "45 10 * * *", "tz": "Asia/Shanghai"},
       "script": {
-        "command": ["python3", "scripts/run_delivery_patrol_suggestions.py", "--patrol-artifact", "data/runs/delivery_patrol/latest.json", "--request", "configs/delivery-patrol-suggestions.example.json"],
+        "command": ["python3", "scripts/run_delivery_patrol_suggestions.py", "--patrol-artifact", "data/runs/delivery_patrol/latest.json", "--request", "configs/delivery-patrol-suggestions.example.json", "--db", "data/roibang_v2.sqlite3"],
         "mode": "foreground"
       },
       "policy": {"patrol_artifact": "data/runs/delivery_patrol/latest.json", "request": "configs/delivery-patrol-suggestions.example.json", "readonly": true},

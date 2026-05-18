@@ -6,9 +6,9 @@ from roibang_v2.workflows.project_status_update_config import build_project_stat
 from roibang_v2.workflows.project_status_update_config import run_project_status_update_config_request
 
 
-def _load_script():
-    script_path = Path("scripts/run_project_status_update_config.py")
-    spec = importlib.util.spec_from_file_location("run_project_status_update_config", script_path)
+def _load_script(name: str = "run_project_status_update_config.py"):
+    script_path = Path("scripts") / name
+    spec = importlib.util.spec_from_file_location(name.removesuffix(".py"), script_path)
     module = importlib.util.module_from_spec(spec)
     assert spec and spec.loader
     spec.loader.exec_module(module)
@@ -242,6 +242,163 @@ def test_project_management_update_config_filters_delete_actions_by_realtime_spe
     assert calls[1]["payload"]["end_time"] == "2026-05-14"
 
 
+def test_project_management_update_config_filters_by_yesterday_billing_convert_cnt():
+    calls: list[dict] = []
+
+    def transport(request: dict) -> dict:
+        calls.append(request)
+        if request["operation"] == "lookup_project_list":
+            return {
+                "code": 0,
+                "data": {
+                    "list": [
+                        {"project_id": "p-zero", "name": "0515_郭靖_无计费转化"},
+                        {"project_id": "p-one", "name": "0515_郭靖_有计费转化"},
+                    ]
+                },
+            }
+        if request["operation"] == "lookup_project_report":
+            return {
+                "code": 0,
+                "data": {
+                    "rows": [
+                        {
+                            "dimensions": {"cdp_project_id": "p-zero", "cdp_project_name": "0515_郭靖_无计费转化"},
+                            "metrics": {
+                                "stat_cost": "88",
+                                "active_register": "2",
+                                "attribution_convert_cnt": "0",
+                                "attribution_billing_game_in_app_roi_1day": "0",
+                            },
+                        },
+                        {
+                            "dimensions": {"cdp_project_id": "p-one", "cdp_project_name": "0515_郭靖_有计费转化"},
+                            "metrics": {
+                                "stat_cost": "120",
+                                "active_register": "3",
+                                "attribution_convert_cnt": "1",
+                                "attribution_billing_game_in_app_roi_1day": "0.12",
+                            },
+                        },
+                    ]
+                },
+            }
+        raise AssertionError(request)
+
+    result = build_project_status_update_config(
+        {
+            "project_update_id": "disable-yesterday-zero-billing-001",
+            "advertiser_ids": ["adv-1"],
+            "action_type": "status_update",
+            "opt_status": "DISABLE",
+            "name_contains": ["0515"],
+            "realtime_filter": {
+                "window": "yesterday",
+                "end_date": "2026-05-16",
+                "metric_filters": [{"field": "billing_convert_cnt", "op": "eq", "value": 0}],
+            },
+        },
+        transport=transport,
+    )
+
+    assert result["summary"]["action_count"] == 1
+    assert result["summary"]["realtime_filter"]["window"] == "yesterday"
+    assert result["summary"]["realtime_filter"]["start_date"] == "2026-05-15"
+    assert result["project_update"]["actions"][0]["project_id"] == "p-zero"
+    assert result["project_update"]["actions"][0]["metrics"] == {
+        "stat_cost": 88.0,
+        "show_cnt": 0.0,
+        "click_cnt": 0.0,
+        "ctr": None,
+        "active_register": 2.0,
+        "register_cost": 44.0,
+        "billing_convert_cnt": 0.0,
+        "billing_conversion_cost": None,
+        "billing_1day_pay_roi": None,
+    }
+    assert result["matched_projects"][0]["match_reasons"] == ["billing_convert_cnt eq 0.0"]
+    assert result["skipped_projects"][0]["skip_reason"] == "metric_filter_not_matched"
+    assert "attribution_convert_cnt" in calls[1]["payload"]["metrics"]
+
+
+def test_project_management_update_config_filters_by_last_3_days_cost_and_register_cost():
+    def transport(request: dict) -> dict:
+        if request["operation"] == "lookup_project_list":
+            return {
+                "code": 0,
+                "data": {
+                    "list": [
+                        {"project_id": "p-low", "name": "郭靖_低消耗"},
+                        {"project_id": "p-high", "name": "郭靖_高消耗"},
+                    ]
+                },
+            }
+        if request["operation"] == "lookup_project_report":
+            return {
+                "code": 0,
+                "data": {
+                    "rows": [
+                        {
+                            "dimensions": {"cdp_project_id": "p-low"},
+                            "metrics": {"stat_cost": "199.99", "active_register": "1", "attribution_convert_cnt": "0"},
+                        },
+                        {
+                            "dimensions": {"cdp_project_id": "p-high"},
+                            "metrics": {"stat_cost": "300", "active_register": "1", "attribution_convert_cnt": "0"},
+                        },
+                    ]
+                },
+            }
+        raise AssertionError(request)
+
+    result = build_project_status_update_config(
+        {
+            "project_update_id": "delete-last-3-low-cost-001",
+            "advertiser_ids": ["adv-1"],
+            "action_type": "delete_project",
+            "realtime_filter": {
+                "window": "last_3_days",
+                "end_date": "2026-05-16",
+                "metric_filters": [
+                    {"field": "stat_cost", "op": "lt", "value": 200},
+                    {"field": "register_cost", "op": "gte", "value": 100},
+                ],
+            },
+        },
+        transport=transport,
+    )
+
+    assert result["summary"]["action_count"] == 1
+    assert result["summary"]["realtime_filter"]["start_date"] == "2026-05-14"
+    assert result["summary"]["realtime_filter"]["end_date"] == "2026-05-16"
+    assert result["project_update"]["actions"][0]["project_id"] == "p-low"
+    assert result["matched_projects"][0]["match_reasons"] == ["stat_cost lt 200.0", "register_cost gte 100.0"]
+
+
+def test_project_management_update_config_rejects_unsupported_realtime_window():
+    def transport(_request: dict) -> dict:
+        raise AssertionError("transport should not be called")
+
+    try:
+        build_project_status_update_config(
+            {
+                "project_update_id": "bad-window",
+                "advertiser_ids": ["adv-1"],
+                "action_type": "delete_project",
+                "realtime_filter": {
+                    "window": "last_7_days",
+                    "end_date": "2026-05-16",
+                    "metric_filters": [{"field": "stat_cost", "op": "lt", "value": 100}],
+                },
+            },
+            transport=transport,
+        )
+    except ValueError as exc:
+        assert "only supports today, yesterday, last_3_days" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
 def test_run_project_status_update_config_writes_project_update_json(tmp_path: Path):
     def transport(_request: dict) -> dict:
         return {"code": 0, "data": {"list": [{"project_id": "p-1", "name": "勇者突进"}]}}
@@ -307,3 +464,39 @@ def test_project_status_update_config_cli_reads_nested_runner_transport_config()
     )
 
     assert config == {"enabled": True, "allow_mutation": True, "run_id": "run-001"}
+
+
+def test_project_realtime_filter_cli_parses_metric_filter():
+    module = _load_script("run_project_management_update_config.py")
+
+    assert module._parse_metric_filter("billing_convert_cnt:eq:0") == {
+        "field": "billing_convert_cnt",
+        "op": "eq",
+        "value": 0.0,
+    }
+
+
+def test_project_realtime_filter_cli_wrapper_defaults_to_delete_project(tmp_path: Path, capsys):
+    module = _load_script("run_project_realtime_filter_config.py")
+
+    exit_code = module.run_from_args(
+        [
+            "--project-update-id",
+            "delete-low-cost",
+            "--advertiser-id",
+            "adv-1",
+            "--spend-window",
+            "today",
+            "--metric-filter",
+            "stat_cost:lt:100",
+            "--output",
+            str(tmp_path / "delete.local.json"),
+            "--runs-dir",
+            str(tmp_path / "runs"),
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert exit_code == 1
+    assert output["workflow"] == "project_management_update_config"
+    assert output["blocking_reasons"] == ["project management update config requires --config for live project lookup"]

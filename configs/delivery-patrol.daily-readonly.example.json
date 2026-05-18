@@ -36,6 +36,70 @@
         "runtime_file": "data/secrets/feishu.runtime.local.json"
       }
     },
+    "suggestions": {
+      "enabled": true,
+      "request_path": "configs/delivery-patrol-suggestions.example.json",
+      "db_path": "data/roibang_v2.sqlite3"
+    },
+    "business_rules": {
+      "account_rules": {
+        "zero_billing_convert": {
+          "enabled": true,
+          "min_stat_cost": 1000
+        },
+        "low_roi": {
+          "enabled": true,
+          "min_stat_cost": 1500,
+          "roi_lt": 0.05
+        },
+        "drop_from_yesterday": {
+          "enabled": true,
+          "yesterday_min_stat_cost": 1000,
+          "today_vs_yesterday_ratio_lt": 0.3
+        }
+      },
+      "project_rules": {
+        "high_cost_zero_convert": {
+          "enabled": true,
+          "min_stat_cost": 500
+        },
+        "low_roi": {
+          "enabled": true,
+          "min_stat_cost": 800,
+          "billing_1day_pay_roi_lt": 0.05
+        },
+        "running_good": {
+          "enabled": true,
+          "min_stat_cost": 500,
+          "billing_convert_cnt_gte": 1
+        },
+        "inactive_enabled": {
+          "enabled": true,
+          "max_stat_cost": 0
+        }
+      },
+      "promotion_rules": {
+        "high_cost_zero_convert": {
+          "enabled": true,
+          "min_stat_cost": 300
+        },
+        "low_roi": {
+          "enabled": true,
+          "min_stat_cost": 500,
+          "billing_1day_pay_roi_lt": 0.05
+        },
+        "running_good": {
+          "enabled": true,
+          "min_stat_cost": 300,
+          "billing_convert_cnt_gte": 1
+        }
+      },
+      "message": {
+        "top_account_limit": 5,
+        "top_project_limit": 8,
+        "top_promotion_limit": 8
+      }
+    },
     "openapi_http": {
       "enabled": true,
       "token_store": {

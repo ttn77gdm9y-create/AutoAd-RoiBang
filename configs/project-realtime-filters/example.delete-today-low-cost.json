@@ -1,0 +1,21 @@
+{
+  "project_update_id": "delete-today-low-cost-example",
+  "operator": "",
+  "allowed_target_accounts_path": "configs/control-allowed-accounts.local.json",
+  "advertiser_ids": ["185xxxxxxxxxxxxx"],
+  "action_type": "delete_project",
+  "name_contains": ["0515"],
+  "realtime_filter": {
+    "window": "today",
+    "end_date": "",
+    "metric_filters": [
+      {
+        "field": "stat_cost",
+        "op": "lt",
+        "value": 100
+      }
+    ]
+  },
+  "reason": "项目名包含 0515，今天消耗低于 100",
+  "output_path": "configs/project-updates/delete-today-low-cost.local.json"
+}

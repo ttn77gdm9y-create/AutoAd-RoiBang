@@ -14,6 +14,7 @@ from roibang_v2.workflows.create_material_bind_ledger import (
 from roibang_v2.workflows.create_provider_id_ledger import record_create_provider_id
 from roibang_v2.workflows.create_live_execute_once import (
     _project_delete_payload,
+    _should_post_run_retry_unit_failure,
     _target_material_item_for_lookup,
     run_create_live_execute_once_request,
 )
@@ -68,6 +69,31 @@ def test_project_delete_payload_casts_numeric_ids_to_ints():
         "advertiser_id": 1856647530917899,
         "project_ids": [7638636431363719210],
     }
+
+
+def test_post_run_retry_policy_is_config_driven():
+    retryable_row = {
+        "operation": "create_unit",
+        "status": "skipped_account_after_live_step_failure",
+        "code": 50000,
+        "message": "服务内部错误，请稍后重试",
+    }
+    network_row = {
+        "operation": "create_unit",
+        "status": "skipped_account_after_live_step_failure",
+        "code": -1,
+        "message": "create HTTP request failed with transient network error",
+    }
+    assert _should_post_run_retry_unit_failure(retryable_row, _policy()) is True
+    assert _should_post_run_retry_unit_failure(network_row, _policy()) is True
+
+    policy = _policy()
+    policy["create_live_execute_once"]["post_run_retry"] = {
+        "enabled": True,
+        "retry_api_codes": [],
+        "retry_error_fragments": [],
+    }
+    assert _should_post_run_retry_unit_failure(retryable_row, policy) is False
 
 
 def test_watch_create_live_progress_cli_prints_current_progress(tmp_path: Path, capsys):
@@ -843,7 +869,10 @@ def test_create_live_execute_once_runs_create_http_transport_in_order(tmp_path: 
         "lookup_target_material",
         "create_unit",
     ]
-    assert result["ordered_steps"] == [
+    assert [
+        {key: row[key] for key in ("operation", "planned_count", "status", "test_transport_call_count")}
+        for row in result["ordered_steps"]
+    ] == [
         {"operation": "create_project", "planned_count": 1, "status": "completed", "test_transport_call_count": 1},
         {
             "operation": "bind_material",
@@ -859,6 +888,8 @@ def test_create_live_execute_once_runs_create_http_transport_in_order(tmp_path: 
         },
         {"operation": "create_unit", "planned_count": 1, "status": "completed", "test_transport_call_count": 1},
     ]
+    assert result["ordered_steps"][0]["duration_seconds"] >= 0
+    assert result["efficiency_report"]["api_calls"]["bind_material_direct"] == 0
     assert [row["provider_id"] for row in result["provider_id_records"]] == [
         "project-001",
         "target-video-001",
@@ -1327,6 +1358,10 @@ def test_create_live_execute_once_retries_transient_unit_failure_after_batch(tmp
     assert result["post_run_retry"]["status"] == "completed"
     assert result["post_run_retry"]["attempted_count"] == 1
     assert result["post_run_retry"]["recovered_count"] == 1
+    assert result["efficiency_report"]["failure_recovery"]["post_run_retry_attempted_count"] == 1
+    assert result["efficiency_report"]["failure_recovery"]["post_run_retry_recovered_count"] == 1
+    assert result["efficiency_report"]["api_calls"]["direct_by_step"]["create_unit"] == 2
+    assert result["efficiency_report"]["api_calls"]["total"] == 5
     assert result["external_api_calls"] == 5
     with sqlite3.connect(db_path) as conn:
         row = conn.execute(
@@ -1612,7 +1647,7 @@ def test_create_live_execute_once_resumes_existing_project_in_same_round(tmp_pat
     assert result["external_api_calls"] == 2
     assert [call["operation"] for call in calls] == ["lookup_target_material", "create_unit"]
     assert result["idempotency"]["skipped_existing_provider_id_count"] == 3
-    assert result["ordered_steps"][0] == {
+    assert {key: result["ordered_steps"][0][key] for key in ("operation", "planned_count", "status", "test_transport_call_count")} == {
         "operation": "create_project",
         "planned_count": 1,
         "status": "skipped_existing_provider_id",

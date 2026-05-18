@@ -273,6 +273,176 @@ def test_delivery_patrol_aggregates_today_and_yesterday_metrics(tmp_path: Path):
     assert json.loads((tmp_path / "runs/delivery_patrol/latest.json").read_text(encoding="utf-8"))["workflow"] == "delivery_patrol"
 
 
+def test_delivery_patrol_adds_business_status_and_attention_items(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    allowlist_path = tmp_path / "allowed.json"
+    bootstrap_database(db_path)
+    _write_allowed_accounts(allowlist_path)
+    request = _request(allowlist_path)
+    request["delivery_patrol"]["business_rules"] = {
+        "account_rules": {
+            "zero_billing_convert": {"enabled": True, "min_stat_cost": 1000},
+            "low_roi": {"enabled": True, "min_stat_cost": 1500, "roi_lt": 0.05},
+        },
+        "project_rules": {
+            "high_cost_zero_convert": {"enabled": True, "min_stat_cost": 500},
+            "low_roi": {"enabled": True, "min_stat_cost": 800, "billing_1day_pay_roi_lt": 0.05},
+            "running_good": {"enabled": True, "min_stat_cost": 500, "billing_convert_cnt_gte": 1},
+        },
+        "promotion_rules": {
+            "high_cost_zero_convert": {"enabled": True, "min_stat_cost": 300},
+            "low_roi": {"enabled": True, "min_stat_cost": 500, "billing_1day_pay_roi_lt": 0.05},
+        },
+    }
+
+    def transport(request: dict) -> dict:
+        if request["endpoint_key"] == "project_list":
+            return {
+                "code": 0,
+                "data": {
+                    "list": [
+                        {
+                            "project_id": "project-zero",
+                            "name": "0516_勇者突进_高消耗无转化",
+                            "project_status": "PROJECT_STATUS_ENABLE",
+                        },
+                        {
+                            "project_id": "project-good",
+                            "name": "0516_勇者突进_有效跑量",
+                            "project_status": "PROJECT_STATUS_ENABLE",
+                        },
+                    ],
+                    "page_info": {"page": 1, "total_page": 1},
+                },
+            }
+        if request["endpoint_key"] == "promotion_list":
+            return {
+                "code": 0,
+                "data": {
+                    "list": [
+                        {
+                            "promotion_id": "promotion-zero",
+                            "project_id": "project-zero",
+                            "name": "0516_勇者突进_无转化单元",
+                            "promotion_status": "PROMOTION_STATUS_ENABLE",
+                        }
+                    ],
+                    "page_info": {"page": 1, "total_page": 1},
+                },
+            }
+        if request["report_preset"] == "account_daily":
+            metrics = {
+                "stat_cost": "1800" if request["date"] == "2026-05-15" else "900",
+                "show_cnt": "10000",
+                "click_cnt": "200",
+                "active_register": "10",
+                "attribution_convert_cnt": "0" if request["date"] == "2026-05-15" else "2",
+                "attribution_billing_game_in_app_roi_1day": "0",
+            }
+            return {"code": 0, "data": {"rows": [{"dimensions": {"stat_time_day": request["date"]}, "metrics": metrics}]}}
+        if request["report_preset"] == "project_daily":
+            rows = []
+            if request["date"] == "2026-05-15":
+                rows = [
+                    {
+                        "dimensions": {
+                            "stat_time_day": request["date"],
+                            "cdp_project_id": "project-zero",
+                            "cdp_project_name": "0516_勇者突进_高消耗无转化",
+                        },
+                        "metrics": {
+                            "stat_cost": "620",
+                            "show_cnt": "5000",
+                            "click_cnt": "100",
+                            "active_register": "3",
+                            "attribution_convert_cnt": "0",
+                            "attribution_billing_game_in_app_roi_1day": "0",
+                        },
+                    },
+                    {
+                        "dimensions": {
+                            "stat_time_day": request["date"],
+                            "cdp_project_id": "project-good",
+                            "cdp_project_name": "0516_勇者突进_有效跑量",
+                        },
+                        "metrics": {
+                            "stat_cost": "900",
+                            "show_cnt": "7000",
+                            "click_cnt": "140",
+                            "active_register": "6",
+                            "attribution_convert_cnt": "2",
+                            "attribution_billing_game_in_app_roi_1day": "0.1",
+                        },
+                    },
+                ]
+            return {"code": 0, "data": {"rows": rows, "page_info": {"page": 1, "total_page": 1}}}
+        if request["report_preset"] == "promotion_daily":
+            rows = []
+            if request["date"] == "2026-05-15":
+                rows = [
+                    {
+                        "dimensions": {
+                            "stat_time_day": request["date"],
+                            "cdp_project_id": "project-zero",
+                            "cdp_project_name": "0516_勇者突进_高消耗无转化",
+                            "cdp_promotion_id": "promotion-zero",
+                            "cdp_promotion_name": "0516_勇者突进_无转化单元",
+                        },
+                        "metrics": {
+                            "stat_cost": "350",
+                            "show_cnt": "3000",
+                            "click_cnt": "60",
+                            "active_register": "1",
+                            "attribution_convert_cnt": "0",
+                            "attribution_billing_game_in_app_roi_1day": "0",
+                        },
+                    }
+                ]
+            return {"code": 0, "data": {"rows": rows, "page_info": {"page": 1, "total_page": 1}}}
+        raise AssertionError(request)
+
+    result = run_delivery_patrol_request(
+        request,
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        transport=transport,
+    )
+
+    account = result["accounts"][0]
+    assert account["business_status"] == "zero_billing_convert"
+    assert account["severity"] == "high"
+    assert account["status_reasons"] == ["今天消耗>=1000 且计费时间转化数为0"]
+    projects = {project["project_id"]: project for project in result["projects"]}
+    assert projects["project-zero"]["business_status"] == "high_cost_zero_convert"
+    assert projects["project-zero"]["severity"] == "high"
+    assert projects["project-good"]["business_status"] == "running_good"
+    promotions = {promotion["promotion_id"]: promotion for promotion in result["promotions"]}
+    assert promotions["promotion-zero"]["business_status"] == "unit_high_cost_zero_convert"
+    assert result["summary"]["business_status_counts"]["accounts"] == {"zero_billing_convert": 1}
+    assert result["summary"]["business_status_counts"]["projects"] == {
+        "high_cost_zero_convert": 1,
+        "running_good": 1,
+    }
+    assert result["summary"]["attention_count"] == 3
+    assert [(item["entity_type"], item["entity_id"], item["business_status"]) for item in result["attention_items"]] == [
+        ("account", "1856647523922953", "zero_billing_convert"),
+        ("project", "project-zero", "high_cost_zero_convert"),
+        ("promotion", "promotion-zero", "unit_high_cost_zero_convert"),
+    ]
+    assert result["top_accounts"][0]["advertiser_id"] == "1856647523922953"
+    assert result["top_projects"][0]["project_id"] == "project-good"
+    assert "状态分布" in result["message"]
+    assert "重点账户" in result["message"]
+    assert "有消耗无计费时间转化 1" in result["message"]
+    assert "项目高消耗无计费时间转化 1" in result["message"]
+    assert "项目跑量有效 1" in result["message"]
+    assert "单元高消耗无计费时间转化" in result["message"]
+    assert "zero_billing_convert" not in result["message"]
+    assert "high_cost_zero_convert" not in result["message"]
+    assert "unit_high_cost_zero_convert" not in result["message"]
+    assert "完整 JSON" in result["message"]
+
+
 def test_delivery_patrol_can_send_feishu_summary(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     allowlist_path = tmp_path / "allowed.json"
@@ -299,6 +469,115 @@ def test_delivery_patrol_can_send_feishu_summary(tmp_path: Path):
 
     assert result["delivery"]["feishu"]["attempted"] is True
     assert sent and sent[0].startswith("oc_test|RoiBang-V2 投放账户巡检")
+
+
+def test_delivery_patrol_can_include_suggestions_in_same_message(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    allowlist_path = tmp_path / "allowed.json"
+    suggestions_request_path = tmp_path / "suggestions.json"
+    bootstrap_database(db_path)
+    _write_allowed_accounts(allowlist_path)
+    suggestions_request_path.write_text(
+        json.dumps(
+            {
+                "delivery_patrol_suggestions": {
+                    "rules": {
+                        "project": {
+                            "close_low_roi": {
+                                "enabled": True,
+                                "min_stat_cost": 800,
+                                "roi_lt": 0.05,
+                                "max_billing_convert_cnt": 0,
+                            }
+                        }
+                    }
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    request = _request(allowlist_path)
+    request["delivery_patrol"]["suggestions"] = {
+        "enabled": True,
+        "request_path": str(suggestions_request_path),
+        "db_path": str(db_path),
+    }
+
+    def transport(request: dict) -> dict:
+        if request["endpoint_key"] == "project_list":
+            return {
+                "code": 0,
+                "data": {
+                    "list": [
+                        {
+                            "project_id": "project-close",
+                            "name": "0518_郭靖勇者突进_建议关闭",
+                            "project_status": "PROJECT_STATUS_ENABLE",
+                        }
+                    ],
+                    "page_info": {"page": 1, "total_page": 1},
+                },
+            }
+        if request["endpoint_key"] == "promotion_list":
+            return {"code": 0, "data": {"list": [], "page_info": {"page": 1, "total_page": 1}}}
+        if request["report_preset"] == "account_daily":
+            return {
+                "code": 0,
+                "data": {
+                    "rows": [
+                        {
+                            "dimensions": {"stat_time_day": request["date"]},
+                            "metrics": {
+                                "stat_cost": "900",
+                                "show_cnt": "1000",
+                                "click_cnt": "20",
+                                "active_register": "3",
+                                "attribution_convert_cnt": "0",
+                                "attribution_billing_game_in_app_roi_1day": "0",
+                            },
+                        }
+                    ],
+                    "page_info": {"page": 1, "total_page": 1},
+                },
+            }
+        if request["report_preset"] == "project_daily":
+            rows = []
+            if request["date"] == "2026-05-15":
+                rows = [
+                    {
+                        "dimensions": {
+                            "stat_time_day": request["date"],
+                            "cdp_project_id": "project-close",
+                            "cdp_project_name": "0518_郭靖勇者突进_建议关闭",
+                        },
+                        "metrics": {
+                            "stat_cost": "900",
+                            "show_cnt": "1000",
+                            "click_cnt": "20",
+                            "active_register": "3",
+                            "attribution_convert_cnt": "0",
+                            "attribution_billing_game_in_app_roi_1day": "0",
+                        },
+                    }
+                ]
+            return {"code": 0, "data": {"rows": rows, "page_info": {"page": 1, "total_page": 1}}}
+        if request["report_preset"] == "promotion_daily":
+            return {"code": 0, "data": {"rows": [], "page_info": {"page": 1, "total_page": 1}}}
+        raise AssertionError(request)
+
+    result = run_delivery_patrol_request(
+        request,
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        transport=transport,
+    )
+
+    assert result["delivery_patrol_suggestions"]["summary"]["suggest_close_project_count"] == 1
+    assert result["delivery_patrol_suggestions"]["external_api_calls"] == 0
+    assert result["delivery_patrol_suggestions"]["artifact_path"]
+    assert "今日建议" in result["message"]
+    assert "建议关闭项目 1" in result["message"]
 
 
 def test_delivery_patrol_can_discover_today_spending_accounts_by_workbench_remark(tmp_path: Path):

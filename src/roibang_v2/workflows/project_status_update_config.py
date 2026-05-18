@@ -16,12 +16,24 @@ SPEND_WINDOW_LABELS = {
     "today": "今天",
     "yesterday": "昨天",
     "last_3_days": "最近3天",
-    "last_7_days": "最近7天",
-    "last_15_days": "最近15天",
-    "last_30_days": "最近30天",
-    "last_week": "上周",
-    "this_month": "本月",
 }
+REPORT_METRICS = [
+    "stat_cost",
+    "show_cnt",
+    "click_cnt",
+    "active_register",
+    "attribution_convert_cnt",
+    "attribution_billing_game_in_app_roi_1day",
+]
+METRIC_FILTER_FIELDS = {
+    "stat_cost",
+    "active_register",
+    "register_cost",
+    "billing_convert_cnt",
+    "billing_conversion_cost",
+    "billing_1day_pay_roi",
+}
+METRIC_FILTER_OPS = {"lt", "lte", "gt", "gte", "eq"}
 
 
 def _text(value: Any) -> str:
@@ -161,37 +173,51 @@ def _spend_window_dates(window: str, *, end_date: date) -> tuple[date, date]:
     if window == "yesterday":
         target = end_date - timedelta(days=1)
         return target, target
-    if window.startswith("last_") and window.endswith("_days"):
-        days = int(window.removeprefix("last_").removesuffix("_days"))
-        return end_date - timedelta(days=days - 1), end_date
-    if window == "last_week":
-        this_week_start = _week_start(end_date)
-        last_week_end = this_week_start - timedelta(days=1)
-        return last_week_end - timedelta(days=6), last_week_end
-    if window == "this_month":
-        return end_date.replace(day=1), end_date
-    raise ValueError(f"project management spend_filter window must be one of {sorted(SPEND_WINDOW_LABELS)}")
+    if window == "last_3_days":
+        return end_date - timedelta(days=2), end_date
+    raise ValueError("project realtime filter only supports today, yesterday, last_3_days")
 
 
-def _spend_filter(cfg: dict[str, Any]) -> dict[str, Any]:
-    value = cfg.get("spend_filter")
+def _normalize_metric_filter(item: dict[str, Any]) -> dict[str, Any]:
+    field = _text(item.get("field"))
+    op = _text(item.get("op"))
+    if field not in METRIC_FILTER_FIELDS:
+        raise ValueError(f"project realtime filter field must be one of {sorted(METRIC_FILTER_FIELDS)}")
+    if op not in METRIC_FILTER_OPS:
+        raise ValueError(f"project realtime filter op must be one of {sorted(METRIC_FILTER_OPS)}")
+    return {"field": field, "op": op, "value": _number(item.get("value"), f"metric_filters.{field}.value")}
+
+
+def _metric_filters(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [_normalize_metric_filter(item) for item in value if isinstance(item, dict)]
+
+
+def _realtime_filter(cfg: dict[str, Any]) -> dict[str, Any]:
+    value = cfg.get("realtime_filter")
     if not isinstance(value, dict):
-        return {}
+        value = cfg.get("spend_filter")
+        if not isinstance(value, dict):
+            return {}
     window = _text(value.get("window") or "today")
     end_date = _parse_date(value.get("end_date"))
     start, end = _spend_window_dates(window, end_date=end_date)
-    threshold = value.get("max_stat_cost_exclusive", value.get("max_stat_cost"))
-    if threshold in (None, ""):
-        raise ValueError("project management spend_filter requires max_stat_cost_exclusive")
-    max_stat_cost_exclusive = _number(threshold, "spend_filter.max_stat_cost_exclusive")
-    if max_stat_cost_exclusive < 0:
-        raise ValueError("project management spend_filter max_stat_cost_exclusive must be >= 0")
+    filters = _metric_filters(value.get("metric_filters"))
+    if not filters and ("max_stat_cost_exclusive" in value or "max_stat_cost" in value):
+        threshold = value.get("max_stat_cost_exclusive", value.get("max_stat_cost"))
+        max_stat_cost_exclusive = _number(threshold, "spend_filter.max_stat_cost_exclusive")
+        if max_stat_cost_exclusive < 0:
+            raise ValueError("project management spend_filter max_stat_cost_exclusive must be >= 0")
+        filters = [{"field": "stat_cost", "op": "lt", "value": max_stat_cost_exclusive}]
+    if not filters:
+        raise ValueError("project realtime filter requires metric_filters")
     return {
         "window": window,
         "window_label": SPEND_WINDOW_LABELS[window],
         "start_date": start.isoformat(),
         "end_date": end.isoformat(),
-        "max_stat_cost_exclusive": max_stat_cost_exclusive,
+        "metric_filters": filters,
     }
 
 
@@ -225,7 +251,7 @@ def _report_request(advertiser_id: str, spend_filter: dict[str, Any], *, page: i
             "advertiser_id": _wire_id(advertiser_id),
             "data_topic": "BASIC_DATA",
             "dimensions": ["cdp_project_id", "cdp_project_name"],
-            "metrics": ["stat_cost"],
+            "metrics": REPORT_METRICS,
             "filters": [],
             "start_time": spend_filter["start_date"],
             "end_time": spend_filter["end_date"],
@@ -261,16 +287,50 @@ def _fetch_projects(
     return projects, calls
 
 
-def _fetch_project_spend(
+def _rate(numerator: float, denominator: float) -> float | None:
+    if denominator <= 0:
+        return None
+    return round(numerator / denominator, 4)
+
+
+def _empty_metrics() -> dict[str, Any]:
+    return {
+        "stat_cost": 0.0,
+        "show_cnt": 0.0,
+        "click_cnt": 0.0,
+        "ctr": None,
+        "active_register": 0.0,
+        "register_cost": None,
+        "billing_convert_cnt": 0.0,
+        "billing_conversion_cost": None,
+        "billing_1day_pay_roi": None,
+    }
+
+
+def _finalize_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
+    stat_cost = float(metrics.get("stat_cost") or 0)
+    show_cnt = float(metrics.get("show_cnt") or 0)
+    click_cnt = float(metrics.get("click_cnt") or 0)
+    active_register = float(metrics.get("active_register") or 0)
+    billing_convert_cnt = float(metrics.get("billing_convert_cnt") or 0)
+    roi_weighted_sum = float(metrics.pop("_billing_1day_pay_roi_weighted_sum", 0) or 0)
+    metrics["ctr"] = _rate(click_cnt, show_cnt)
+    metrics["register_cost"] = _rate(stat_cost, active_register)
+    metrics["billing_conversion_cost"] = _rate(stat_cost, billing_convert_cnt)
+    metrics["billing_1day_pay_roi"] = round(roi_weighted_sum / stat_cost, 4) if stat_cost > 0 and roi_weighted_sum else None
+    return metrics
+
+
+def _fetch_project_metrics(
     advertiser_id: str,
     *,
     spend_filter: dict[str, Any],
     page_size: int,
     transport: Transport,
-) -> tuple[dict[str, float], int]:
+) -> tuple[dict[str, dict[str, Any]], int]:
     page = 1
     calls = 0
-    spend_by_project_id: dict[str, float] = {}
+    metrics_by_project_id: dict[str, dict[str, Any]] = {}
     while True:
         response = transport(_report_request(advertiser_id, spend_filter, page=page, page_size=page_size))
         calls += 1
@@ -282,23 +342,70 @@ def _fetch_project_spend(
             project_id = _text(dimensions.get("project_id") or dimensions.get("cdp_project_id"))
             if not project_id:
                 continue
-            spend_by_project_id[project_id] = spend_by_project_id.get(project_id, 0.0) + _number(metrics.get("stat_cost"), "stat_cost")
+            target = metrics_by_project_id.setdefault(project_id, _empty_metrics())
+            stat_cost = _number(metrics.get("stat_cost") or 0, "stat_cost")
+            target["stat_cost"] = round(float(target["stat_cost"] or 0) + stat_cost, 4)
+            target["show_cnt"] = round(float(target["show_cnt"] or 0) + _number(metrics.get("show_cnt") or 0, "show_cnt"), 4)
+            target["click_cnt"] = round(float(target["click_cnt"] or 0) + _number(metrics.get("click_cnt") or 0, "click_cnt"), 4)
+            target["active_register"] = round(
+                float(target["active_register"] or 0) + _number(metrics.get("active_register") or 0, "active_register"),
+                4,
+            )
+            target["billing_convert_cnt"] = round(
+                float(target["billing_convert_cnt"] or 0)
+                + _number(metrics.get("attribution_convert_cnt") or metrics.get("billing_convert_cnt") or 0, "billing_convert_cnt"),
+                4,
+            )
+            roi = metrics.get("attribution_billing_game_in_app_roi_1day") or metrics.get("billing_1day_pay_roi")
+            target["_billing_1day_pay_roi_weighted_sum"] = round(
+                float(target.get("_billing_1day_pay_roi_weighted_sum") or 0) + stat_cost * _number(roi or 0, "billing_1day_pay_roi"),
+                4,
+            )
         total_number = _total_number(response)
         if not rows or len(rows) < page_size:
             break
-        if total_number and sum(1 for _ in spend_by_project_id) >= total_number:
+        if total_number and sum(1 for _ in metrics_by_project_id) >= total_number:
             break
         page += 1
-    return spend_by_project_id, calls
+    return {project_id: _finalize_metrics(metrics) for project_id, metrics in metrics_by_project_id.items()}, calls
 
 
 def _number(value: Any, key: str) -> float:
     if isinstance(value, bool):
         raise ValueError(f"project management config requires numeric {key}")
     try:
-        return float(value)
+        return float(str(value).replace(",", "").replace("%", ""))
     except (TypeError, ValueError) as exc:
         raise ValueError(f"project management config requires numeric {key}") from exc
+
+
+def _compare_metric(actual: Any, op: str, expected: float) -> bool:
+    if actual is None:
+        return False
+    actual_number = float(actual)
+    if op == "lt":
+        return actual_number < expected
+    if op == "lte":
+        return actual_number <= expected
+    if op == "gt":
+        return actual_number > expected
+    if op == "gte":
+        return actual_number >= expected
+    if op == "eq":
+        return actual_number == expected
+    raise ValueError(f"unsupported metric filter op: {op}")
+
+
+def _metric_match_reasons(metrics: dict[str, Any], filters: list[dict[str, Any]]) -> tuple[bool, list[str]]:
+    reasons: list[str] = []
+    for metric_filter in filters:
+        field = str(metric_filter["field"])
+        op = str(metric_filter["op"])
+        expected = float(metric_filter["value"])
+        if not _compare_metric(metrics.get(field), op, expected):
+            return False, reasons
+        reasons.append(f"{field} {op} {expected}")
+    return True, reasons
 
 
 def _action_extra_fields(cfg: dict[str, Any], action_type: str) -> dict[str, Any]:
@@ -337,6 +444,8 @@ def _workflow_name(cfg: dict[str, Any], action_type: str) -> str:
     explicit = _text(cfg.get("workflow"))
     if explicit:
         return explicit
+    if isinstance(cfg.get("realtime_filter"), dict) or isinstance(cfg.get("spend_filter"), dict):
+        return "project_realtime_filter_config"
     if action_type == "status_update":
         return "project_status_update_config"
     return "project_management_update_config"
@@ -359,6 +468,8 @@ def _build_action(
     }
     if "stat_cost" in project:
         action["stat_cost"] = float(project.get("stat_cost") or 0)
+    if isinstance(project.get("metrics"), dict):
+        action["metrics"] = dict(project["metrics"])
     action.update(fields)
     if reason:
         action["reason"] = reason
@@ -382,13 +493,16 @@ def build_project_status_update_config(
     filtering = _filtering_with_name(cfg, action_type, opt_status, name_keywords)
     page_size = int(cfg.get("page_size") or 100)
     spend_page_size = int(cfg.get("spend_page_size") or page_size)
-    spend_filter = _spend_filter(cfg)
+    realtime_filter = _realtime_filter(cfg)
     reason = _text(cfg.get("reason"))
     workflow_name = _workflow_name(cfg, action_type)
 
     actions: list[dict[str, Any]] = []
+    matched_projects: list[dict[str, Any]] = []
+    skipped_projects: list[dict[str, Any]] = []
+    project_seen_count = 0
     skipped_duration_project_count = 0
-    skipped_spend_filter_count = 0
+    skipped_realtime_filter_count = 0
     external_api_calls = 0
     for advertiser_id in advertiser_ids:
         projects, calls = _fetch_projects(
@@ -398,11 +512,12 @@ def build_project_status_update_config(
             transport=transport,
         )
         external_api_calls += calls
-        spend_by_project_id: dict[str, float] = {}
-        if spend_filter:
-            spend_by_project_id, calls = _fetch_project_spend(
+        project_seen_count += len(projects)
+        metrics_by_project_id: dict[str, dict[str, Any]] = {}
+        if realtime_filter:
+            metrics_by_project_id, calls = _fetch_project_metrics(
                 advertiser_id,
-                spend_filter=spend_filter,
+                spend_filter=realtime_filter,
                 page_size=spend_page_size,
                 transport=transport,
             )
@@ -415,13 +530,43 @@ def build_project_status_update_config(
                 continue
             if _text(project.get("delivery_type")) == "DURATION":
                 skipped_duration_project_count += 1
+                skipped_projects.append(
+                    {
+                        "advertiser_id": advertiser_id,
+                        "project_id": project_id,
+                        "project_name": _text(project.get("name")),
+                        "skip_reason": "duration_project",
+                    }
+                )
                 continue
-            if spend_filter:
-                stat_cost = spend_by_project_id.get(project_id, 0.0)
-                if stat_cost >= float(spend_filter["max_stat_cost_exclusive"]):
-                    skipped_spend_filter_count += 1
+            match_reasons: list[str] = []
+            if realtime_filter:
+                metrics = metrics_by_project_id.get(project_id, _empty_metrics())
+                matched, match_reasons = _metric_match_reasons(metrics, list(realtime_filter["metric_filters"]))
+                if not matched:
+                    skipped_realtime_filter_count += 1
+                    skipped_projects.append(
+                        {
+                            "advertiser_id": advertiser_id,
+                            "project_id": project_id,
+                            "project_name": _text(project.get("name")),
+                            "project_status": _text(project.get("status_first") or project.get("status")),
+                            "skip_reason": "metric_filter_not_matched",
+                            "metrics": metrics,
+                        }
+                    )
                     continue
-                project = {**project, "stat_cost": stat_cost}
+                project = {**project, "stat_cost": metrics["stat_cost"], "metrics": metrics}
+            matched_projects.append(
+                {
+                    "advertiser_id": advertiser_id,
+                    "project_id": project_id,
+                    "project_name": _text(project.get("name")),
+                    "project_status": _text(project.get("status_first") or project.get("status")),
+                    "metrics": project.get("metrics", {}),
+                    "match_reasons": match_reasons,
+                }
+            )
             actions.append(
                 _build_action(
                     action_type=action_type,
@@ -437,7 +582,7 @@ def build_project_status_update_config(
         "operator": _text(cfg.get("operator")),
         "source": {
             "workflow": workflow_name,
-            "request": "account_project_status_control",
+            "request": "realtime_metric_filter" if realtime_filter else "account_project_status_control",
         },
         "allowed_target_accounts_path": _text(cfg.get("allowed_target_accounts_path")),
         "execution": {"enabled": False, "status": "planned_only"},
@@ -454,14 +599,34 @@ def build_project_status_update_config(
         "summary": {
             "project_update_id": project_update_id,
             "target_account_count": len(advertiser_ids),
+            "project_seen_count": project_seen_count,
+            "project_matched_count": len(matched_projects),
             "action_count": len(actions),
             "skipped_duration_project_count": skipped_duration_project_count,
-            "skipped_spend_filter_count": skipped_spend_filter_count,
+            "skipped_realtime_filter_count": skipped_realtime_filter_count,
             "action_type": action_type,
             "opt_status": opt_status,
             "name_contains": name_keywords,
-            **({"spend_filter": {key: value for key, value in spend_filter.items() if key != "window_label"}} if spend_filter else {}),
+            **({"realtime_filter": {key: value for key, value in realtime_filter.items() if key != "window_label"}} if realtime_filter else {}),
+            **(
+                {
+                    "spend_filter": {
+                        "window": realtime_filter["window"],
+                        "start_date": realtime_filter["start_date"],
+                        "end_date": realtime_filter["end_date"],
+                        "max_stat_cost_exclusive": realtime_filter["metric_filters"][0]["value"],
+                    }
+                }
+                if isinstance(cfg.get("spend_filter"), dict)
+                and realtime_filter
+                and realtime_filter["metric_filters"][:1]
+                and realtime_filter["metric_filters"][0]["field"] == "stat_cost"
+                and realtime_filter["metric_filters"][0]["op"] == "lt"
+                else {}
+            ),
         },
+        "matched_projects": matched_projects,
+        "skipped_projects": skipped_projects,
         "project_update": project_update,
     }
 
