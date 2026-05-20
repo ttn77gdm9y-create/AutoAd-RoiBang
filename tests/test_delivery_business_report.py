@@ -207,9 +207,14 @@ def test_build_delivery_business_report_merges_patrol_suggestions_backtest_and_c
         "suggest_close_project",
         "wait_backtest",
     ]
-    assert "RoiBang-V2 业务日报 2026-05-20" in result["message"]
-    assert "今日建议：建议关闭项目 1 / 建议下调出价 1" in result["message"]
-    assert "创建批次：批次 2 个，项目 10 个" in result["message"]
+    assert "RoiBang-V2 投放运营日报 2026-05-20" in result["message"]
+    assert "一、整体判断" in result["message"]
+    assert "二、今日建议" in result["message"]
+    assert "建议关闭项目 1 / 建议下调出价 1" in result["message"]
+    assert "三、重点账户" in result["message"]
+    assert "四、重点项目" in result["message"]
+    assert "五、创建批次复盘" in result["message"]
+    assert "批次 2 个，项目 10 个" in result["message"]
 
 
 def test_run_delivery_business_report_request_writes_artifact(tmp_path: Path):

@@ -155,7 +155,7 @@ def test_run_delivery_readonly_report_chain_can_deliver_feishu_with_injected_sen
     }
     assert len(sent) == 1
     assert sent[0][0]["chat_id"] == "chat"
-    assert "RoiBang-V2 业务日报" in sent[0][1]
+    assert "RoiBang-V2 投放运营日报" in sent[0][1]
 
 
 def test_delivery_readonly_report_chain_cli_accepts_request_file(tmp_path: Path, capsys):

@@ -27,6 +27,20 @@ STATUS_LABELS = {
     "no_future_data": "无后续数据",
 }
 
+BUSINESS_STATUS_LABELS = {
+    "drop_from_yesterday": "较昨日明显下滑",
+    "high_cost_low_return": "高消耗低回收",
+    "inactive_enabled": "启用但无消耗",
+    "low_roi": "低ROI",
+    "normal": "正常",
+    "running_good": "运行较好",
+    "running_watch": "运行观察",
+    "unit_low_roi": "单元低ROI",
+    "unit_running_good": "单元运行较好",
+    "unit_bad_signal": "单元差信号",
+    "unit_good_signal": "单元好信号",
+}
+
 
 def _text(value: Any) -> str:
     return str(value or "").strip()
@@ -67,6 +81,25 @@ def _format_ratio(value: Any) -> str:
     return f"{_number(value):.4f}".rstrip("0").rstrip(".")
 
 
+def _status_label(value: Any) -> str:
+    text = _text(value)
+    return BUSINESS_STATUS_LABELS.get(text, text or "未知")
+
+
+def _ratio_change(today: Any, yesterday: Any) -> float | None:
+    yesterday_value = _number(yesterday)
+    if yesterday_value <= 0:
+        return None
+    return (_number(today) - yesterday_value) / yesterday_value
+
+
+def _format_change(value: float | None) -> str:
+    if value is None:
+        return "无可比"
+    sign = "+" if value >= 0 else ""
+    return f"{sign}{value * 100:.1f}%"
+
+
 def _top_items(items: list[dict[str, Any]], *, limit: int, name_key: str, id_key: str) -> list[dict[str, Any]]:
     ranked = sorted(
         items,
@@ -84,6 +117,7 @@ def _top_items(items: list[dict[str, Any]], *, limit: int, name_key: str, id_key
                 "id": _text(item.get(id_key)),
                 "advertiser_id": _text(item.get("advertiser_id")),
                 "business_status": _text(item.get("business_status")),
+                "business_status_label": _status_label(item.get("business_status")),
                 "severity": _text(item.get("severity")),
                 "stat_cost": round(_number(today.get("stat_cost")), 4),
                 "billing_convert_cnt": _number(today.get("billing_convert_cnt")),
@@ -242,29 +276,65 @@ def _message(report: dict[str, Any]) -> str:
     overall_today = report["overall"]["today"]
     overall_yesterday = report["overall"]["yesterday"]
     suggestion_counts = report["suggestions_today"]["counts_labeled"]
+    cost_change = _ratio_change(overall_today.get("stat_cost"), overall_yesterday.get("stat_cost"))
+    roi_change = _ratio_change(overall_today.get("billing_1day_pay_roi"), overall_yesterday.get("billing_1day_pay_roi"))
     lines = [
-        f"RoiBang-V2 业务日报 {report['target_date']}",
+        f"RoiBang-V2 投放运营日报 {report['target_date']}",
         "",
+        "一、整体判断",
         (
-            f"整体：账户 {report['summary']['account_count']} 个，项目 {report['summary']['project_count']} 个，"
-            f"单元 {report['summary']['promotion_count']} 个"
+            f"- 今日账户 {report['summary']['account_count']} 个，项目 {report['summary']['project_count']} 个，"
+            f"单元 {report['summary']['promotion_count']} 个，重点关注 {report['summary']['attention_count']} 个"
         ),
         (
-            f"今日消耗 {_format_money(overall_today.get('stat_cost'))}，"
-            f"计费转化 {_format_ratio(overall_today.get('billing_convert_cnt'))}，"
-            f"计费当日ROI {_format_ratio(overall_today.get('billing_1day_pay_roi'))}；"
-            f"昨日消耗 {_format_money(overall_yesterday.get('stat_cost'))}，"
-            f"计费当日ROI {_format_ratio(overall_yesterday.get('billing_1day_pay_roi'))}"
+            f"- 消耗 {_format_money(overall_today.get('stat_cost'))}，较昨日 {_format_change(cost_change)}；"
+            f"计费转化 {_format_ratio(overall_today.get('billing_convert_cnt'))}；"
+            f"计费当日ROI {_format_ratio(overall_today.get('billing_1day_pay_roi'))}，较昨日 {_format_change(roi_change)}"
         ),
         "",
-        "今日建议：" + (" / ".join(f"{key} {value}" for key, value in suggestion_counts.items()) or "无"),
-        "建议回测：" + report["suggestion_backtest"]["message"],
+        "二、今日建议",
+        "- " + (" / ".join(f"{key} {value}" for key, value in suggestion_counts.items()) or "无"),
+        "- 建议回测：" + report["suggestion_backtest"]["message"],
     ]
+    top_suggestions = report["suggestions_today"]["top_suggestions"]
+    if top_suggestions:
+        lines.append("- 重点建议")
+        for item in top_suggestions[:6]:
+            lines.append(
+                f"  - {item['suggested_action_label']}：{item['entity_name']}，"
+                f"项目ID {item['project_id'] or '无'}，消耗 {_format_money(item.get('stat_cost'))}，"
+                f"ROI {_format_ratio(item.get('billing_1day_pay_roi'))}"
+            )
+    top_accounts = report["account_health"]["top_accounts"]
+    if top_accounts:
+        lines.extend(["", "三、重点账户"])
+        for item in top_accounts[:5]:
+            lines.append(
+                f"- {item['name']}（{item['advertiser_id']}）：{item['business_status_label']}，"
+                f"消耗 {_format_money(item.get('stat_cost'))}，"
+                f"计费转化 {_format_ratio(item.get('billing_convert_cnt'))}，"
+                f"ROI {_format_ratio(item.get('billing_1day_pay_roi'))}"
+            )
+    top_projects = report["project_focus"]
+    if top_projects:
+        lines.extend(["", "四、重点项目"])
+        for item in top_projects[:6]:
+            lines.append(
+                f"- {item['name']}，项目ID {item['id']}，账户 {item['advertiser_id']}，"
+                f"{item['business_status_label']}，消耗 {_format_money(item.get('stat_cost'))}，"
+                f"ROI {_format_ratio(item.get('billing_1day_pay_roi'))}"
+            )
     if report["create_batch_review"]["available"]:
-        lines.append("创建批次：" + report["create_batch_review"]["message"])
+        lines.extend(["", "五、创建批次复盘", "- " + report["create_batch_review"]["message"]])
+        for item in report["create_batch_review"]["mode_summary"][:3]:
+            lines.append(
+                f"  - {item['mode_label']}：项目 {item['project_count']}，"
+                f"消耗 {_format_money(item.get('stat_cost'))}，"
+                f"转化 {_format_ratio(item.get('convert_cnt'))}，ROI {_format_ratio(item.get('roi_1day'))}"
+            )
     if report["next_actions"]:
         lines.append("")
-        lines.append("下一步")
+        lines.append("六、下一步")
         for item in report["next_actions"][:5]:
             lines.append(f"- {item['label']} {item['count']}：{item['next_step']}")
     return "\n".join(lines)
