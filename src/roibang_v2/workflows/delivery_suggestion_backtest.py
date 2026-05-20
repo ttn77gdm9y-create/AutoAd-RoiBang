@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
+from roibang_v2.runs import write_latest_artifact
 from roibang_v2.runs import write_run_artifact
 
 
@@ -303,4 +304,6 @@ def run_delivery_suggestion_backtest_request(
         "evaluations": evaluations,
     }
     payload["artifact_path"] = str(write_run_artifact(runs_dir, "delivery_suggestion_backtest", payload))
+    payload["latest_artifact_path"] = str(Path(runs_dir) / "delivery_suggestion_backtest" / "latest.json")
+    write_latest_artifact(runs_dir, "delivery_suggestion_backtest", payload)
     return payload

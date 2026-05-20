@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from roibang_v2.runs import write_latest_artifact
 from roibang_v2.runs import write_run_artifact
 
 
@@ -161,6 +162,54 @@ def _backtest_summary(backtest: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
+def _create_batch_review_summary(create_batch_review: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(create_batch_review, dict):
+        return {
+            "available": False,
+            "summary": {},
+            "mode_summary": [],
+            "top_batches": [],
+            "message": "没有提供创建批次复盘结果。",
+        }
+    summary = create_batch_review.get("summary") if isinstance(create_batch_review.get("summary"), dict) else {}
+    modes = _rows(create_batch_review.get("mode_summary"))
+    batches = _rows(create_batch_review.get("batches"))
+    return {
+        "available": True,
+        "summary": summary,
+        "mode_summary": [
+            {
+                "mode_label": _text(item.get("mode_label") or item.get("key")),
+                "project_count": int(_number(item.get("project_count"))),
+                "stat_cost": round(_number(item.get("stat_cost")), 4),
+                "convert_cnt": _number(item.get("convert_cnt")),
+                "conversion_cost": item.get("conversion_cost"),
+                "roi_1day": item.get("roi_1day"),
+            }
+            for item in modes[:8]
+        ],
+        "top_batches": [
+            {
+                "batch_date_code": _text(item.get("batch_date_code")),
+                "mode_label": _text(item.get("mode_label")),
+                "batch_id": _text(item.get("batch_id")),
+                "project_count": int(_number(item.get("project_count"))),
+                "stat_cost": round(_number(item.get("stat_cost")), 4),
+                "convert_cnt": _number(item.get("convert_cnt")),
+                "conversion_cost": item.get("conversion_cost"),
+                "roi_1day": item.get("roi_1day"),
+            }
+            for item in batches[:8]
+        ],
+        "message": (
+            f"批次 {int(_number(summary.get('batch_count')))} 个，"
+            f"项目 {int(_number(summary.get('project_count')))} 个，"
+            f"消耗 {_format_money(summary.get('stat_cost'))}，"
+            f"ROI {_format_ratio(summary.get('roi_1day'))}"
+        ),
+    }
+
+
 def _next_actions(suggestions: list[dict[str, Any]], backtest: dict[str, Any]) -> list[dict[str, Any]]:
     counts = _suggestion_counts(suggestions)
     actions = []
@@ -211,6 +260,8 @@ def _message(report: dict[str, Any]) -> str:
         "今日建议：" + (" / ".join(f"{key} {value}" for key, value in suggestion_counts.items()) or "无"),
         "建议回测：" + report["suggestion_backtest"]["message"],
     ]
+    if report["create_batch_review"]["available"]:
+        lines.append("创建批次：" + report["create_batch_review"]["message"])
     if report["next_actions"]:
         lines.append("")
         lines.append("下一步")
@@ -224,12 +275,14 @@ def build_delivery_business_report(
     patrol: dict[str, Any],
     suggestions: dict[str, Any],
     backtest: dict[str, Any] | None = None,
+    create_batch_review: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     patrol_summary = patrol.get("summary") if isinstance(patrol.get("summary"), dict) else {}
     target_date = _text(patrol_summary.get("target_date") or suggestions.get("summary", {}).get("target_date"))
     suggestion_rows = _rows(suggestions.get("suggestions"))
     counts = _suggestion_counts(suggestion_rows)
     backtest_info = _backtest_summary(backtest)
+    create_batch_info = _create_batch_review_summary(create_batch_review)
     report = {
         "ok": True,
         "workflow": "delivery_business_report",
@@ -260,6 +313,7 @@ def build_delivery_business_report(
             "top_suggestions": _actionable_suggestions(suggestion_rows, limit=12),
         },
         "suggestion_backtest": backtest_info,
+        "create_batch_review": create_batch_info,
     }
     report["next_actions"] = _next_actions(suggestion_rows, backtest_info)
     report["message"] = _message(report)
@@ -275,17 +329,24 @@ def run_delivery_business_report_request(
     patrol_path = _text(cfg.get("patrol_artifact_path") or cfg.get("patrol_artifact"))
     suggestions_path = _text(cfg.get("suggestions_artifact_path") or cfg.get("suggestions_artifact"))
     backtest_path = _text(cfg.get("backtest_artifact_path") or cfg.get("backtest_artifact"))
+    create_batch_review_path = _text(
+        cfg.get("create_batch_review_artifact_path") or cfg.get("create_batch_review_artifact")
+    )
     if not patrol_path or not suggestions_path:
         raise ValueError("delivery business report requires patrol_artifact_path and suggestions_artifact_path")
     payload = build_delivery_business_report(
         patrol=_load_json(patrol_path),
         suggestions=_load_json(suggestions_path),
         backtest=_load_json(backtest_path) if backtest_path else None,
+        create_batch_review=_load_json(create_batch_review_path) if create_batch_review_path else None,
     )
     payload["source"] = {
         "patrol_artifact_path": patrol_path,
         "suggestions_artifact_path": suggestions_path,
         "backtest_artifact_path": backtest_path,
+        "create_batch_review_artifact_path": create_batch_review_path,
     }
     payload["artifact_path"] = str(write_run_artifact(runs_dir, "delivery_business_report", payload))
+    payload["latest_artifact_path"] = str(Path(runs_dir) / "delivery_business_report" / "latest.json")
+    write_latest_artifact(runs_dir, "delivery_business_report", payload)
     return payload

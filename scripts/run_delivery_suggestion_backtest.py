@@ -47,6 +47,7 @@ def run_from_args(argv: list[str] | None = None) -> int:
                 "external_api_calls": result["external_api_calls"],
                 "summary": result["summary"],
                 "artifact_path": result["artifact_path"],
+                "latest_artifact_path": result["latest_artifact_path"],
             },
             ensure_ascii=False,
             indent=2,

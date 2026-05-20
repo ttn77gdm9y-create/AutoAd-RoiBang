@@ -1,5 +1,6 @@
 import json
 
+from roibang_v2.runs import write_latest_artifact
 from roibang_v2.runs import write_run_artifact
 
 
@@ -13,3 +14,12 @@ def test_write_run_artifact_does_not_overwrite_same_second(monkeypatch, tmp_path
     assert second.name == "20260513T040729Z-001.json"
     assert json.loads(first.read_text(encoding="utf-8"))["value"] == "first"
     assert json.loads(second.read_text(encoding="utf-8"))["value"] == "second"
+
+
+def test_write_latest_artifact_replaces_latest_json(tmp_path):
+    first = write_latest_artifact(tmp_path, "delivery_business_report", {"value": "first"})
+    second = write_latest_artifact(tmp_path, "delivery_business_report", {"value": "second"})
+
+    assert first == second
+    assert first.name == "latest.json"
+    assert json.loads(first.read_text(encoding="utf-8")) == {"value": "second"}

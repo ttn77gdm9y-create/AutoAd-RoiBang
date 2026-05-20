@@ -165,6 +165,8 @@ def test_delivery_suggestion_backtest_evaluates_close_and_bid_suggestions(tmp_pa
         "bid-1": "execution_observed",
     }
     assert Path(result["artifact_path"]).exists()
+    assert Path(result["latest_artifact_path"]).exists()
+    assert json.loads(Path(result["latest_artifact_path"]).read_text(encoding="utf-8"))["workflow"] == "delivery_suggestion_backtest"
 
 
 def test_delivery_suggestion_backtest_cli_accepts_artifact_file(tmp_path: Path, capsys):

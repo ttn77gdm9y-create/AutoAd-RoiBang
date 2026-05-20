@@ -592,13 +592,50 @@ PYTHONPATH=src python3 scripts/run_delivery_suggestion_backtest.py \
 PYTHONPATH=src python3 scripts/run_delivery_business_report.py \
   --patrol-artifact data/runs/delivery_patrol/latest.json \
   --suggestions-artifact data/runs/delivery_patrol_suggestions/latest.json \
-  --backtest-artifact data/runs/delivery_suggestion_backtest/latest.json
+  --backtest-artifact data/runs/delivery_suggestion_backtest/latest.json \
+  --create-batch-review-artifact data/runs/create_batch_review/latest.json
 ```
 
 `delivery_business_report（投放业务日报）` 是只读汇总脚本：
 
 - 合并 `delivery_patrol（投放巡检）`、`delivery_patrol_suggestions（投放巡检建议）`、`delivery_suggestion_backtest（建议回测）`。
-- 输出 `overall（整体表现）`、`account_health（账户健康）`、`project_focus（重点项目）`、`unit_focus（重点单元）`、`suggestions_today（今日建议）`、`suggestion_backtest（建议回测）`、`next_actions（下一步动作）`、`message（汇报文案）`。
+- 可选合并 `create_batch_review（创建批次复盘）`。
+- 输出 `overall（整体表现）`、`account_health（账户健康）`、`project_focus（重点项目）`、`unit_focus（重点单元）`、`suggestions_today（今日建议）`、`suggestion_backtest（建议回测）`、`create_batch_review（创建批次复盘）`、`next_actions（下一步动作）`、`message（汇报文案）`。
+- `external_api_calls（外部接口调用数）=0`。
+- 不生成执行配置，不执行真实动作。
+
+日常只读报告链路：
+
+```bash
+PYTHONPATH=src python3 scripts/run_delivery_readonly_report_chain.py \
+  --request configs/delivery-readonly-report-chain.example.json
+```
+
+`delivery_readonly_report_chain（日常只读报告链路）` 会按固定顺序执行：
+
+1. `delivery_suggestion_backtest（投放建议回测）`
+2. `create_batch_review（创建批次复盘）`
+3. `delivery_business_report（投放业务日报）`
+
+链路只读本地 JSON 和 SQLite 数据库，`external_api_calls（外部接口调用数）=0`，不生成执行配置，不执行真实动作。
+飞书推送由 `delivery.feishu.enabled（飞书是否启用）` 控制，示例配置默认关闭。
+
+定时任务注册表已预留 `roibang-delivery-readonly-report-chain（日常只读投放业务日报链路）`，默认 `enabled=false（未启用）`。确认要每天自动跑后，再改为 `enabled=true（启用）` 并重新渲染/安装 `launchd（macOS 定时任务）`。
+
+创建批次复盘：
+
+```bash
+PYTHONPATH=src python3 scripts/run_create_batch_review.py \
+  --db data/roibang_v2.sqlite3 \
+  --recent-days 7 \
+  --project-name-contains 郭靖
+```
+
+`create_batch_review（创建批次复盘）` 是只读分析脚本：
+
+- 只读取 `material_daily_metrics（素材/项目/单元日维度数据）`。
+- 按项目名解析创建日期、创建模式、批次 ID、项目序号。
+- 输出 `batches（批次表现）`、`mode_summary（模式汇总）`、`top_projects（重点项目）`、`message（汇报文案）`。
 - `external_api_calls（外部接口调用数）=0`。
 - 不生成执行配置，不执行真实动作。
 

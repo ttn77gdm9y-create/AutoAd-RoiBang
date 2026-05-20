@@ -1,0 +1,8 @@
+{
+  "create_batch_review": {
+    "db_path": "data/roibang_v2.sqlite3",
+    "recent_days": 7,
+    "project_name_contains": "郭靖",
+    "limit": 20
+  }
+}

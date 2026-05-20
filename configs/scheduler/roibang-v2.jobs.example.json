@@ -229,6 +229,20 @@
       "delivery": {"channel": "none"}
     },
     {
+      "id": "roibang-delivery-readonly-report-chain",
+      "name": "RoiBang-v2 日常只读投放业务日报链路",
+      "category": "delivery_readonly_report_chain",
+      "enabled": false,
+      "schedule": {"type": "cron", "expr": "50 23 * * *", "tz": "Asia/Shanghai"},
+      "script": {
+        "command": ["python3", "scripts/run_delivery_readonly_report_chain.py", "--request", "configs/delivery-readonly-report-chain.example.json"],
+        "mode": "foreground"
+      },
+      "policy": {"request": "configs/delivery-readonly-report-chain.example.json", "readonly": true, "source": "local_patrol_suggestions_backtest_create_batch_review"},
+      "result_contract": {"workflow": "delivery_readonly_report_chain", "artifact_dir": "data/runs/delivery_readonly_report_chain", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "summary", "artifacts", "message", "delivery"], "must_equal": {"execution_enabled": false, "external_api_calls": 0}},
+      "delivery": {"channel": "none"}
+    },
+    {
       "id": "roibang-strategy-plan",
       "name": "RoiBang-v2 策略计划生成",
       "category": "strategy_plan",

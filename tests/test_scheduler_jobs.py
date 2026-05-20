@@ -12,9 +12,9 @@ def test_scheduler_registry_has_no_ai_execution_prompts():
 
     assert result == {
         "ok": True,
-        "jobs": 22,
+        "jobs": 23,
         "enabled_jobs": 10,
-        "disabled_jobs": 12,
+        "disabled_jobs": 13,
         "violations": [],
     }
 
@@ -315,6 +315,7 @@ def test_scheduler_registry_includes_delivery_patrol_jobs():
     jobs = {job["id"]: job for job in registry["jobs"]}
     patrol = jobs["roibang-delivery-patrol"]
     suggestions = jobs["roibang-delivery-patrol-suggestions"]
+    readonly_report_chain = jobs["roibang-delivery-readonly-report-chain"]
 
     assert patrol["enabled"] is True
     assert patrol["schedule"] == {"type": "cron", "expr": "30 8-23 * * *", "tz": "Asia/Shanghai"}
@@ -346,6 +347,21 @@ def test_scheduler_registry_includes_delivery_patrol_jobs():
     ]
     assert suggestions["result_contract"]["workflow"] == "delivery_patrol_suggestions"
     assert suggestions["result_contract"]["must_equal"] == {
+        "execution_enabled": False,
+        "external_api_calls": 0,
+    }
+
+    assert readonly_report_chain["enabled"] is False
+    assert readonly_report_chain["schedule"] == {"type": "cron", "expr": "50 23 * * *", "tz": "Asia/Shanghai"}
+    assert readonly_report_chain["script"]["command"] == [
+        "python3",
+        "scripts/run_delivery_readonly_report_chain.py",
+        "--request",
+        "configs/delivery-readonly-report-chain.example.json",
+    ]
+    assert readonly_report_chain["result_contract"]["workflow"] == "delivery_readonly_report_chain"
+    assert "delivery" in readonly_report_chain["result_contract"]["must_include"]
+    assert readonly_report_chain["result_contract"]["must_equal"] == {
         "execution_enabled": False,
         "external_api_calls": 0,
     }

@@ -127,6 +127,42 @@ def _backtest() -> dict:
     }
 
 
+def _create_batch_review() -> dict:
+    return {
+        "ok": True,
+        "workflow": "create_batch_review",
+        "summary": {
+            "batch_count": 2,
+            "project_count": 10,
+            "stat_cost": 1200,
+            "convert_cnt": 4,
+            "roi_1day": 0.05,
+        },
+        "mode_summary": [
+            {
+                "mode_label": "微小每付通投历史放量",
+                "project_count": 5,
+                "stat_cost": 800,
+                "convert_cnt": 3,
+                "conversion_cost": 266.6667,
+                "roi_1day": 0.06,
+            }
+        ],
+        "batches": [
+            {
+                "batch_date_code": "0520",
+                "mode_label": "微小每付通投历史放量",
+                "batch_id": "BATCH1",
+                "project_count": 5,
+                "stat_cost": 800,
+                "convert_cnt": 3,
+                "conversion_cost": 266.6667,
+                "roi_1day": 0.06,
+            }
+        ],
+    }
+
+
 def _load_script():
     script_path = Path("scripts/run_delivery_business_report.py")
     spec = importlib.util.spec_from_file_location("run_delivery_business_report", script_path)
@@ -136,8 +172,13 @@ def _load_script():
     return module
 
 
-def test_build_delivery_business_report_merges_patrol_suggestions_and_backtest():
-    result = build_delivery_business_report(patrol=_patrol(), suggestions=_suggestions(), backtest=_backtest())
+def test_build_delivery_business_report_merges_patrol_suggestions_backtest_and_create_review():
+    result = build_delivery_business_report(
+        patrol=_patrol(),
+        suggestions=_suggestions(),
+        backtest=_backtest(),
+        create_batch_review=_create_batch_review(),
+    )
 
     assert result["workflow"] == "delivery_business_report"
     assert result["execution_enabled"] is False
@@ -158,6 +199,9 @@ def test_build_delivery_business_report_merges_patrol_suggestions_and_backtest()
         "建议下调出价": 1,
     }
     assert result["suggestion_backtest"]["status_counts_labeled"] == {"等待后续数据": 2}
+    assert result["create_batch_review"]["available"] is True
+    assert result["create_batch_review"]["summary"]["batch_count"] == 2
+    assert result["create_batch_review"]["mode_summary"][0]["mode_label"] == "微小每付通投历史放量"
     assert [item["type"] for item in result["next_actions"]] == [
         "suggest_lower_bid",
         "suggest_close_project",
@@ -165,31 +209,38 @@ def test_build_delivery_business_report_merges_patrol_suggestions_and_backtest()
     ]
     assert "RoiBang-V2 业务日报 2026-05-20" in result["message"]
     assert "今日建议：建议关闭项目 1 / 建议下调出价 1" in result["message"]
+    assert "创建批次：批次 2 个，项目 10 个" in result["message"]
 
 
 def test_run_delivery_business_report_request_writes_artifact(tmp_path: Path):
     patrol_path = tmp_path / "patrol.json"
     suggestions_path = tmp_path / "suggestions.json"
     backtest_path = tmp_path / "backtest.json"
+    create_batch_review_path = tmp_path / "create_batch_review.json"
     patrol_path.write_text(json.dumps(_patrol(), ensure_ascii=False), encoding="utf-8")
     suggestions_path.write_text(json.dumps(_suggestions(), ensure_ascii=False), encoding="utf-8")
     backtest_path.write_text(json.dumps(_backtest(), ensure_ascii=False), encoding="utf-8")
+    create_batch_review_path.write_text(json.dumps(_create_batch_review(), ensure_ascii=False), encoding="utf-8")
 
     result = run_delivery_business_report_request(
         {
             "patrol_artifact_path": str(patrol_path),
             "suggestions_artifact_path": str(suggestions_path),
             "backtest_artifact_path": str(backtest_path),
+            "create_batch_review_artifact_path": str(create_batch_review_path),
         },
         runs_dir=tmp_path / "runs",
     )
 
     assert result["ok"] is True
     assert Path(result["artifact_path"]).exists()
+    assert Path(result["latest_artifact_path"]).exists()
+    assert json.loads(Path(result["latest_artifact_path"]).read_text(encoding="utf-8"))["workflow"] == "delivery_business_report"
     assert result["source"] == {
         "patrol_artifact_path": str(patrol_path),
         "suggestions_artifact_path": str(suggestions_path),
         "backtest_artifact_path": str(backtest_path),
+        "create_batch_review_artifact_path": str(create_batch_review_path),
     }
 
 

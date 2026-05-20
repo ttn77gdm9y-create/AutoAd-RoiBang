@@ -15,31 +15,38 @@ from _repo_bootstrap import bootstrap_project_root
 bootstrap_project_root()
 
 from roibang_v2.config import load_json
-from roibang_v2.workflows.delivery_business_report import run_delivery_business_report_request
+from roibang_v2.workflows.create_batch_review import run_create_batch_review_request
 
 
 def run_from_args(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Build readonly delivery business report from patrol artifacts.")
+    parser = argparse.ArgumentParser(description="Build readonly create batch review from local material metrics.")
     parser.add_argument("--request", default="")
-    parser.add_argument("--patrol-artifact", default="")
-    parser.add_argument("--suggestions-artifact", default="")
-    parser.add_argument("--backtest-artifact", default="")
-    parser.add_argument("--create-batch-review-artifact", default="")
+    parser.add_argument("--db", default="")
+    parser.add_argument("--start-date", default="")
+    parser.add_argument("--end-date", default="")
+    parser.add_argument("--recent-days", type=int, default=0)
+    parser.add_argument("--project-name-contains", default="")
+    parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--runs-dir", default="data/runs")
     args = parser.parse_args(argv)
 
     request = load_json(args.request) if args.request else {}
-    cfg = request.get("delivery_business_report") if isinstance(request.get("delivery_business_report"), dict) else request
+    cfg = request.get("create_batch_review") if isinstance(request.get("create_batch_review"), dict) else request
     payload = dict(cfg if isinstance(cfg, dict) else {})
-    if args.patrol_artifact:
-        payload["patrol_artifact_path"] = args.patrol_artifact
-    if args.suggestions_artifact:
-        payload["suggestions_artifact_path"] = args.suggestions_artifact
-    if args.backtest_artifact:
-        payload["backtest_artifact_path"] = args.backtest_artifact
-    if args.create_batch_review_artifact:
-        payload["create_batch_review_artifact_path"] = args.create_batch_review_artifact
-    result = run_delivery_business_report_request(payload, runs_dir=args.runs_dir)
+    if args.db:
+        payload["db_path"] = args.db
+    if args.start_date:
+        payload["start_date"] = args.start_date
+    if args.end_date:
+        payload["end_date"] = args.end_date
+    if args.recent_days:
+        payload["recent_days"] = args.recent_days
+    if args.project_name_contains:
+        payload["project_name_contains"] = args.project_name_contains
+    if args.limit:
+        payload["limit"] = args.limit
+
+    result = run_create_batch_review_request(payload, runs_dir=args.runs_dir)
     print(
         json.dumps(
             {

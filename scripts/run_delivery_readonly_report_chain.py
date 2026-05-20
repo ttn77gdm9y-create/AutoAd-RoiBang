@@ -15,31 +15,41 @@ from _repo_bootstrap import bootstrap_project_root
 bootstrap_project_root()
 
 from roibang_v2.config import load_json
-from roibang_v2.workflows.delivery_business_report import run_delivery_business_report_request
+from roibang_v2.workflows.delivery_readonly_report_chain import run_delivery_readonly_report_chain_request
 
 
 def run_from_args(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Build readonly delivery business report from patrol artifacts.")
+    parser = argparse.ArgumentParser(description="Run readonly delivery report chain.")
     parser.add_argument("--request", default="")
+    parser.add_argument("--db", default="")
     parser.add_argument("--patrol-artifact", default="")
     parser.add_argument("--suggestions-artifact", default="")
-    parser.add_argument("--backtest-artifact", default="")
-    parser.add_argument("--create-batch-review-artifact", default="")
+    parser.add_argument("--lookahead-days", type=int, default=0)
+    parser.add_argument("--recent-days", type=int, default=0)
+    parser.add_argument("--project-name-contains", default="")
+    parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--runs-dir", default="data/runs")
     args = parser.parse_args(argv)
 
     request = load_json(args.request) if args.request else {}
-    cfg = request.get("delivery_business_report") if isinstance(request.get("delivery_business_report"), dict) else request
+    cfg = request.get("delivery_readonly_report_chain") if isinstance(request.get("delivery_readonly_report_chain"), dict) else request
     payload = dict(cfg if isinstance(cfg, dict) else {})
+    if args.db:
+        payload["db_path"] = args.db
     if args.patrol_artifact:
         payload["patrol_artifact_path"] = args.patrol_artifact
     if args.suggestions_artifact:
         payload["suggestions_artifact_path"] = args.suggestions_artifact
-    if args.backtest_artifact:
-        payload["backtest_artifact_path"] = args.backtest_artifact
-    if args.create_batch_review_artifact:
-        payload["create_batch_review_artifact_path"] = args.create_batch_review_artifact
-    result = run_delivery_business_report_request(payload, runs_dir=args.runs_dir)
+    if args.lookahead_days:
+        payload["lookahead_days"] = args.lookahead_days
+    if args.recent_days:
+        payload["recent_days"] = args.recent_days
+    if args.project_name_contains:
+        payload["project_name_contains"] = args.project_name_contains
+    if args.limit:
+        payload["limit"] = args.limit
+
+    result = run_delivery_readonly_report_chain_request(payload, runs_dir=args.runs_dir)
     print(
         json.dumps(
             {
@@ -49,7 +59,8 @@ def run_from_args(argv: list[str] | None = None) -> int:
                 "execution_enabled": result["execution_enabled"],
                 "external_api_calls": result["external_api_calls"],
                 "summary": result["summary"],
-                "source": result["source"],
+                "artifacts": result["artifacts"],
+                "delivery": result["delivery"],
                 "artifact_path": result["artifact_path"],
                 "latest_artifact_path": result["latest_artifact_path"],
                 "message": result["message"],

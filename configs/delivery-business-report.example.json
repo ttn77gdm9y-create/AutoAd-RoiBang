@@ -2,6 +2,7 @@
   "delivery_business_report": {
     "patrol_artifact_path": "data/runs/delivery_patrol/latest.json",
     "suggestions_artifact_path": "data/runs/delivery_patrol_suggestions/latest.json",
-    "backtest_artifact_path": ""
+    "backtest_artifact_path": "",
+    "create_batch_review_artifact_path": ""
   }
 }

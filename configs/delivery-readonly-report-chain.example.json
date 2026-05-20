@@ -1,0 +1,17 @@
+{
+  "delivery_readonly_report_chain": {
+    "db_path": "data/roibang_v2.sqlite3",
+    "patrol_artifact_path": "data/runs/delivery_patrol/latest.json",
+    "suggestions_artifact_path": "data/runs/delivery_patrol_suggestions/latest.json",
+    "lookahead_days": 1,
+    "recent_days": 7,
+    "project_name_contains": "郭靖",
+    "limit": 20,
+    "delivery": {
+      "feishu": {
+        "enabled": false,
+        "runtime_file": "data/secrets/feishu.runtime.local.json"
+      }
+    }
+  }
+}

@@ -25,3 +25,13 @@ def write_run_artifact(runs_dir: str | Path, workflow: str, payload: dict[str, A
         except FileExistsError:
             continue
     raise RuntimeError(f"cannot allocate run artifact path for workflow {workflow}: {timestamp}")
+
+
+def write_latest_artifact(runs_dir: str | Path, workflow: str, payload: dict[str, Any]) -> Path:
+    target_dir = Path(runs_dir) / workflow
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / "latest.json"
+    tmp = target_dir / ".latest.json.tmp"
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(target)
+    return target
