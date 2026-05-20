@@ -1,0 +1,11 @@
+{
+  "delivery_suggestion_backtest": {
+    "suggestions_artifact_paths": [
+      "data/runs/delivery_patrol_suggestions/latest.json"
+    ],
+    "db_path": "data/roibang_v2.sqlite3",
+    "lookahead_days": 1,
+    "max_after_stat_cost": 100,
+    "max_after_convert_cnt": 0
+  }
+}

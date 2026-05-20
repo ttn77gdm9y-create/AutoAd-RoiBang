@@ -569,6 +569,23 @@ PYTHONPATH=src python3 scripts/run_delivery_patrol_suggestions.py \
 
 正式每小时巡检无需单独运行建议脚本；`configs/delivery-patrol.daily-readonly.example.json` 已通过 `suggestions（建议配置）` 指向 `configs/delivery-patrol-suggestions.example.json`，并使用本地 `data/roibang_v2.sqlite3` 补充操作日志和生命周期证据。
 
+建议准确率回测：
+
+```bash
+PYTHONPATH=src python3 scripts/run_delivery_suggestion_backtest.py \
+  --suggestions-artifact data/runs/delivery_patrol_suggestions/latest.json \
+  --db data/roibang_v2.sqlite3 \
+  --lookahead-days 1
+```
+
+`delivery_suggestion_backtest（投放建议回测）` 是只读脚本：
+
+- 只读取本地建议 JSON 和 SQLite 数据库。
+- `external_api_calls（外部接口调用数）=0`。
+- 不生成执行配置，不执行真实动作。
+- 如果本地数据库还没有覆盖完整后续窗口，会输出 `pending_future_data（等待后续数据）`，不会把缺数据误判成建议有效。
+- 当前优先回测项目级建议：关闭项目、删除项目、下调预算、下调出价。
+
 ## 定时任务
 
 示例配置：
