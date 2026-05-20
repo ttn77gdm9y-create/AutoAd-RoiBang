@@ -175,6 +175,54 @@ PYTHONPATH=src python3 scripts/run_ai_create_template_drafts.py \
 
 后续如果要使用 AI 草稿，必须新增一个单独的 `promote（转正）` 脚本，由人工明确选择某个草稿后，才允许显式转换成新的人工模板；AI 草稿不会自动覆盖现有模板。
 
+## Streamlit 网页面板 v0.1
+
+`Streamlit（Python 网页面板）` 是本地薄面板，只负责统一入口，不承载业务逻辑。
+
+启动前检查：
+
+```bash
+PYTHONPATH=src python3 scripts/run_streamlit_ui.py --check
+```
+
+如果提示未安装：
+
+```bash
+python3 -m pip install -r requirements-ui.txt
+```
+
+启动本地页面：
+
+```bash
+PYTHONPATH=src python3 scripts/run_streamlit_ui.py \
+  --ui-config configs/ui/streamlit-v0.example.json \
+  --host 127.0.0.1 \
+  --port 8501
+```
+
+打开：
+
+```text
+http://127.0.0.1:8501
+```
+
+v0.1 页面包含：
+
+- `Dashboard（首页）`：展示最近定时任务日报、投放巡检、巡检建议、创建执行、AI 创建模板草稿。
+- `Delivery Patrol（投放巡检）`：调用固定只读巡检脚本，展示飞书摘要和建议摘要。
+- `Create（创建）`：选择固定创建模式和账户，调用 `run_create_mode.py（创建计划脚本）` 生成创建计划，不执行真实创建。
+- `Project Management（项目管理）`：按账户、项目名、今天/昨天/近 3 天指标生成项目管理 JSON。
+- `AI Drafts（AI 草稿）`：调用 `run_ai_create_template_drafts.py（AI 创建模板草稿脚本）`，展示草稿和证据。
+- `Results（结果）`：读取本地 `data/runs（运行结果目录）` 最近产物。
+
+面板边界：
+
+- 不直接调用巨量 API（接口）。
+- 不直接执行真实创建。
+- 不直接删除、关闭、开启项目。
+- 不写 `configs/create-modes（人工创建模式目录）`。
+- 真实业务动作仍必须由固定脚本读取 JSON 执行，并由用户明确确认。
+
 ## 创建执行
 
 创建真实执行仍走固定脚本，真实执行前必须由用户明确说“确认执行”。
@@ -288,6 +336,8 @@ PYTHONPATH=src python3 scripts/watch_create_live_progress.py --clear --recent-ev
 - `scripts/run_project_delete.py`：项目删除。
 - `scripts/run_project_management_update_config.py`：按账户和项目名称查询后生成项目管理配置。
 - `scripts/run_project_realtime_filter_config.py`：按平台实时数据筛选项目后生成项目管理配置。
+- `scripts/run_project_delete_from_suggestions.py`：读取 `delivery_patrol_suggestions（投放巡检建议）` JSON，只提取 `suggest_delete_project（建议删除项目）`，生成删除项目配置。
+- `scripts/run_project_update_from_suggestions.py`：通用建议转项目管理配置入口，支持用 `--suggested-action（建议动作过滤）` 限定只转换某类建议。
 - `scripts/run_project_update_execute.py`：项目更新执行。
 - `scripts/run_project_schedule_restore_due.py`：到期时段恢复。
 
@@ -322,6 +372,34 @@ PYTHONPATH=src python3 scripts/run_project_realtime_filter_config.py \
 - `today（今天）`
 - `yesterday（昨天）`
 - `last_3_days（近 3 天，包含今天、昨天、前天）`
+
+从巡检建议删除项目的固定入口：
+
+```bash
+PYTHONPATH=src python3 scripts/run_project_delete_from_suggestions.py \
+  --suggestions-artifact data/runs/delivery_patrol_suggestions/20260520T093255Z.json \
+  --operator 郭靖
+```
+
+这个命令只生成项目删除配置，不调用外部接口。输出 JSON 里会给出 `project_update_path（项目管理配置路径）` 和 `next_execute_command（下一步执行命令）`。
+
+用户确认后再执行：
+
+```bash
+PYTHONPATH=src python3 scripts/run_project_update_execute.py \
+  --config configs/project-update-execute.local.json \
+  --project-update configs/project-updates/delete-from-suggestions-20260520T093255Z.local.json \
+  --execute --yes
+```
+
+常用动作映射：
+
+| 需求 | 固定脚本 |
+| --- | --- |
+| 按项目名开启/关闭项目 | `scripts/run_project_status_update_config.py` -> `scripts/run_project_update_execute.py` |
+| 按今天/昨天/近 3 天实时数据筛选项目 | `scripts/run_project_realtime_filter_config.py` -> `scripts/run_project_update_execute.py` |
+| 按巡检建议删除项目 | `scripts/run_project_delete_from_suggestions.py` -> `scripts/run_project_update_execute.py` |
+| 调预算/调出价/调 ROI 系数 | 对应 `*_config.py` -> `scripts/run_project_update_execute.py` |
 
 支持的指标筛选字段：
 

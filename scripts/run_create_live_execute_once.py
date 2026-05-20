@@ -157,11 +157,20 @@ def _endpoint_checks(policy: dict) -> dict[str, bool]:
     }
 
 
-def _transport_config_readiness(*, policy: dict, runtime_execution: bool, runtime_external_api: bool) -> dict:
+def _transport_config_readiness(
+    *,
+    policy: dict,
+    runtime_environment: str,
+    runtime_phase: str,
+    runtime_execution: bool,
+    runtime_external_api: bool,
+) -> dict:
     runner_policy = _runner_policy(policy)
     transport_cfg = _transport_config(policy)
     token_status = _token_pointer_status(transport_cfg)
     checks = {
+        "runtime.environment.local-create-live": runtime_environment == "local-create-live",
+        "runtime.phase.phase2": runtime_phase == "phase2",
         "runtime.execution_enabled": bool(runtime_execution),
         "runtime.external_api_enabled": bool(runtime_external_api),
         "create_execute.live_api.enabled": bool(_live_api_policy(policy).get("enabled", False)),
@@ -487,6 +496,8 @@ def run_from_args(argv: list[str] | None = None) -> int:
     policy = load_json(args.policy)
     local_config_readiness = _transport_config_readiness(
         policy=policy,
+        runtime_environment=config.environment,
+        runtime_phase=config.phase,
         runtime_execution=config.execution_enabled,
         runtime_external_api=config.external_api_enabled,
     )

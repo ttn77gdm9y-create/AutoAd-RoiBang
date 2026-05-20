@@ -44,6 +44,21 @@ def _suggestions() -> dict:
                 "entity_id": "project-ignored",
             },
             {
+                "suggestion_type": "suggest_delete_project",
+                "suggested_action": "suggest_delete_project",
+                "suggestion_id": "delete-project-1",
+                "rule_id": "project_delete_inactive_closed",
+                "target_date": "2026-05-12",
+                "advertiser_id": "1856647523922953",
+                "entity_type": "project",
+                "entity_id": "project-delete-1",
+                "entity_name": "0512_郭靖勇者突进_旧项目",
+                "status": "PROJECT_STATUS_DISABLE",
+                "reason": "项目已关闭，今天和昨天低消耗且无计费时间转化，建议作为项目数量清理候选。",
+                "metrics": {"stat_cost": 0, "billing_convert_cnt": 0},
+                "evidence": {"lifecycle": {"project_age_days": 8}},
+            },
+            {
                 "suggestion_type": "schedule_hollow",
                 "rule_id": "schedule_hollow_low_realtime_hour_roi",
                 "target_date": "2026-05-12",
@@ -88,8 +103,12 @@ def test_build_project_update_from_schedule_hollow_suggestions_only():
     assert result["external_api_calls"] == 0
     assert result["summary"] == {
         "project_update_id": "project-update-20260512-001",
-        "source_suggestion_count": 3,
+        "source_suggestion_count": 4,
+        "selected_suggestion_count": 4,
+        "suggested_actions": [],
         "schedule_hollow_action_count": 2,
+        "delete_project_action_count": 1,
+        "action_count": 3,
         "restore_action_count": 2,
         "target_date": "2026-05-12",
         "restore_date": "2026-05-13",
@@ -112,6 +131,39 @@ def test_build_project_update_from_schedule_hollow_suggestions_only():
     }
     assert update["restore_actions"][0]["action_type"] == "schedule_restore"
     assert update["restore_actions"][0]["restore_date"] == "2026-05-13"
+    assert update["actions"][2] == {
+        "action_type": "delete_project",
+        "advertiser_id": "1856647523922953",
+        "entity_type": "project",
+        "project_id": "project-delete-1",
+        "project_name": "0512_郭靖勇者突进_旧项目",
+        "reason": "项目已关闭，今天和昨天低消耗且无计费时间转化，建议作为项目数量清理候选。",
+        "source_suggestion_id": "delete-project-1",
+        "source_rule_id": "project_delete_inactive_closed",
+        "metrics": {"stat_cost": 0, "billing_convert_cnt": 0},
+        "evidence": {"lifecycle": {"project_age_days": 8}},
+        "status": "PROJECT_STATUS_DISABLE",
+    }
+
+
+def test_build_project_update_from_suggestions_can_filter_delete_actions_only():
+    result = build_project_update_from_suggestions(
+        _suggestions(),
+        {
+            "project_update_id": "delete-from-suggestions-001",
+            "operator": "郭靖",
+            "suggested_actions": ["suggest_delete_project"],
+        },
+    )
+
+    assert result["summary"]["source_suggestion_count"] == 4
+    assert result["summary"]["selected_suggestion_count"] == 1
+    assert result["summary"]["suggested_actions"] == ["suggest_delete_project"]
+    assert result["summary"]["schedule_hollow_action_count"] == 0
+    assert result["summary"]["delete_project_action_count"] == 1
+    assert result["summary"]["action_count"] == 1
+    assert result["project_update"]["actions"][0]["action_type"] == "delete_project"
+    assert result["project_update"]["actions"][0]["project_id"] == "project-delete-1"
 
 
 def test_run_project_update_from_suggestions_writes_update_file_and_artifact(tmp_path: Path):
@@ -133,7 +185,7 @@ def test_run_project_update_from_suggestions_writes_update_file_and_artifact(tmp
     assert result["project_update_path"] == str(output_path)
     assert Path(result["artifact_path"]).exists()
     assert saved["project_update_id"] == "project-update-20260512-001"
-    assert len(saved["actions"]) == 2
+    assert len(saved["actions"]) == 3
     assert len(saved["restore_actions"]) == 2
 
 
@@ -166,4 +218,67 @@ def test_project_update_from_suggestions_cli_accepts_artifact_file(tmp_path: Pat
     assert output["execution_enabled"] is False
     assert output["external_api_calls"] == 0
     assert output["summary"]["schedule_hollow_action_count"] == 2
+    assert output["summary"]["delete_project_action_count"] == 1
     assert output["project_update_path"] == str(output_path)
+
+
+def test_project_update_from_suggestions_cli_can_filter_to_delete_only(tmp_path: Path, capsys):
+    suggestions_path = tmp_path / "suggestions.json"
+    output_path = tmp_path / "delete.local.json"
+    suggestions_path.write_text(json.dumps(_suggestions(), ensure_ascii=False), encoding="utf-8")
+    module = _load_script()
+
+    exit_code = module.run_from_args(
+        [
+            "--suggestions-artifact",
+            str(suggestions_path),
+            "--project-update-id",
+            "delete-from-suggestions-001",
+            "--operator",
+            "郭靖",
+            "--suggested-action",
+            "suggest_delete_project",
+            "--output",
+            str(output_path),
+            "--runs-dir",
+            str(tmp_path / "runs"),
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    saved = json.loads(output_path.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert output["summary"]["selected_suggestion_count"] == 1
+    assert output["summary"]["action_count"] == 1
+    assert saved["actions"][0]["action_type"] == "delete_project"
+    assert saved["actions"][0]["project_id"] == "project-delete-1"
+
+
+def test_project_delete_from_suggestions_wrapper_defaults_to_delete_only(tmp_path: Path, capsys):
+    suggestions_path = tmp_path / "20260520T093255Z.json"
+    suggestions_path.write_text(json.dumps(_suggestions(), ensure_ascii=False), encoding="utf-8")
+    script_path = Path("scripts/run_project_delete_from_suggestions.py")
+    spec = importlib.util.spec_from_file_location("run_project_delete_from_suggestions", script_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(module)
+
+    exit_code = module.run_from_args(
+        [
+            "--suggestions-artifact",
+            str(suggestions_path),
+            "--operator",
+            "郭靖",
+            "--output",
+            str(tmp_path / "delete.local.json"),
+            "--runs-dir",
+            str(tmp_path / "runs"),
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert output["summary"]["project_update_id"] == "delete-from-suggestions-20260520T093255Z"
+    assert output["summary"]["suggested_actions"] == ["suggest_delete_project"]
+    assert output["summary"]["action_count"] == 1
+    assert output["next_execute_command"].endswith("--execute --yes")

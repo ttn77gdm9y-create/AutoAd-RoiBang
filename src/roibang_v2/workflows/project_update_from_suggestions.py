@@ -18,6 +18,29 @@ def _project_update_id(cfg: dict[str, Any]) -> str:
     return value
 
 
+def _suggested_action_name(suggestion: dict[str, Any]) -> str:
+    return str(suggestion.get("suggested_action") or suggestion.get("suggestion_type") or "").strip()
+
+
+def _suggested_action_filter(cfg: dict[str, Any]) -> list[str]:
+    raw = cfg.get("suggested_actions", cfg.get("suggested_action"))
+    values: list[str]
+    if isinstance(raw, list):
+        values = [str(item).strip() for item in raw]
+    elif isinstance(raw, str):
+        values = [item.strip() for item in raw.split(",")]
+    else:
+        values = []
+    return [item for item in values if item]
+
+
+def _filter_suggestions(suggestions: list[dict[str, Any]], suggested_actions: list[str]) -> list[dict[str, Any]]:
+    if not suggested_actions:
+        return suggestions
+    allowed = set(suggested_actions)
+    return [suggestion for suggestion in suggestions if _suggested_action_name(suggestion) in allowed]
+
+
 def _schedule_hollow_actions(suggestions: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     actions: list[dict[str, Any]] = []
     restore_actions: list[dict[str, Any]] = []
@@ -54,6 +77,40 @@ def _schedule_hollow_actions(suggestions: list[dict[str, Any]]) -> tuple[list[di
     return actions, restore_actions
 
 
+def _delete_project_actions(suggestions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    actions: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for suggestion in suggestions:
+        if _suggested_action_name(suggestion) != "suggest_delete_project":
+            continue
+        if str(suggestion.get("entity_type") or "").strip() != "project":
+            continue
+        advertiser_id = str(suggestion.get("advertiser_id") or "").strip()
+        project_id = str(suggestion.get("project_id") or suggestion.get("entity_id") or "").strip()
+        if not advertiser_id or not project_id:
+            continue
+        key = (advertiser_id, project_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        action = {
+            "action_type": "delete_project",
+            "advertiser_id": advertiser_id,
+            "entity_type": "project",
+            "project_id": project_id,
+            "project_name": str(suggestion.get("project_name") or suggestion.get("entity_name") or "").strip(),
+            "reason": str(suggestion.get("reason") or ""),
+            "source_suggestion_id": str(suggestion.get("suggestion_id") or ""),
+            "source_rule_id": str(suggestion.get("rule_id") or ""),
+            "metrics": suggestion.get("metrics") if isinstance(suggestion.get("metrics"), dict) else {},
+            "evidence": suggestion.get("evidence") if isinstance(suggestion.get("evidence"), dict) else {},
+        }
+        if str(suggestion.get("status") or "").strip():
+            action["status"] = str(suggestion.get("status") or "").strip()
+        actions.append(action)
+    return actions
+
+
 def build_project_update_from_suggestions(
     suggestions_artifact: dict[str, Any],
     request: dict[str, Any] | None,
@@ -61,7 +118,11 @@ def build_project_update_from_suggestions(
     cfg = dict(request or {})
     update_id = _project_update_id(cfg)
     suggestions = _rows(suggestions_artifact.get("suggestions"))
-    actions, restore_actions = _schedule_hollow_actions(suggestions)
+    suggested_actions = _suggested_action_filter(cfg)
+    selected_suggestions = _filter_suggestions(suggestions, suggested_actions)
+    schedule_actions, restore_actions = _schedule_hollow_actions(selected_suggestions)
+    delete_actions = _delete_project_actions(selected_suggestions)
+    actions = [*schedule_actions, *delete_actions]
     target_dates = sorted({str(action["target_date"]) for action in actions if action.get("target_date")})
     restore_dates = sorted({str(action["restore_date"]) for action in actions if action.get("restore_date")})
     project_update = {
@@ -91,7 +152,11 @@ def build_project_update_from_suggestions(
         "summary": {
             "project_update_id": update_id,
             "source_suggestion_count": len(suggestions),
-            "schedule_hollow_action_count": len(actions),
+            "selected_suggestion_count": len(selected_suggestions),
+            "suggested_actions": suggested_actions,
+            "schedule_hollow_action_count": len(schedule_actions),
+            "delete_project_action_count": len(delete_actions),
+            "action_count": len(actions),
             "restore_action_count": len(restore_actions),
             "target_date": target_dates[0] if len(target_dates) == 1 else "",
             "restore_date": restore_dates[0] if len(restore_dates) == 1 else "",

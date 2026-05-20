@@ -1,0 +1,8 @@
+{
+  "title": "RoiBang-v2 本地工作台",
+  "project_root": ".",
+  "runs_dir": "data/runs",
+  "create_modes_dir": "configs/create-modes",
+  "default_owner": "郭靖",
+  "readonly_timeout_seconds": 900
+}

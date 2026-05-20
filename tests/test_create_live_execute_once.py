@@ -29,13 +29,20 @@ def _load_script(name: str):
     return module
 
 
-def _runtime_config(tmp_path: Path, *, execution_enabled: bool = False, external_api_enabled: bool = False) -> Path:
+def _runtime_config(
+    tmp_path: Path,
+    *,
+    execution_enabled: bool = False,
+    external_api_enabled: bool = False,
+    environment: str = "local-create-live",
+    phase: str = "phase2",
+) -> Path:
     path = tmp_path / "runtime.json"
     path.write_text(
         json.dumps(
             {
-                "environment": "test",
-                "phase": "phase2",
+                "environment": environment,
+                "phase": phase,
                 "database_path": str(tmp_path / "roibang.sqlite3"),
                 "runs_dir": str(tmp_path / "runs"),
                 "fixtures_dir": "data/fixtures",
@@ -2163,6 +2170,45 @@ def test_create_live_execute_once_fixed_script_keeps_default_runtime_blocked(tmp
     assert "source_execution_pack_status" not in output
     assert artifact["actions"] == []
     assert artifact["local_config_readiness"]["ready"] is False
+
+
+def test_create_live_execute_once_fixed_script_blocks_non_live_runtime(tmp_path: Path, capsys):
+    runtime_path = _runtime_config(
+        tmp_path,
+        execution_enabled=True,
+        external_api_enabled=True,
+        environment="local",
+    )
+    _seed_plan_sources(tmp_path / "roibang.sqlite3")
+    policy_path = tmp_path / "policy.json"
+    plan_path = tmp_path / "create-plan.json"
+    policy_path.write_text(json.dumps(_policy(), ensure_ascii=False), encoding="utf-8")
+    plan_path.write_text(json.dumps(_create_plan(), ensure_ascii=False), encoding="utf-8")
+    create_execute_path = tmp_path / "create-execute.json"
+    create_execute_path.write_text(json.dumps(_execute_artifact(), ensure_ascii=False), encoding="utf-8")
+    module = _load_script("run_create_live_execute_once")
+
+    exit_code = module.run_from_args(
+        [
+            "--config",
+            str(runtime_path),
+            "--policy",
+            str(policy_path),
+            "--plan",
+            str(plan_path),
+            "--create-execute-artifact",
+            str(create_execute_path),
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert output["status"] == "blocked"
+    assert output["external_api_calls"] == 0
+    assert output["transport_call_count"] == 0
+    assert output["local_config_readiness"]["ready"] is False
+    assert "runtime.environment.local-create-live" in output["local_config_readiness"]["missing"]
+    assert "runtime.environment.local-create-live" in output["blocking_reasons"][0]
 
 
 def test_create_live_execute_once_fixed_script_blocks_missing_token_without_crashing(
