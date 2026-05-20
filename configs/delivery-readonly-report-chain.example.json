@@ -9,7 +9,7 @@
     "limit": 20,
     "delivery": {
       "feishu": {
-        "enabled": false,
+        "enabled": true,
         "runtime_file": "data/secrets/feishu.runtime.local.json"
       }
     }

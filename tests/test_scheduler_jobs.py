@@ -13,8 +13,8 @@ def test_scheduler_registry_has_no_ai_execution_prompts():
     assert result == {
         "ok": True,
         "jobs": 23,
-        "enabled_jobs": 10,
-        "disabled_jobs": 13,
+        "enabled_jobs": 11,
+        "disabled_jobs": 12,
         "violations": [],
     }
 
@@ -203,6 +203,7 @@ def test_scheduler_registry_keeps_daily_jobs_and_restore_due_job():
         ("roibang-scheduler-status", "0 6 * * *"),
         ("roibang-project-schedule-restore-due", "10 0 * * *"),
         ("roibang-delivery-patrol", "30 8-23 * * *"),
+        ("roibang-delivery-readonly-report-chain", "50 23 * * *"),
     ]
 
     source_account_push = {job["id"]: job for job in registry["jobs"]}["roibang-source-material-account-auto-push"]
@@ -351,7 +352,7 @@ def test_scheduler_registry_includes_delivery_patrol_jobs():
         "external_api_calls": 0,
     }
 
-    assert readonly_report_chain["enabled"] is False
+    assert readonly_report_chain["enabled"] is True
     assert readonly_report_chain["schedule"] == {"type": "cron", "expr": "50 23 * * *", "tz": "Asia/Shanghai"}
     assert readonly_report_chain["script"]["command"] == [
         "python3",

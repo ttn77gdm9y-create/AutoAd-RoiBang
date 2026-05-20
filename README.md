@@ -618,9 +618,9 @@ PYTHONPATH=src python3 scripts/run_delivery_readonly_report_chain.py \
 3. `delivery_business_report（投放业务日报）`
 
 链路只读本地 JSON 和 SQLite 数据库，`external_api_calls（外部接口调用数）=0`，不生成执行配置，不执行真实动作。
-飞书推送由 `delivery.feishu.enabled（飞书是否启用）` 控制，示例配置默认关闭。
+飞书推送由 `delivery.feishu.enabled（飞书是否启用）` 控制，当前示例配置已启用。
 
-定时任务注册表已预留 `roibang-delivery-readonly-report-chain（日常只读投放业务日报链路）`，默认 `enabled=false（未启用）`。确认要每天自动跑后，再改为 `enabled=true（启用）` 并重新渲染/安装 `launchd（macOS 定时任务）`。
+定时任务注册表已启用 `roibang-delivery-readonly-report-chain（日常只读投放业务日报链路）`，每天 `23:50` 自动生成投放运营日报并推送飞书。
 
 创建批次复盘：
 
@@ -666,6 +666,7 @@ PYTHONPATH=src python3 scripts/run_create_batch_review.py \
 - `05:30` 源素材表现汇总重建。
 - `06:00` 定时任务日报。
 - `08:30-23:30` 每小时投放账户巡检并推送飞书。
+- `23:50` 投放运营日报。
 
 常用检查：
 
