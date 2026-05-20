@@ -586,6 +586,22 @@ PYTHONPATH=src python3 scripts/run_delivery_suggestion_backtest.py \
 - 如果本地数据库还没有覆盖完整后续窗口，会输出 `pending_future_data（等待后续数据）`，不会把缺数据误判成建议有效。
 - 当前优先回测项目级建议：关闭项目、删除项目、下调预算、下调出价。
 
+业务日报：
+
+```bash
+PYTHONPATH=src python3 scripts/run_delivery_business_report.py \
+  --patrol-artifact data/runs/delivery_patrol/latest.json \
+  --suggestions-artifact data/runs/delivery_patrol_suggestions/latest.json \
+  --backtest-artifact data/runs/delivery_suggestion_backtest/latest.json
+```
+
+`delivery_business_report（投放业务日报）` 是只读汇总脚本：
+
+- 合并 `delivery_patrol（投放巡检）`、`delivery_patrol_suggestions（投放巡检建议）`、`delivery_suggestion_backtest（建议回测）`。
+- 输出 `overall（整体表现）`、`account_health（账户健康）`、`project_focus（重点项目）`、`unit_focus（重点单元）`、`suggestions_today（今日建议）`、`suggestion_backtest（建议回测）`、`next_actions（下一步动作）`、`message（汇报文案）`。
+- `external_api_calls（外部接口调用数）=0`。
+- 不生成执行配置，不执行真实动作。
+
 ## 定时任务
 
 示例配置：
