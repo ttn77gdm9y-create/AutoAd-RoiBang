@@ -195,6 +195,144 @@ def _wire_id(value: Any) -> int | str:
     return int(text) if text.isdigit() else text
 
 
+def _number(value: Any) -> float | None:
+    try:
+        if value in (None, ""):
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _wire_number(value: float) -> int | float:
+    rounded = round(value, 2)
+    return int(rounded) if rounded.is_integer() else rounded
+
+
+def _adjustment_ratio(action: dict[str, Any]) -> float | None:
+    direct = _number(action.get("adjustment_ratio"))
+    if direct is not None:
+        return direct
+    adjustment = action.get("adjustment") if isinstance(action.get("adjustment"), dict) else {}
+    if _text(adjustment.get("type")) != "ratio":
+        return None
+    return _number(adjustment.get("value"))
+
+
+def _row_number(row: dict[str, Any], keys: list[str]) -> float | None:
+    for key in keys:
+        value = row.get(key)
+        number = _number(value)
+        if number is not None:
+            return number
+    for container_key in ["delivery_setting", "delivery", "project"]:
+        container = row.get(container_key)
+        if not isinstance(container, dict):
+            continue
+        for key in keys:
+            number = _number(container.get(key))
+            if number is not None:
+                return number
+    return None
+
+
+def _lookup_project_rows(
+    advertiser_id: str,
+    project_ids: list[str],
+    *,
+    transport: Transport,
+) -> tuple[dict[str, dict[str, Any]], int]:
+    if not project_ids:
+        return {}, 0
+    rows_by_project: dict[str, dict[str, Any]] = {}
+    call_count = 0
+    for chunk in [project_ids[index : index + 100] for index in range(0, len(project_ids), 100)]:
+        response = transport(_lookup_request(advertiser_id, chunk))
+        call_count += 1
+        _raise_for_api_error(response)
+        for row in _response_rows(response):
+            project_id = _text(row.get("project_id"))
+            if project_id:
+                rows_by_project[project_id] = row
+    return rows_by_project, call_count
+
+
+def _resolve_ratio_management_actions(
+    actions: list[dict[str, Any]],
+    *,
+    transport: Transport,
+) -> tuple[list[dict[str, Any]], int, list[str]]:
+    ratio_actions = [
+        action
+        for action in actions
+        if _text(action.get("action_type")) in {"budget_update", "bid_update"}
+        and _adjustment_ratio(action) is not None
+        and (
+            (_text(action.get("action_type")) == "budget_update" and _number(action.get("budget")) is None)
+            or (_text(action.get("action_type")) == "bid_update" and _number(action.get("cpa_bid")) is None)
+        )
+    ]
+    if not ratio_actions:
+        return actions, 0, []
+
+    lookup_call_count = 0
+    blocking_reasons: list[str] = []
+    rows_by_account: dict[str, dict[str, dict[str, Any]]] = {}
+    project_ids_by_account: dict[str, list[str]] = {}
+    for action in ratio_actions:
+        advertiser_id = _text(action.get("advertiser_id"))
+        project_id = _text(action.get("project_id"))
+        if advertiser_id and project_id:
+            project_ids_by_account.setdefault(advertiser_id, []).append(project_id)
+    for advertiser_id, project_ids in project_ids_by_account.items():
+        rows, calls = _lookup_project_rows(advertiser_id, sorted(set(project_ids)), transport=transport)
+        lookup_call_count += calls
+        rows_by_account[advertiser_id] = rows
+
+    resolved: list[dict[str, Any]] = []
+    for action in actions:
+        action_type = _text(action.get("action_type"))
+        ratio = _adjustment_ratio(action)
+        if action_type not in {"budget_update", "bid_update"} or ratio is None:
+            resolved.append(action)
+            continue
+        if action_type == "budget_update" and _number(action.get("budget")) is not None:
+            resolved.append(action)
+            continue
+        if action_type == "bid_update" and _number(action.get("cpa_bid")) is not None:
+            resolved.append(action)
+            continue
+        advertiser_id = _text(action.get("advertiser_id"))
+        project_id = _text(action.get("project_id"))
+        row = rows_by_account.get(advertiser_id, {}).get(project_id)
+        key = f"{advertiser_id}/{project_id}"
+        if not row:
+            blocking_reasons.append(f"ratio update lookup missed project: {key}")
+            continue
+        current_value = (
+            _row_number(row, ["budget", "daily_budget"])
+            if action_type == "budget_update"
+            else _row_number(row, ["cpa_bid", "bid_amount", "bid"])
+        )
+        if current_value is None or current_value <= 0:
+            field_name = "budget" if action_type == "budget_update" else "cpa_bid"
+            blocking_reasons.append(f"ratio update missed current {field_name}: {key}")
+            continue
+        new_value = current_value * (1 + ratio)
+        if new_value <= 0:
+            blocking_reasons.append(f"ratio update produced non-positive value: {key}")
+            continue
+        updated_action = dict(action)
+        updated_action["resolved_current_value"] = _wire_number(current_value)
+        if action_type == "budget_update":
+            updated_action["budget_mode"] = _text(action.get("budget_mode")) or _text(row.get("budget_mode")) or "BUDGET_MODE_DAY"
+            updated_action["budget"] = _wire_number(new_value)
+        else:
+            updated_action["cpa_bid"] = _wire_number(new_value)
+        resolved.append(updated_action)
+    return resolved, lookup_call_count, blocking_reasons
+
+
 def _build_schedule_ledger(
     project_update: dict[str, Any],
     *,
@@ -420,12 +558,18 @@ def _execute_management_updates(
     project_update: dict[str, Any],
     *,
     transport: Transport,
-) -> tuple[list[dict[str, Any]], int, int]:
+) -> tuple[list[dict[str, Any]], int, int, list[str]]:
     results: list[dict[str, Any]] = []
     update_call_count = 0
     updated_project_count = 0
+    actions, lookup_call_count, blocking_reasons = _resolve_ratio_management_actions(
+        _rows(project_update.get("actions")),
+        transport=transport,
+    )
+    if blocking_reasons:
+        return [], lookup_call_count, 0, blocking_reasons
     grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
-    for action in _rows(project_update.get("actions")):
+    for action in actions:
         action_type = _text(action.get("action_type"))
         if action_type not in MANAGEMENT_ACTION_OPERATIONS:
             continue
@@ -449,7 +593,7 @@ def _execute_management_updates(
                     "status": "completed",
                 }
             )
-    return results, update_call_count, updated_project_count
+    return results, lookup_call_count + update_call_count, updated_project_count, []
 
 
 def run_project_update_execute_request(
@@ -525,10 +669,34 @@ def run_project_update_execute_request(
 
     ledger_path = _write_schedule_ledger(runs_dir, project_update, entries) if entries else ""
     results, update_call_count = _execute_updates(entries, transport=transport)
-    management_results, management_update_call_count, management_updated_project_count = _execute_management_updates(
+    management_results, management_update_call_count, management_updated_project_count, management_blocking_reasons = _execute_management_updates(
         project_update,
         transport=transport,
     )
+    if management_blocking_reasons:
+        payload = {
+            "ok": False,
+            "workflow": "project_update_execute",
+            "phase": "control_execute",
+            "status": "failed_before_update",
+            "execution_enabled": True,
+            "external_api_calls": lookup_call_count + update_call_count + management_update_call_count,
+            "project_update_path": project_update_path,
+            "preflight_artifact_path": preflight_artifact_path,
+            "schedule_ledger_path": ledger_path,
+            "restore_queue_path": "",
+            "summary": {
+                "project_update_id": _text(project_update.get("project_update_id")),
+                "action_count": len(_rows(project_update.get("actions"))),
+                "updated_project_count": len(entries),
+                "lookup_call_count": lookup_call_count + management_update_call_count,
+                "update_call_count": update_call_count,
+            },
+            "blocking_reasons": management_blocking_reasons,
+            "results": results,
+        }
+        payload["artifact_path"] = str(write_run_artifact(runs_dir, "project_update_execute", payload))
+        return payload
     results.extend(management_results)
     restore_queue_path = _append_restore_queue(
         runs_dir=runs_dir,

@@ -79,6 +79,52 @@ def _suggestions() -> dict:
     }
 
 
+def _management_suggestions() -> dict:
+    result = _suggestions()
+    result["suggestions"] = [
+        *result["suggestions"],
+        {
+            "suggestion_type": "suggest_close_project",
+            "suggested_action": "suggest_close_project",
+            "suggestion_id": "close-project-1",
+            "rule_id": "project_close_zero_convert",
+            "target_date": "2026-05-12",
+            "advertiser_id": "1856647523922953",
+            "entity_type": "project",
+            "project_id": "project-close-1",
+            "entity_name": "0512_郭靖勇者突进_关闭候选",
+            "reason": "今天和昨天累计消耗达到阈值，但计费时间转化数为 0，建议关闭项目。",
+        },
+        {
+            "suggestion_type": "suggest_lower_budget",
+            "suggested_action": "suggest_lower_budget",
+            "suggestion_id": "budget-project-1",
+            "rule_id": "project_lower_budget_low_roi",
+            "target_date": "2026-05-12",
+            "advertiser_id": "1856647523922953",
+            "entity_type": "project",
+            "project_id": "project-budget-1",
+            "entity_name": "0512_郭靖勇者突进_降预算候选",
+            "reason": "项目有计费时间转化但计费当日 ROI 低于阈值，建议只输出下调预算比例。",
+            "adjustment": {"type": "ratio", "value": -0.2},
+        },
+        {
+            "suggestion_type": "suggest_lower_bid",
+            "suggested_action": "suggest_lower_bid",
+            "suggestion_id": "bid-project-1",
+            "rule_id": "project_lower_bid_high_cpa",
+            "target_date": "2026-05-12",
+            "advertiser_id": "1856647539522568",
+            "entity_type": "project",
+            "project_id": "project-bid-1",
+            "entity_name": "0512_郭靖勇者突进_降出价候选",
+            "reason": "计费时间转化成本高于阈值，建议只输出下调出价比例。",
+            "adjustment": {"type": "ratio", "value": -0.1},
+        },
+    ]
+    return result
+
+
 def _load_script():
     script_path = Path("scripts/run_project_update_from_suggestions.py")
     spec = importlib.util.spec_from_file_location("run_project_update_from_suggestions", script_path)
@@ -108,6 +154,9 @@ def test_build_project_update_from_schedule_hollow_suggestions_only():
         "suggested_actions": [],
         "schedule_hollow_action_count": 2,
         "delete_project_action_count": 1,
+        "close_project_action_count": 0,
+        "lower_budget_action_count": 0,
+        "lower_bid_action_count": 0,
         "action_count": 3,
         "restore_action_count": 2,
         "target_date": "2026-05-12",
@@ -161,9 +210,76 @@ def test_build_project_update_from_suggestions_can_filter_delete_actions_only():
     assert result["summary"]["suggested_actions"] == ["suggest_delete_project"]
     assert result["summary"]["schedule_hollow_action_count"] == 0
     assert result["summary"]["delete_project_action_count"] == 1
+    assert result["summary"]["close_project_action_count"] == 0
+    assert result["summary"]["lower_budget_action_count"] == 0
+    assert result["summary"]["lower_bid_action_count"] == 0
     assert result["summary"]["action_count"] == 1
     assert result["project_update"]["actions"][0]["action_type"] == "delete_project"
     assert result["project_update"]["actions"][0]["project_id"] == "project-delete-1"
+
+
+def test_build_project_update_from_suggestions_can_convert_close_budget_and_bid_actions():
+    result = build_project_update_from_suggestions(
+        _management_suggestions(),
+        {
+            "project_update_id": "management-from-suggestions-001",
+            "operator": "郭靖",
+            "suggested_actions": ["suggest_close_project", "suggest_lower_budget", "suggest_lower_bid"],
+        },
+    )
+
+    assert result["summary"]["source_suggestion_count"] == 7
+    assert result["summary"]["selected_suggestion_count"] == 3
+    assert result["summary"]["close_project_action_count"] == 1
+    assert result["summary"]["lower_budget_action_count"] == 1
+    assert result["summary"]["lower_bid_action_count"] == 1
+    assert result["summary"]["action_count"] == 3
+    assert result["project_update"]["actions"] == [
+        {
+            "action_type": "status_update",
+            "advertiser_id": "1856647523922953",
+            "entity_type": "project",
+            "project_id": "project-close-1",
+            "project_name": "0512_郭靖勇者突进_关闭候选",
+            "reason": "今天和昨天累计消耗达到阈值，但计费时间转化数为 0，建议关闭项目。",
+            "source_suggestion_id": "close-project-1",
+            "source_rule_id": "project_close_zero_convert",
+            "metrics": {},
+            "evidence": {},
+            "opt_status": "DISABLE",
+        },
+        {
+            "action_type": "budget_update",
+            "advertiser_id": "1856647523922953",
+            "entity_type": "project",
+            "project_id": "project-budget-1",
+            "project_name": "0512_郭靖勇者突进_降预算候选",
+            "reason": "项目有计费时间转化但计费当日 ROI 低于阈值，建议只输出下调预算比例。",
+            "source_suggestion_id": "budget-project-1",
+            "source_rule_id": "project_lower_budget_low_roi",
+            "metrics": {},
+            "evidence": {},
+            "adjustment": {"type": "ratio", "value": -0.2},
+            "adjustment_ratio": -0.2,
+            "resolve_current_value_at_execute": True,
+            "budget_mode": "BUDGET_MODE_DAY",
+        },
+        {
+            "action_type": "bid_update",
+            "advertiser_id": "1856647539522568",
+            "entity_type": "project",
+            "project_id": "project-bid-1",
+            "project_name": "0512_郭靖勇者突进_降出价候选",
+            "reason": "计费时间转化成本高于阈值，建议只输出下调出价比例。",
+            "source_suggestion_id": "bid-project-1",
+            "source_rule_id": "project_lower_bid_high_cpa",
+            "metrics": {},
+            "evidence": {},
+            "adjustment": {"type": "ratio", "value": -0.1},
+            "adjustment_ratio": -0.1,
+            "resolve_current_value_at_execute": True,
+        },
+    ]
 
 
 def test_run_project_update_from_suggestions_writes_update_file_and_artifact(tmp_path: Path):

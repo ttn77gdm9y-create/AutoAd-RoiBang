@@ -195,13 +195,17 @@ def _validate_management_action(action: dict[str, Any]) -> list[str]:
             violations.append(f"budget_update budget_mode must be BUDGET_MODE_DAY or BUDGET_MODE_INFINITE: {key}")
         if budget_mode == "BUDGET_MODE_DAY":
             budget = _number(action.get("budget"))
-            if budget is None:
+            ratio = _number(action.get("adjustment_ratio"))
+            if budget is None and ratio is None:
                 violations.append(f"budget_update requires budget when budget_mode is BUDGET_MODE_DAY: {key}")
-            elif budget <= 0:
+            elif budget is not None and budget <= 0:
                 violations.append(f"budget_update budget must be greater than 0: {key}")
     elif action_type == "bid_update":
         cpa_bid = _number(action.get("cpa_bid"))
-        if cpa_bid is None or cpa_bid <= 0:
+        ratio = _number(action.get("adjustment_ratio"))
+        if cpa_bid is None and ratio is None:
+            violations.append(f"bid_update cpa_bid must be greater than 0: {key}")
+        elif cpa_bid is not None and cpa_bid <= 0:
             violations.append(f"bid_update cpa_bid must be greater than 0: {key}")
     elif action_type == "roi_coeff_update":
         roi_goal = _number(action.get("roi_goal"))
@@ -227,8 +231,12 @@ def _planned_management_change(action: dict[str, Any]) -> dict[str, Any]:
         change["budget_mode"] = _text(action.get("budget_mode"))
         if _text(action.get("budget")):
             change["budget"] = action.get("budget")
+        if _text(action.get("adjustment_ratio")):
+            change["adjustment_ratio"] = action.get("adjustment_ratio")
     elif action_type == "bid_update":
         change["cpa_bid"] = action.get("cpa_bid")
+        if _text(action.get("adjustment_ratio")):
+            change["adjustment_ratio"] = action.get("adjustment_ratio")
     elif action_type == "roi_coeff_update":
         change["roi_goal"] = action.get("roi_goal")
     elif action_type == "delete_project":

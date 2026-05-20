@@ -337,7 +337,7 @@ PYTHONPATH=src python3 scripts/watch_create_live_progress.py --clear --recent-ev
 - `scripts/run_project_management_update_config.py`：按账户和项目名称查询后生成项目管理配置。
 - `scripts/run_project_realtime_filter_config.py`：按平台实时数据筛选项目后生成项目管理配置。
 - `scripts/run_project_delete_from_suggestions.py`：读取 `delivery_patrol_suggestions（投放巡检建议）` JSON，只提取 `suggest_delete_project（建议删除项目）`，生成删除项目配置。
-- `scripts/run_project_update_from_suggestions.py`：通用建议转项目管理配置入口，支持用 `--suggested-action（建议动作过滤）` 限定只转换某类建议。
+- `scripts/run_project_update_from_suggestions.py`：通用建议转项目管理配置入口，支持用 `--suggested-action（建议动作过滤）` 限定只转换某类建议；当前支持删除项目、关闭项目、按比例下调预算、按比例下调出价。
 - `scripts/run_project_update_execute.py`：项目更新执行。
 - `scripts/run_project_schedule_restore_due.py`：到期时段恢复。
 
@@ -399,7 +399,28 @@ PYTHONPATH=src python3 scripts/run_project_update_execute.py \
 | 按项目名开启/关闭项目 | `scripts/run_project_status_update_config.py` -> `scripts/run_project_update_execute.py` |
 | 按今天/昨天/近 3 天实时数据筛选项目 | `scripts/run_project_realtime_filter_config.py` -> `scripts/run_project_update_execute.py` |
 | 按巡检建议删除项目 | `scripts/run_project_delete_from_suggestions.py` -> `scripts/run_project_update_execute.py` |
+| 按巡检建议关闭/降预算/降出价 | `scripts/run_project_update_from_suggestions.py` -> `scripts/run_project_update_execute.py` |
 | 调预算/调出价/调 ROI 系数 | 对应 `*_config.py` -> `scripts/run_project_update_execute.py` |
+
+从巡检建议生成关闭、降预算、降出价配置：
+
+```bash
+PYTHONPATH=src python3 scripts/run_project_update_from_suggestions.py \
+  --suggestions-artifact data/runs/delivery_patrol_suggestions/latest.json \
+  --project-update-id management-from-suggestions-latest \
+  --operator 郭靖 \
+  --suggested-action suggest_close_project \
+  --suggested-action suggest_lower_budget \
+  --suggested-action suggest_lower_bid \
+  --output configs/project-updates/management-from-suggestions-latest.local.json
+```
+
+说明：
+
+- `suggest_close_project（建议关闭项目）` 会生成 `status_update（状态更新）`，目标状态是 `DISABLE（关闭）`。
+- `suggest_lower_budget（建议下调预算）` 只携带 `adjustment_ratio（调整比例）`，执行脚本会在执行时查询项目当前预算后计算新预算。
+- `suggest_lower_bid（建议下调出价）` 只携带 `adjustment_ratio（调整比例）`，执行脚本会在执行时查询项目当前出价后计算新出价。
+- 这样不会由 AI 猜具体预算或出价。
 
 支持的指标筛选字段：
 

@@ -173,6 +173,56 @@ def test_project_update_preflight_rejects_invalid_management_action_values(tmp_p
     assert "roi_coeff_update roi_goal must be between 0.01 and 5: adv-2/p-roi" in result["violations"]
 
 
+def test_project_update_preflight_accepts_ratio_budget_and_bid_actions(tmp_path: Path):
+    allowlist_path = tmp_path / "allowed.json"
+    db_path = tmp_path / "roibang.sqlite3"
+    _write_allowed_accounts(allowlist_path)
+    _seed_projects(db_path)
+    update = {
+        "project_update_id": "project-management-001",
+        "operator": "郭靖",
+        "allowed_target_accounts_path": str(allowlist_path),
+        "actions": [
+            {
+                "action_type": "budget_update",
+                "advertiser_id": "adv-1",
+                "entity_type": "project",
+                "project_id": "p-budget",
+                "budget_mode": "BUDGET_MODE_DAY",
+                "adjustment_ratio": -0.2,
+            },
+            {
+                "action_type": "bid_update",
+                "advertiser_id": "adv-2",
+                "entity_type": "project",
+                "project_id": "p-bid",
+                "adjustment_ratio": -0.1,
+            },
+        ],
+    }
+
+    result = build_project_update_preflight(update, db_path=db_path)
+
+    assert result["ok"] is True
+    assert result["violations"] == []
+    assert result["planned_changes"] == [
+        {
+            "action_type": "budget_update",
+            "advertiser_id": "adv-1",
+            "project_id": "p-budget",
+            "budget_mode": "BUDGET_MODE_DAY",
+            "adjustment_ratio": -0.2,
+        },
+        {
+            "action_type": "bid_update",
+            "advertiser_id": "adv-2",
+            "project_id": "p-bid",
+            "cpa_bid": None,
+            "adjustment_ratio": -0.1,
+        },
+    ]
+
+
 def test_project_update_execute_dry_run_blocks_without_approval(tmp_path: Path):
     result = run_project_update_execute_request(
         {
@@ -265,6 +315,105 @@ def test_project_update_execute_can_delete_projects(tmp_path: Path):
             "payload": {"advertiser_id": "adv-1", "project_ids": ["p-delete"]},
         }
     ]
+
+
+def test_project_update_execute_resolves_ratio_budget_and_bid_updates(tmp_path: Path):
+    calls: list[dict] = []
+
+    def transport(request: dict) -> dict:
+        calls.append(request)
+        if request["operation"] == "lookup_project_schedule":
+            project_ids = set(request["payload"]["filtering"]["ids"])
+            rows = []
+            if "p-budget" in project_ids:
+                rows.append(
+                    {
+                        "project_id": "p-budget",
+                        "budget_mode": "BUDGET_MODE_DAY",
+                        "budget": 1000,
+                    }
+                )
+            if "p-bid" in project_ids:
+                rows.append({"project_id": "p-bid", "cpa_bid": 103})
+            return {"code": 0, "message": "OK", "data": {"list": rows}}
+        return {"code": 0, "message": "OK", "data": {}}
+
+    result = run_project_update_execute_request(
+        {
+            "project_update": {
+                "project_update_id": "project-management-ratio-001",
+                "actions": [
+                    {
+                        "action_type": "budget_update",
+                        "advertiser_id": "adv-1",
+                        "entity_type": "project",
+                        "project_id": "p-budget",
+                        "budget_mode": "BUDGET_MODE_DAY",
+                        "adjustment_ratio": -0.2,
+                    },
+                    {
+                        "action_type": "bid_update",
+                        "advertiser_id": "adv-1",
+                        "entity_type": "project",
+                        "project_id": "p-bid",
+                        "adjustment": {"type": "ratio", "value": -0.1},
+                    },
+                ],
+            },
+            "execute_enabled": True,
+            "approved": True,
+        },
+        runs_dir=tmp_path / "runs",
+        transport=transport,
+    )
+
+    assert result["ok"] is True
+    assert result["external_api_calls"] == 3
+    assert [call["operation"] for call in calls] == [
+        "lookup_project_schedule",
+        "update_project_budget",
+        "update_project_cpa_bid",
+    ]
+    assert calls[1]["payload"]["data"] == [
+        {"project_id": "p-budget", "budget_mode": "BUDGET_MODE_DAY", "budget": 800}
+    ]
+    assert calls[2]["payload"]["data"] == [{"project_id": "p-bid", "cpa_bid": 92.7}]
+
+
+def test_project_update_execute_blocks_ratio_update_when_current_value_missing(tmp_path: Path):
+    calls: list[dict] = []
+
+    def transport(request: dict) -> dict:
+        calls.append(request)
+        return {"code": 0, "message": "OK", "data": {"list": [{"project_id": "p-budget"}]}}
+
+    result = run_project_update_execute_request(
+        {
+            "project_update": {
+                "project_update_id": "project-management-ratio-001",
+                "actions": [
+                    {
+                        "action_type": "budget_update",
+                        "advertiser_id": "adv-1",
+                        "entity_type": "project",
+                        "project_id": "p-budget",
+                        "budget_mode": "BUDGET_MODE_DAY",
+                        "adjustment_ratio": -0.2,
+                    }
+                ],
+            },
+            "execute_enabled": True,
+            "approved": True,
+        },
+        runs_dir=tmp_path / "runs",
+        transport=transport,
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "failed_before_update"
+    assert result["external_api_calls"] == 1
+    assert result["blocking_reasons"] == ["ratio update missed current budget: adv-1/p-budget"]
+    assert [call["operation"] for call in calls] == ["lookup_project_schedule"]
 
 
 def test_project_update_execute_can_run_management_action_without_preflight(tmp_path: Path):

@@ -111,6 +111,88 @@ def _delete_project_actions(suggestions: list[dict[str, Any]]) -> list[dict[str,
     return actions
 
 
+def _project_action_base(suggestion: dict[str, Any], action_type: str) -> dict[str, Any] | None:
+    if str(suggestion.get("entity_type") or "").strip() != "project":
+        return None
+    advertiser_id = str(suggestion.get("advertiser_id") or "").strip()
+    project_id = str(suggestion.get("project_id") or suggestion.get("entity_id") or "").strip()
+    if not advertiser_id or not project_id:
+        return None
+    action = {
+        "action_type": action_type,
+        "advertiser_id": advertiser_id,
+        "entity_type": "project",
+        "project_id": project_id,
+        "project_name": str(suggestion.get("project_name") or suggestion.get("entity_name") or "").strip(),
+        "reason": str(suggestion.get("reason") or ""),
+        "source_suggestion_id": str(suggestion.get("suggestion_id") or ""),
+        "source_rule_id": str(suggestion.get("rule_id") or ""),
+        "metrics": suggestion.get("metrics") if isinstance(suggestion.get("metrics"), dict) else {},
+        "evidence": suggestion.get("evidence") if isinstance(suggestion.get("evidence"), dict) else {},
+    }
+    if str(suggestion.get("status") or "").strip():
+        action["status"] = str(suggestion.get("status") or "").strip()
+    return action
+
+
+def _close_project_actions(suggestions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    actions: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for suggestion in suggestions:
+        if _suggested_action_name(suggestion) != "suggest_close_project":
+            continue
+        action = _project_action_base(suggestion, "status_update")
+        if action is None:
+            continue
+        key = (action["advertiser_id"], action["project_id"])
+        if key in seen:
+            continue
+        seen.add(key)
+        action["opt_status"] = "DISABLE"
+        actions.append(action)
+    return actions
+
+
+def _ratio_adjustment(suggestion: dict[str, Any]) -> float | None:
+    adjustment = suggestion.get("adjustment") if isinstance(suggestion.get("adjustment"), dict) else {}
+    if adjustment.get("type") != "ratio":
+        return None
+    try:
+        return float(adjustment.get("value"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _ratio_project_actions(suggestions: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    budget_actions: list[dict[str, Any]] = []
+    bid_actions: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for suggestion in suggestions:
+        suggested_action = _suggested_action_name(suggestion)
+        if suggested_action not in {"suggest_lower_budget", "suggest_lower_bid"}:
+            continue
+        ratio = _ratio_adjustment(suggestion)
+        if ratio is None:
+            continue
+        action_type = "budget_update" if suggested_action == "suggest_lower_budget" else "bid_update"
+        action = _project_action_base(suggestion, action_type)
+        if action is None:
+            continue
+        key = (action_type, action["advertiser_id"], action["project_id"])
+        if key in seen:
+            continue
+        seen.add(key)
+        action["adjustment"] = {"type": "ratio", "value": ratio}
+        action["adjustment_ratio"] = ratio
+        action["resolve_current_value_at_execute"] = True
+        if action_type == "budget_update":
+            action["budget_mode"] = "BUDGET_MODE_DAY"
+            budget_actions.append(action)
+        else:
+            bid_actions.append(action)
+    return budget_actions, bid_actions
+
+
 def build_project_update_from_suggestions(
     suggestions_artifact: dict[str, Any],
     request: dict[str, Any] | None,
@@ -122,7 +204,9 @@ def build_project_update_from_suggestions(
     selected_suggestions = _filter_suggestions(suggestions, suggested_actions)
     schedule_actions, restore_actions = _schedule_hollow_actions(selected_suggestions)
     delete_actions = _delete_project_actions(selected_suggestions)
-    actions = [*schedule_actions, *delete_actions]
+    close_actions = _close_project_actions(selected_suggestions)
+    budget_actions, bid_actions = _ratio_project_actions(selected_suggestions)
+    actions = [*schedule_actions, *delete_actions, *close_actions, *budget_actions, *bid_actions]
     target_dates = sorted({str(action["target_date"]) for action in actions if action.get("target_date")})
     restore_dates = sorted({str(action["restore_date"]) for action in actions if action.get("restore_date")})
     project_update = {
@@ -156,6 +240,9 @@ def build_project_update_from_suggestions(
             "suggested_actions": suggested_actions,
             "schedule_hollow_action_count": len(schedule_actions),
             "delete_project_action_count": len(delete_actions),
+            "close_project_action_count": len(close_actions),
+            "lower_budget_action_count": len(budget_actions),
+            "lower_bid_action_count": len(bid_actions),
             "action_count": len(actions),
             "restore_action_count": len(restore_actions),
             "target_date": target_dates[0] if len(target_dates) == 1 else "",
