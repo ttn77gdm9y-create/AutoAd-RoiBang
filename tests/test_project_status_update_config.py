@@ -314,11 +314,62 @@ def test_project_management_update_config_filters_by_yesterday_billing_convert_c
         "register_cost": 44.0,
         "billing_convert_cnt": 0.0,
         "billing_conversion_cost": None,
-        "billing_1day_pay_roi": None,
+        "billing_1day_pay_roi": 0.0,
     }
     assert result["matched_projects"][0]["match_reasons"] == ["billing_convert_cnt eq 0.0"]
     assert result["skipped_projects"][0]["skip_reason"] == "metric_filter_not_matched"
     assert "attribution_convert_cnt" in calls[1]["payload"]["metrics"]
+
+
+def test_project_management_update_config_can_match_zero_billing_roi():
+    def transport(request: dict) -> dict:
+        if request["operation"] == "lookup_project_list":
+            return {
+                "code": 0,
+                "data": {
+                    "list": [
+                        {"project_id": "p-zero-roi", "name": "郭靖-勇者突进-零ROI"},
+                        {"project_id": "p-good-roi", "name": "郭靖-勇者突进-有ROI"},
+                    ]
+                },
+            }
+        if request["operation"] == "lookup_project_report":
+            return {
+                "code": 0,
+                "data": {
+                    "rows": [
+                        {
+                            "dimensions": {"cdp_project_id": "p-zero-roi"},
+                            "metrics": {"stat_cost": "100", "attribution_billing_game_in_app_roi_1day": "0"},
+                        },
+                        {
+                            "dimensions": {"cdp_project_id": "p-good-roi"},
+                            "metrics": {"stat_cost": "100", "attribution_billing_game_in_app_roi_1day": "0.03"},
+                        },
+                    ]
+                },
+            }
+        raise AssertionError(request)
+
+    result = build_project_status_update_config(
+        {
+            "project_update_id": "delete-zero-roi-001",
+            "advertiser_ids": ["adv-1"],
+            "action_type": "delete_project",
+            "name_contains": ["郭靖", "勇者突进"],
+            "realtime_filter": {
+                "window": "today",
+                "end_date": "2026-05-22",
+                "metric_filters": [{"field": "billing_1day_pay_roi", "op": "eq", "value": 0}],
+            },
+        },
+        transport=transport,
+    )
+
+    assert result["summary"]["action_count"] == 1
+    assert result["project_update"]["actions"][0]["project_id"] == "p-zero-roi"
+    assert result["project_update"]["actions"][0]["metrics"]["billing_1day_pay_roi"] == 0.0
+    assert result["matched_projects"][0]["match_reasons"] == ["billing_1day_pay_roi eq 0.0"]
 
 
 def test_project_management_update_config_filters_by_last_3_days_cost_and_register_cost():

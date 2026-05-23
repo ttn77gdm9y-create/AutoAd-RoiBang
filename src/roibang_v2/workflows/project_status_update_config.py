@@ -317,7 +317,7 @@ def _finalize_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
     metrics["ctr"] = _rate(click_cnt, show_cnt)
     metrics["register_cost"] = _rate(stat_cost, active_register)
     metrics["billing_conversion_cost"] = _rate(stat_cost, billing_convert_cnt)
-    metrics["billing_1day_pay_roi"] = round(roi_weighted_sum / stat_cost, 4) if stat_cost > 0 and roi_weighted_sum else None
+    metrics["billing_1day_pay_roi"] = round(roi_weighted_sum / stat_cost, 4) if stat_cost > 0 else None
     return metrics
 
 
