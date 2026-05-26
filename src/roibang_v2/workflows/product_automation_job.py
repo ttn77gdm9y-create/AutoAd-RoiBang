@@ -219,6 +219,7 @@ def build_product_job_request(product: dict[str, Any], job: str, *, target_date:
         }
 
     if job == "source_material_auto_push":
+        auto_push_cfg = _job_config(product, job)
         return {
             "source_material_account_auto_push": {
                 "product": product_name,
@@ -239,7 +240,7 @@ def build_product_job_request(product: dict[str, Any], job: str, *, target_date:
                     "from": "material_daily_metrics",
                     "account_name_keyword": keyword,
                     "min_stat_cost": 0,
-                    "max_materials": 0,
+                    "max_materials": int(auto_push_cfg.get("max_materials") or 500),
                     "max_video_ids_per_call": 50,
                 },
                 "material_detail_fetch": {

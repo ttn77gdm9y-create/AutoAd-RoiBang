@@ -63,6 +63,7 @@ def test_builds_source_auto_push_request_with_product_account_keyword(tmp_path: 
     assert cfg["product"] == "点点英雄"
     assert cfg["source_advertiser_id"] == "source-1"
     assert cfg["material_source"]["account_name_keyword"] == "点点英雄"
+    assert cfg["material_source"]["max_materials"] == 500
     assert cfg["execute"]["create_http_transport"]["run_id"] == "diandian-hero-source-material-account-auto-push"
 
 
