@@ -16,6 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from roibang_v2.create_mode_rules import normalize_create_mode_config
 from roibang_v2.ui.artifact_reader import compact_summary
@@ -91,6 +92,39 @@ def _show_summary(title: str, payload: dict[str, Any]) -> None:
         if details:
             with st.expander("查看执行摘要 JSON", expanded=False):
                 st.json(details)
+
+
+def _disable_streamlit_cache_shortcut() -> None:
+    components.html(
+        """
+        <script>
+        (() => {
+          const install = () => {
+            const doc = window.parent && window.parent.document;
+            if (!doc || doc.__roibangCopyShortcutPatch) return;
+            doc.__roibangCopyShortcutPatch = true;
+            const isEditable = (target) => {
+              const element = target && target.nodeType === 1 ? target : null;
+              if (!element) return false;
+              const tag = element.tagName ? element.tagName.toLowerCase() : "";
+              return tag === "input" || tag === "textarea" || element.isContentEditable;
+            };
+            const stopStreamlitCacheShortcut = (event) => {
+              const key = String(event.key || "").toLowerCase();
+              if (key !== "c") return;
+              if (event.metaKey || event.ctrlKey || !isEditable(event.target)) {
+                event.stopImmediatePropagation();
+              }
+            };
+            doc.addEventListener("keydown", stopStreamlitCacheShortcut, true);
+          };
+          install();
+        })();
+        </script>
+        """,
+        height=0,
+        width=0,
+    )
 
 
 def _format_bool(value: Any) -> str:
@@ -1537,6 +1571,7 @@ def main() -> None:
     timeout_seconds = int(config.get("readonly_timeout_seconds") or 900)
 
     st.set_page_config(page_title=str(config.get("title") or "RoiBang-v2"), layout="wide")
+    _disable_streamlit_cache_shortcut()
     st.markdown(
         """
         <style>
