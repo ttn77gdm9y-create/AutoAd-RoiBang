@@ -223,7 +223,7 @@ def test_push_plan_filters_summary_materials_by_account_name_keyword(tmp_path: P
     assert plan["push_batches"][0]["material_ids"] == ["dd-video"]
 
 
-def test_push_plan_prefers_daily_metrics_when_requested_even_if_summaries_exist(tmp_path: Path):
+def test_push_plan_prefers_daily_video_metrics_when_requested_even_if_summaries_exist(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     bootstrap_database(db_path)
     with sqlite3.connect(db_path) as conn:
@@ -250,7 +250,7 @@ def test_push_plan_prefers_daily_metrics_when_requested_even_if_summaries_exist(
         )
         _seed_daily(conn, "dd-1", "daily-1", cost=800)
         _seed_daily(conn, "dd-2", "daily-2", cost=700)
-        conn.execute("UPDATE material_daily_metrics SET material_kind = 'unknown'")
+        conn.execute("UPDATE material_daily_metrics SET material_kind = 'unknown' WHERE material_id = 'daily-2'")
         conn.execute(
             """
             INSERT INTO material_bindings
@@ -283,10 +283,10 @@ def test_push_plan_prefers_daily_metrics_when_requested_even_if_summaries_exist(
         period_end="2026-05-12",
     )
 
-    assert plan["summary"]["spent_account_count"] == 2
-    assert plan["summary"]["spent_material_count"] == 2
-    assert [batch["source_advertiser_id"] for batch in plan["push_batches"]] == ["dd-1", "dd-2"]
-    assert {item for batch in plan["push_batches"] for item in batch["material_ids"]} == {"daily-1", "daily-2"}
+    assert plan["summary"]["spent_account_count"] == 1
+    assert plan["summary"]["spent_material_count"] == 1
+    assert [batch["source_advertiser_id"] for batch in plan["push_batches"]] == ["dd-1"]
+    assert {item for batch in plan["push_batches"] for item in batch["material_ids"]} == {"daily-1"}
 
 
 def test_material_detail_fetch_uses_top_level_material_ids(tmp_path: Path):

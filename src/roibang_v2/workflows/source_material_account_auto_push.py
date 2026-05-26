@@ -226,7 +226,7 @@ def _select_spent_materials(
           ON mb.advertiser_id = mdm.advertiser_id AND mb.material_id = mdm.material_id
         WHERE mdm.metric_date BETWEEN ? AND ?
           AND mdm.advertiser_id <> ?
-          AND COALESCE(NULLIF(mdm.material_kind, ''), 'unknown') IN ('video', 'unknown')
+          AND mdm.material_kind = 'video'
           {account_filter}
         GROUP BY mdm.advertiser_id, mdm.material_id, mdm.material_kind
         HAVING SUM(mdm.stat_cost) >= ?
@@ -236,31 +236,25 @@ def _select_spent_materials(
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(query, tuple(params)).fetchall()
-    results: list[dict[str, Any]] = []
-    for row in rows:
-        material_kind = _text(row["material_kind"] or "video")
-        video_id = _text(row["video_id"])
-        if material_kind == "unknown" and video_id:
-            material_kind = "video"
-        results.append(
-            {
-                "advertiser_id": _text(row["advertiser_id"]),
-                "material_id": _text(row["material_id"]),
-                "material_kind": material_kind,
-                "video_id": video_id,
-                "name": _text(row["name"]),
-                "normalized_name": normalize_material_name(row["name"]),
-                "review_status": _text(row["review_status"]),
-                "stat_cost": float(row["stat_cost"] or 0),
-                "show_cnt": float(row["show_cnt"] or 0),
-                "click_cnt": float(row["click_cnt"] or 0),
-                "convert_cnt": float(row["convert_cnt"] or 0),
-                "active_register": float(row["active_register"] or 0),
-                "sample_project_name": _text(row["sample_project_name"]),
-                "sample_promotion_name": _text(row["sample_promotion_name"]),
-            }
-        )
-    return results
+    return [
+        {
+            "advertiser_id": _text(row["advertiser_id"]),
+            "material_id": _text(row["material_id"]),
+            "material_kind": _text(row["material_kind"] or "video"),
+            "video_id": _text(row["video_id"]),
+            "name": _text(row["name"]),
+            "normalized_name": normalize_material_name(row["name"]),
+            "review_status": _text(row["review_status"]),
+            "stat_cost": float(row["stat_cost"] or 0),
+            "show_cnt": float(row["show_cnt"] or 0),
+            "click_cnt": float(row["click_cnt"] or 0),
+            "convert_cnt": float(row["convert_cnt"] or 0),
+            "active_register": float(row["active_register"] or 0),
+            "sample_project_name": _text(row["sample_project_name"]),
+            "sample_promotion_name": _text(row["sample_promotion_name"]),
+        }
+        for row in rows
+    ]
 
 
 def _select_spent_video_summary_materials(
