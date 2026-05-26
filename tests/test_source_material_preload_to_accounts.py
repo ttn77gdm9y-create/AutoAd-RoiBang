@@ -368,6 +368,7 @@ def test_preload_execute_splits_400170_batch_and_records_successful_sub_batches(
     assert result["summary"]["executed_bind_material_count"] == 2
     assert result["summary"]["failed_batch_count"] == 0
     assert result["summary"]["skipped_bad_video_id_count"] == 1
+    assert result["summary"]["bad_video_rows_upserted"] == 1
     assert any(row["status"] == "split_retry" for row in result["results"])
     assert any(row["status"] == "skipped" and row["api_code"] == "400170" for row in result["results"])
     assert calls[0] == [
@@ -379,4 +380,24 @@ def test_preload_execute_splits_400170_batch_and_records_successful_sub_batches(
         rows = conn.execute(
             "SELECT source_material_id FROM source_material_preload_ledger ORDER BY source_material_id"
         ).fetchall()
+        bad_rows = conn.execute(
+            """
+            SELECT source_material_id, source_video_id, status
+            FROM source_material_bad_videos
+            WHERE product = '勇者突进' AND source_advertiser_id = 'source-1'
+            """
+        ).fetchall()
     assert [row[0] for row in rows] == ["1000000000000000001", "1000000000000000003"]
+    assert bad_rows == [("1000000000000000002", "v28033gi0000d7m72bvog65s5f9la002", "active")]
+
+    next_plan = build_source_material_preload_plan(
+        db_path=db_path,
+        cfg=cfg,
+        today=date(2026, 5, 15),
+    )
+    planned_video_ids = {
+        video_id
+        for batch in next_plan["push_batches"]
+        for video_id in batch["video_ids"]
+    }
+    assert "v28033gi0000d7m72bvog65s5f9la002" not in planned_video_ids

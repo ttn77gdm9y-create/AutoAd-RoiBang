@@ -332,6 +332,14 @@ def _candidate_rows(*, db_path: str | Path, request: dict[str, Any], policy: dic
               AND psm.source_advertiser_id = ?
               AND psm.material_type = ?
               AND psm.is_active = 1
+              AND NOT EXISTS (
+                SELECT 1
+                FROM source_material_bad_videos bad
+                WHERE bad.product = psm.product
+                  AND bad.source_advertiser_id = psm.source_advertiser_id
+                  AND bad.source_video_id = psm.video_id
+                  AND bad.status = 'active'
+              )
             GROUP BY
               psm.material_id, psm.material_type, psm.video_id, psm.name,
               psm.review_status, psm.source, psm.cost_lookback, psm.score, psm.create_time, psm.first_seen_at

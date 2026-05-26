@@ -903,6 +903,17 @@ def test_create_mode_excludes_fixture_source_and_fake_video_ids(tmp_path: Path):
         )
         conn.execute("UPDATE product_source_materials SET video_id = 'v001' WHERE material_id = 'm-002'")
         conn.execute("UPDATE product_source_materials SET material_type = 'title' WHERE material_id = 'm-003'")
+        conn.execute(
+            """
+            INSERT INTO source_material_bad_videos (
+              product, source_advertiser_id, source_video_id, source_material_id,
+              reason, status, source_workflow, first_seen_at, last_seen_at
+            ) VALUES (
+              '勇者突进', '1856647522964490', 'v28033gi0000d7m72bvog65s5f9la004', 'm-004',
+              '400170 部分视频无权限或不存在', 'active', 'source_material_preload_to_accounts', 'now', 'now'
+            )
+            """
+        )
 
     result = run_create_mode_request(
         {
@@ -925,6 +936,7 @@ def test_create_mode_excludes_fixture_source_and_fake_video_ids(tmp_path: Path):
     assert "m-001" not in material_ids
     assert "m-002" not in material_ids
     assert "m-003" not in material_ids
+    assert "m-004" not in material_ids
     assert all(material["source_video_id"] != "v001" for material in unit["materials"])
 
 

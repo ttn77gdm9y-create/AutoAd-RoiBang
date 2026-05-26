@@ -50,6 +50,8 @@ from roibang_v2.ui.streamlit_shell import save_product_draft
 from roibang_v2.ui.streamlit_shell import save_product_create_mode_config
 from roibang_v2.ui.streamlit_shell import save_product_create_template_catalog
 from roibang_v2.ui.streamlit_shell import split_account_ids
+from roibang_v2.workflows.frontend_operation_log import create_operation_details_from_plan
+from roibang_v2.workflows.frontend_operation_log import record_frontend_operation
 
 
 def _args() -> argparse.Namespace:
@@ -802,7 +804,32 @@ def _show_create_execute_report(report: dict[str, Any]) -> None:
             st.json(report)
 
 
-def _show_create_execution_steps(project_root: Path, plan_path: str, timeout_seconds: int) -> None:
+def _record_create_ui_operation(
+    *,
+    runs_dir: str,
+    operation_type: str,
+    status: str,
+    actor: str,
+    request: dict[str, Any],
+    result: dict[str, Any],
+    plan_payload: dict[str, Any] | None = None,
+    extra_details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    details = create_operation_details_from_plan(plan_payload) if isinstance(plan_payload, dict) else {}
+    if extra_details:
+        details = {**details, **extra_details}
+    return record_frontend_operation(
+        runs_dir=runs_dir,
+        operation_type=operation_type,
+        status=status,
+        actor=actor,
+        request=request,
+        result=result,
+        details=details,
+    )
+
+
+def _show_create_execution_steps(project_root: Path, plan_path: str, timeout_seconds: int, runs_dir: str) -> None:
     st.subheader("下一步")
     st.caption("网页调用固定脚本完成检查和真实执行；真实创建前仍必须人工确认。")
     check_command = build_create_live_config_check_command(plan_path=plan_path)
@@ -875,6 +902,29 @@ def _show_create_execution_steps(project_root: Path, plan_path: str, timeout_sec
                 report_payload = report_result.parsed_stdout
                 st.session_state[f"create_live_execute_report_result_{plan_path}"] = report_payload
                 st.session_state[f"create_live_execute_report_return_code_{plan_path}"] = report_result.return_code
+            plan_payload = _load_json_path(project_root, plan_path)
+            operation_log = _record_create_ui_operation(
+                runs_dir=runs_dir,
+                operation_type="create_live_execute",
+                status="completed" if result.ok else "failed",
+                actor=str((plan_payload.get("create_request") or {}).get("owner") or ""),
+                request={
+                    "plan_path": plan_path,
+                    "command": result.command,
+                    "confirmed_text_matched": confirmed,
+                },
+                result={
+                    "return_code": result.return_code,
+                    "execute_artifact_path": execute_artifact_path,
+                    "report_artifact_path": str(report_payload.get("artifact_path") or "") if isinstance(report_payload, dict) else "",
+                    "summary": result.parsed_stdout.get("summary") if isinstance(result.parsed_stdout, dict) else {},
+                    "status": result.parsed_stdout.get("status") if isinstance(result.parsed_stdout, dict) else "",
+                    "ok": result.ok,
+                },
+                plan_payload=plan_payload,
+                extra_details={"execute_artifact_path": execute_artifact_path},
+            )
+            st.session_state[f"create_live_operation_log_{plan_path}"] = operation_log
             st.cache_data.clear()
         stored = st.session_state.get(f"create_live_execute_result_{plan_path}")
         if isinstance(stored, dict) and stored:
@@ -891,6 +941,11 @@ def _show_create_execution_steps(project_root: Path, plan_path: str, timeout_sec
         stored_report = st.session_state.get(f"create_live_execute_report_result_{plan_path}")
         if isinstance(stored_report, dict) and stored_report:
             _show_create_execute_report(stored_report)
+        operation_log = st.session_state.get(f"create_live_operation_log_{plan_path}")
+        if isinstance(operation_log, dict) and operation_log:
+            st.caption(f"前端操作日志：{operation_log.get('artifact_path')}")
+            with st.expander("查看前端操作日志 JSON", expanded=False):
+                st.json(operation_log)
         with st.expander("查看备用终端命令", expanded=False):
             st.caption("仅用于前端执行异常时排查；正常情况下不需要复制命令。")
             st.code(_format_shell_command(progress_command, cwd=project_root), language="bash")
@@ -904,6 +959,7 @@ def _dashboard(runs_dir: str) -> None:
         ("投放巡检", "delivery_patrol"),
         ("投放巡检建议", "delivery_patrol_suggestions"),
         ("创建执行", "create_live_execute_once"),
+        ("前端操作日志", "frontend_operation_log"),
         ("AI 创建模板草稿", "ai_create_template_drafts"),
     ]
     for title, workflow in workflows:
@@ -1004,22 +1060,74 @@ def _create(project_root: Path, config: dict[str, Any], timeout_seconds: int) ->
             _show_script_result(result)
         artifact_path = result.parsed_stdout.get("artifact_path") if result.parsed_stdout else ""
         if artifact_path:
+            plan_payload = _load_json_path(project_root, str(artifact_path))
+            operation_log = _record_create_ui_operation(
+                runs_dir=str(config.get("runs_dir") or "data/runs"),
+                operation_type="create_plan_generate",
+                status="completed" if result.ok else "failed",
+                actor=owner.strip() or str(config.get("default_owner") or ""),
+                request={
+                    "mode": mode,
+                    "product_key": selected_mode.get("product_key", ""),
+                    "accounts": split_account_ids(accounts),
+                    "owner": owner,
+                    "target_date": target_date,
+                    "cpa_bid": run_cpa_bid,
+                    "roi_coefficient": run_roi_coefficient,
+                    "command": command,
+                },
+                result={
+                    "return_code": result.return_code,
+                    "artifact_path": str(artifact_path),
+                    "summary": result.parsed_stdout.get("summary") if isinstance(result.parsed_stdout, dict) else {},
+                    "status": result.parsed_stdout.get("status") if isinstance(result.parsed_stdout, dict) else "",
+                    "ok": result.ok,
+                },
+                plan_payload=plan_payload,
+            )
             st.session_state["create_plan_artifact_path"] = str(artifact_path)
             st.session_state["create_plan_summary"] = _create_plan_summary(
                 project_root,
                 str(artifact_path),
                 result.parsed_stdout.get("summary") if isinstance(result.parsed_stdout.get("summary"), dict) else {},
             )
+            st.session_state["create_plan_operation_log"] = operation_log
             st.session_state.pop("create_config_check_result", None)
+            st.caption(f"前端操作日志：{operation_log.get('artifact_path')}")
             with st.expander("查看生成结果 JSON", expanded=False):
                 st.json(result.parsed_stdout)
+        else:
+            operation_log = _record_create_ui_operation(
+                runs_dir=str(config.get("runs_dir") or "data/runs"),
+                operation_type="create_plan_generate",
+                status="failed",
+                actor=owner.strip() or str(config.get("default_owner") or ""),
+                request={
+                    "mode": mode,
+                    "product_key": selected_mode.get("product_key", ""),
+                    "accounts": split_account_ids(accounts),
+                    "owner": owner,
+                    "target_date": target_date,
+                    "cpa_bid": run_cpa_bid,
+                    "roi_coefficient": run_roi_coefficient,
+                    "command": command,
+                },
+                result={
+                    "return_code": result.return_code,
+                    "stdout": result.stdout[-4000:],
+                    "stderr": result.stderr[-4000:],
+                    "ok": result.ok,
+                },
+            )
+            st.session_state["create_plan_operation_log"] = operation_log
+            st.caption(f"前端操作日志：{operation_log.get('artifact_path')}")
     plan_path = str(st.session_state.get("create_plan_artifact_path") or "")
     if plan_path:
         summary = st.session_state.get("create_plan_summary")
         if not isinstance(summary, dict) or not summary:
             summary = _create_plan_summary(project_root, plan_path)
         _show_create_plan_summary(summary)
-        _show_create_execution_steps(project_root, plan_path, timeout_seconds)
+        _show_create_execution_steps(project_root, plan_path, timeout_seconds, str(config.get("runs_dir") or "data/runs"))
 
 
 def _product_management(config: dict[str, Any]) -> None:

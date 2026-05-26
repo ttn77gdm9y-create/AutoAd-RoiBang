@@ -540,3 +540,20 @@ CREATE INDEX IF NOT EXISTS idx_source_material_preload_ledger_target
 
 CREATE INDEX IF NOT EXISTS idx_source_material_preload_ledger_source
   ON source_material_preload_ledger (product, source_advertiser_id, source_material_id, status);
+
+CREATE TABLE IF NOT EXISTS source_material_bad_videos (
+  product TEXT NOT NULL,
+  source_advertiser_id TEXT NOT NULL,
+  source_video_id TEXT NOT NULL,
+  source_material_id TEXT NOT NULL DEFAULT '',
+  reason TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'active',
+  source_workflow TEXT NOT NULL DEFAULT '',
+  response_payload_json TEXT NOT NULL DEFAULT '{}',
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  PRIMARY KEY (product, source_advertiser_id, source_video_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_source_material_bad_videos_active
+  ON source_material_bad_videos (product, source_advertiser_id, status);

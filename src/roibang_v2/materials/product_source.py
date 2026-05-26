@@ -336,6 +336,14 @@ def select_product_source_materials(
           AND is_active = 1
           AND material_type = ?
           AND review_status IN ({placeholders})
+          AND NOT EXISTS (
+            SELECT 1
+            FROM source_material_bad_videos bad
+            WHERE bad.product = product_source_materials.product
+              AND bad.source_advertiser_id = product_source_materials.source_advertiser_id
+              AND bad.source_video_id = product_source_materials.video_id
+              AND bad.status = 'active'
+          )
         ORDER BY cost_lookback DESC, score DESC, material_id ASC
         LIMIT ?
     """

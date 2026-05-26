@@ -143,6 +143,14 @@ def _select_source_materials(*, db_path: str | Path, cfg: dict[str, Any]) -> lis
               AND material_type = ?
               AND is_active = 1
               AND COALESCE(video_id, '') <> ''
+              AND NOT EXISTS (
+                SELECT 1
+                FROM source_material_bad_videos bad
+                WHERE bad.product = product_source_materials.product
+                  AND bad.source_advertiser_id = product_source_materials.source_advertiser_id
+                  AND bad.source_video_id = product_source_materials.video_id
+                  AND bad.status = 'active'
+              )
             ORDER BY COALESCE(cost_lookback, 0) DESC, COALESCE(score, 0) DESC, material_id ASC
             {limit_sql}
             """,
@@ -558,6 +566,63 @@ def _record_completed_preload_ledger(
     return len(rows)
 
 
+def _record_bad_video_ids(
+    *,
+    db_path: str | Path,
+    product: str,
+    source_advertiser_id: str,
+    results: list[dict[str, Any]],
+) -> int:
+    rows_by_video_id: dict[str, tuple[Any, ...]] = {}
+    now = _now_iso()
+    for result in results:
+        if result.get("status") != "skipped":
+            continue
+        api_code = str(result.get("api_code") or "")
+        if api_code not in {"400170", "known_bad_video_id"}:
+            continue
+        video_ids = [_text(item) for item in list(result.get("video_ids") or []) if _text(item)]
+        material_ids = [_text(item) for item in list(result.get("material_ids") or [])]
+        response = result.get("response") if isinstance(result.get("response"), dict) else {}
+        response_json = json.dumps(response, ensure_ascii=False, sort_keys=True)
+        reason = _response_message(response) or _text(result.get("message")) or api_code
+        for index, video_id in enumerate(video_ids):
+            rows_by_video_id[video_id] = (
+                product,
+                source_advertiser_id,
+                video_id,
+                material_ids[index] if index < len(material_ids) else "",
+                reason,
+                "active",
+                "source_material_preload_to_accounts",
+                response_json,
+                now,
+                now,
+            )
+    rows = list(rows_by_video_id.values())
+    if not rows:
+        return 0
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            """
+            INSERT INTO source_material_bad_videos (
+              product, source_advertiser_id, source_video_id, source_material_id,
+              reason, status, source_workflow, response_payload_json, first_seen_at, last_seen_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(product, source_advertiser_id, source_video_id)
+            DO UPDATE SET
+              source_material_id = COALESCE(NULLIF(excluded.source_material_id, ''), source_material_bad_videos.source_material_id),
+              reason = COALESCE(NULLIF(excluded.reason, ''), source_material_bad_videos.reason),
+              status = 'active',
+              source_workflow = excluded.source_workflow,
+              response_payload_json = excluded.response_payload_json,
+              last_seen_at = excluded.last_seen_at
+            """,
+            rows,
+        )
+    return len(rows)
+
+
 def run_source_material_preload_to_accounts_request(
     request: dict[str, Any],
     *,
@@ -636,6 +701,12 @@ def run_source_material_preload_to_accounts_request(
         batches=plan["push_batches"],
         results=results,
     )
+    bad_video_rows = _record_bad_video_ids(
+        db_path=db_path,
+        product=_text(cfg.get("product")),
+        source_advertiser_id=_text(cfg.get("source_advertiser_id")),
+        results=results,
+    )
     payload = {
         "ok": not failed,
         "workflow": "source_material_preload_to_accounts",
@@ -656,6 +727,7 @@ def run_source_material_preload_to_accounts_request(
             ),
             "split_retry_batch_count": sum(1 for row in results if row.get("status") == "split_retry"),
             "ledger_rows_upserted": ledger_rows,
+            "bad_video_rows_upserted": bad_video_rows,
             "rate_limited_batch_count": sum(1 for row in results if str(row.get("api_code") or "") == "40100"),
             "known_bad_video_id_count": int(execution.get("known_bad_video_id_count") or 0),
             "concurrency": execution["concurrency"],
