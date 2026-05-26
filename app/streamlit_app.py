@@ -24,6 +24,8 @@ from roibang_v2.ui.script_runner import build_account_remark_config_command
 from roibang_v2.ui.script_runner import build_account_remark_execute_command
 from roibang_v2.ui.script_runner import build_ai_template_drafts_command
 from roibang_v2.ui.script_runner import build_create_live_config_check_command
+from roibang_v2.ui.script_runner import build_create_live_execute_command
+from roibang_v2.ui.script_runner import build_create_live_execute_report_command
 from roibang_v2.ui.script_runner import build_create_live_terminal_command
 from roibang_v2.ui.script_runner import build_create_plan_command
 from roibang_v2.ui.script_runner import build_delivery_patrol_command
@@ -720,19 +722,66 @@ def _show_create_plan_summary(summary: dict[str, Any]) -> None:
             st.warning(f"规则异常数量：{summary.get('violation_count')}")
 
 
+def _show_create_execute_report(report: dict[str, Any]) -> None:
+    summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
+    readable = report.get("readable_reference") if isinstance(report.get("readable_reference"), dict) else {}
+    delivery = report.get("delivery") if isinstance(report.get("delivery"), dict) else {}
+    with st.container(border=True):
+        st.markdown("**执行汇报**")
+        cols = st.columns(5)
+        cols[0].metric("状态", _format_status(report.get("status")))
+        cols[1].metric("项目", str(summary.get("created_project_count", 0)))
+        cols[2].metric("单元", str(summary.get("created_unit_count", 0)))
+        cols[3].metric("绑定素材", str(summary.get("material_bind_count", 0)))
+        cols[4].metric("接口调用", str(summary.get("source_external_api_calls", 0)))
+        message = str(report.get("message") or "").strip()
+        if message:
+            st.write(message)
+        feishu = delivery.get("feishu") if isinstance(delivery.get("feishu"), dict) else {}
+        if feishu:
+            if bool(feishu.get("attempted")) and bool(feishu.get("ok", False)):
+                st.success("飞书推送已完成。")
+            elif bool(feishu.get("attempted")):
+                st.error(f"飞书推送失败：{feishu.get('reason') or feishu.get('error') or 'unknown'}")
+            else:
+                st.info("飞书推送未启用。")
+        selected = readable.get("selected_materials") if isinstance(readable.get("selected_materials"), dict) else {}
+        if selected:
+            st.markdown("**选材摘要**")
+            cols = st.columns(3)
+            cols[0].metric("素材分配", str(selected.get("assignment_count", 0)))
+            cols[1].metric("唯一素材", str(selected.get("unique_material_count", 0)))
+            cols[2].metric("覆盖账户", str(len(selected.get("by_account") or [])))
+            by_account = selected.get("by_account") if isinstance(selected.get("by_account"), list) else []
+            if by_account:
+                st.table(by_account[:20])
+            top_materials = selected.get("top_materials_by_cost") if isinstance(selected.get("top_materials_by_cost"), list) else []
+            if top_materials:
+                with st.expander("查看高消耗素材 Top", expanded=False):
+                    st.table(top_materials[:20])
+        artifact_path = str(report.get("artifact_path") or "")
+        if artifact_path:
+            st.caption(f"汇报结果文件：{artifact_path}")
+        with st.expander("查看汇报 JSON", expanded=False):
+            st.json(report)
+
+
 def _show_create_execution_steps(project_root: Path, plan_path: str, timeout_seconds: int) -> None:
     st.subheader("下一步")
-    st.caption("网页只做检查和生成命令，不直接执行真实创建。")
+    st.caption("网页调用固定脚本完成检查和真实执行；真实创建前仍必须人工确认。")
     check_command = build_create_live_config_check_command(plan_path=plan_path)
+    check_state_key = f"create_config_check_result_{plan_path}"
+    check_return_key = f"create_config_check_return_code_{plan_path}"
     with st.container(border=True):
         st.markdown("**1. 检查真实执行配置**")
         st.caption("只检查配置、token（令牌）和账户准允许名单，不创建项目。")
         if st.button("检查真实执行配置", key=f"check_create_config_{plan_path}"):
             result = run_fixed_script(check_command, cwd=project_root, timeout_seconds=timeout_seconds)
-            st.session_state["create_config_check_result"] = result.parsed_stdout
-            st.session_state["create_config_check_return_code"] = result.return_code
+            st.session_state[check_state_key] = result.parsed_stdout
+            st.session_state[check_return_key] = result.return_code
             st.cache_data.clear()
-        result_payload = st.session_state.get("create_config_check_result")
+        result_payload = st.session_state.get(check_state_key)
+        ready = False
         if isinstance(result_payload, dict) and result_payload:
             ready = bool(result_payload.get("ok")) and str(result_payload.get("status") or "") == "config_ready"
             readiness = result_payload.get("local_config_readiness") if isinstance(result_payload.get("local_config_readiness"), dict) else {}
@@ -746,15 +795,69 @@ def _show_create_execution_steps(project_root: Path, plan_path: str, timeout_sec
             with st.expander("查看检查结果 JSON", expanded=False):
                 st.json(result_payload)
 
-    real_command = build_create_live_terminal_command(
+    real_command = build_create_live_execute_command(plan_path=plan_path)
+    progress_command = build_create_live_terminal_command(
         plan_path=plan_path,
         check_config_only=False,
         open_progress_window=True,
     )
     with st.container(border=True):
-        st.markdown("**2. 真实执行命令**")
-        st.caption("配置检查通过后，复制下面命令到终端运行。运行后会真实创建项目和单元。")
-        st.code(_format_shell_command(real_command, cwd=project_root), language="bash")
+        st.markdown("**2. 真实执行**")
+        st.caption("配置检查通过后，在这里确认并调用固定脚本。运行后会真实创建项目和单元。")
+        confirm_text = st.text_input(
+            "输入“确认执行”后解锁真实执行按钮",
+            value="",
+            key=f"create_live_confirm_text_{plan_path}",
+        )
+        confirmed = confirm_text.strip() == "确认执行"
+        execute_disabled = not (ready and confirmed)
+        if not ready:
+            st.info("请先完成并通过真实执行配置检查。")
+        if st.button(
+            "确认执行并真实创建",
+            type="primary",
+            disabled=execute_disabled,
+            key=f"create_live_execute_{plan_path}",
+        ):
+            with st.spinner("正在调用固定脚本真实创建项目和单元..."):
+                result = run_fixed_script(real_command, cwd=project_root, timeout_seconds=timeout_seconds)
+            st.session_state[f"create_live_execute_result_{plan_path}"] = result.parsed_stdout
+            st.session_state[f"create_live_execute_return_code_{plan_path}"] = result.return_code
+            report_payload = {}
+            execute_artifact_path = str(result.parsed_stdout.get("artifact_path") or "") if isinstance(result.parsed_stdout, dict) else ""
+            if execute_artifact_path:
+                with st.spinner("正在生成执行汇报并推送飞书..."):
+                    report_result = run_fixed_script(
+                        build_create_live_execute_report_command(
+                            plan_path=plan_path,
+                            execute_artifact_path=execute_artifact_path,
+                            push_feishu=True,
+                        ),
+                        cwd=project_root,
+                        timeout_seconds=timeout_seconds,
+                    )
+                report_payload = report_result.parsed_stdout
+                st.session_state[f"create_live_execute_report_result_{plan_path}"] = report_payload
+                st.session_state[f"create_live_execute_report_return_code_{plan_path}"] = report_result.return_code
+            st.cache_data.clear()
+        stored = st.session_state.get(f"create_live_execute_result_{plan_path}")
+        if isinstance(stored, dict) and stored:
+            status = str(stored.get("status") or "")
+            if bool(stored.get("ok")):
+                st.success(f"真实执行完成：{status or 'ok'}")
+            else:
+                st.error(f"真实执行未完成：{status or 'blocked'}")
+            artifact_path = str(stored.get("artifact_path") or "")
+            if artifact_path:
+                st.caption(f"执行结果文件：{artifact_path}")
+            with st.expander("查看真实执行结果 JSON", expanded=False):
+                st.json(stored)
+        stored_report = st.session_state.get(f"create_live_execute_report_result_{plan_path}")
+        if isinstance(stored_report, dict) and stored_report:
+            _show_create_execute_report(stored_report)
+        with st.expander("查看备用终端命令", expanded=False):
+            st.caption("仅用于前端执行异常时排查；正常情况下不需要复制命令。")
+            st.code(_format_shell_command(progress_command, cwd=project_root), language="bash")
 
 
 def _dashboard(runs_dir: str) -> None:

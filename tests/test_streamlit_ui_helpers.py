@@ -9,6 +9,8 @@ from roibang_v2.ui.script_runner import build_account_remark_config_command
 from roibang_v2.ui.script_runner import build_account_remark_execute_command
 from roibang_v2.ui.script_runner import build_ai_template_drafts_command
 from roibang_v2.ui.script_runner import build_create_live_config_check_command
+from roibang_v2.ui.script_runner import build_create_live_execute_command
+from roibang_v2.ui.script_runner import build_create_live_execute_report_command
 from roibang_v2.ui.script_runner import build_create_live_terminal_command
 from roibang_v2.ui.script_runner import build_create_plan_command
 from roibang_v2.ui.script_runner import build_delivery_patrol_command
@@ -505,6 +507,34 @@ def test_build_create_live_config_check_command_uses_json_entrypoint():
     assert "configs/create-plans/test.local.json" in command
     assert "--check-config-only" in command
     assert "--open-progress-window" not in command
+    assert "--execute" not in command
+    assert "--yes" not in command
+
+
+def test_build_create_live_execute_command_uses_fixed_json_entrypoint():
+    command = build_create_live_execute_command(plan_path="configs/create-plans/test.local.json")
+
+    assert command[:2] == [sys.executable, "scripts/run_create_live_execute_once.py"]
+    assert "--plan" in command
+    assert "configs/create-plans/test.local.json" in command
+    assert "--check-config-only" not in command
+    assert "--open-progress-window" not in command
+    assert "--execute" not in command
+    assert "--yes" not in command
+
+
+def test_build_create_live_execute_report_command_pushes_feishu_by_default():
+    command = build_create_live_execute_report_command(
+        plan_path="configs/create-plans/test.local.json",
+        execute_artifact_path="data/runs/create_live_execute_once/a.json",
+    )
+
+    assert command[:2] == [sys.executable, "scripts/run_create_live_execute_report.py"]
+    assert "--plan" in command
+    assert "configs/create-plans/test.local.json" in command
+    assert "--create-live-execute-once-artifact" in command
+    assert "data/runs/create_live_execute_once/a.json" in command
+    assert "--push-feishu" in command
     assert "--execute" not in command
     assert "--yes" not in command
 

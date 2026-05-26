@@ -186,6 +186,43 @@ def build_create_live_config_check_command(*, plan_path: str) -> list[str]:
     ]
 
 
+def build_create_live_execute_command(*, plan_path: str, resume_existing_plan: bool = False) -> list[str]:
+    command = [
+        _python(),
+        "scripts/run_create_live_execute_once.py",
+        "--plan",
+        plan_path.strip(),
+        "--config",
+        "configs/runtime.create-live.local.json",
+        "--policy",
+        "policies/create-live-execute.local.json",
+    ]
+    if resume_existing_plan:
+        command.append("--resume-existing-plan")
+    return command
+
+
+def build_create_live_execute_report_command(
+    *,
+    plan_path: str,
+    execute_artifact_path: str,
+    push_feishu: bool = True,
+) -> list[str]:
+    command = [
+        _python(),
+        "scripts/run_create_live_execute_report.py",
+        "--config",
+        "configs/runtime.create-live.local.json",
+        "--plan",
+        plan_path.strip(),
+        "--create-live-execute-once-artifact",
+        execute_artifact_path.strip(),
+    ]
+    if push_feishu:
+        command.append("--push-feishu")
+    return command
+
+
 def build_project_update_execute_command(*, project_update_path: str, execute: bool = False) -> list[str]:
     command = [
         _python(),
