@@ -223,7 +223,7 @@ def test_push_plan_filters_summary_materials_by_account_name_keyword(tmp_path: P
     assert plan["push_batches"][0]["material_ids"] == ["dd-video"]
 
 
-def test_push_plan_prefers_daily_video_metrics_when_requested_even_if_summaries_exist(tmp_path: Path):
+def test_push_plan_keeps_summary_first_when_daily_metrics_requested(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     bootstrap_database(db_path)
     with sqlite3.connect(db_path) as conn:
@@ -285,8 +285,8 @@ def test_push_plan_prefers_daily_video_metrics_when_requested_even_if_summaries_
 
     assert plan["summary"]["spent_account_count"] == 1
     assert plan["summary"]["spent_material_count"] == 1
-    assert [batch["source_advertiser_id"] for batch in plan["push_batches"]] == ["dd-1"]
-    assert {item for batch in plan["push_batches"] for item in batch["material_ids"]} == {"daily-1"}
+    assert [batch["source_advertiser_id"] for batch in plan["push_batches"]] == ["dd-summary-owner"]
+    assert {item for batch in plan["push_batches"] for item in batch["material_ids"]} == {"summary-1"}
 
 
 def test_material_detail_fetch_uses_top_level_material_ids(tmp_path: Path):

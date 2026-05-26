@@ -161,19 +161,17 @@ def _select_spent_materials(
     period_start: str,
     period_end: str,
 ) -> list[dict[str, Any]]:
+    summary_rows = _select_spent_video_summary_materials(
+        db_path=db_path,
+        cfg=cfg,
+        period_start=period_start,
+        period_end=period_end,
+    )
+    if summary_rows:
+        return summary_rows
+
     source_advertiser_id = _text(cfg.get("source_advertiser_id"))
     material_cfg = cfg.get("material_source") if isinstance(cfg.get("material_source"), dict) else {}
-    material_source = _text(material_cfg.get("from"))
-    if material_source != "material_daily_metrics":
-        summary_rows = _select_spent_video_summary_materials(
-            db_path=db_path,
-            cfg=cfg,
-            period_start=period_start,
-            period_end=period_end,
-        )
-        if summary_rows:
-            return summary_rows
-
     min_cost = _float(material_cfg.get("min_stat_cost"))
     limit = _int(material_cfg.get("max_materials"), 500)
     account_ids = [str(item) for item in material_cfg.get("account_ids", []) if str(item).strip()] if isinstance(material_cfg.get("account_ids"), list) else []
