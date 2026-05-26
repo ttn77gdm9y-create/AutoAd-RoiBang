@@ -223,6 +223,72 @@ def test_push_plan_filters_summary_materials_by_account_name_keyword(tmp_path: P
     assert plan["push_batches"][0]["material_ids"] == ["dd-video"]
 
 
+def test_push_plan_prefers_daily_metrics_when_requested_even_if_summaries_exist(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+    with sqlite3.connect(db_path) as conn:
+        _seed_material(conn, "daily-1", name="点点素材1", video_id="v-daily-1")
+        _seed_material(conn, "daily-2", name="点点素材2", video_id="v-daily-2")
+        conn.execute(
+            """
+            INSERT INTO account_pool
+              (advertiser_id, account_name, product, platform, historical_spend, source, synced_at)
+            VALUES
+              ('dd-1', '黑旗-点点英雄-微小-郭靖-001', '点点英雄', 'WECHAT_GAME', 100, 'test', 'now'),
+              ('dd-2', '黑旗-点点英雄-微小-郭靖-002', '点点英雄', 'WECHAT_GAME', 100, 'test', 'now'),
+              ('dd-summary-owner', '黑旗-点点英雄-微小-郭靖-汇总归属', '点点英雄', 'WECHAT_GAME', 100, 'test', 'now')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO account_materials
+              (advertiser_id, material_id, video_id, material_type, review_status, source, synced_at)
+            VALUES
+              ('dd-1', 'daily-1', 'v-daily-1', 'video', 'APPROVED', 'test', 'now'),
+              ('dd-2', 'daily-2', 'v-daily-2', 'video', 'APPROVED', 'test', 'now')
+            """
+        )
+        _seed_daily(conn, "dd-1", "daily-1", cost=800)
+        _seed_daily(conn, "dd-2", "daily-2", cost=700)
+        conn.execute("UPDATE material_daily_metrics SET material_kind = 'unknown'")
+        conn.execute(
+            """
+            INSERT INTO material_bindings
+              (advertiser_id, project_id, promotion_id, material_kind, material_id, video_id, image_id, title, source, synced_at)
+            VALUES
+              ('dd-summary-owner', 'p1', 'u1', 'video', 'summary-1', 'v-summary-1', '', '点点汇总素材', 'test', 'now')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO material_metric_summaries
+              (material_kind, material_id, video_id, title, period_start, period_end,
+               promotion_count, project_count, account_count, stat_cost, active_register,
+               attribution_convert_cnt, roi_1day_cost_weighted, roi_7days_cost_weighted, source, synced_at)
+            VALUES
+              ('video', 'summary-1', 'v-summary-1', '点点汇总素材', '2026-05-12', '2026-05-12',
+               1, 1, 1, 900, 0, 0, 0, 0, 'test', 'now')
+            """
+        )
+
+    cfg = _request()["source_material_account_auto_push"]
+    cfg["product"] = "点点英雄"
+    cfg["source_advertiser_id"] = "dd-source"
+    cfg["material_source"]["from"] = "material_daily_metrics"
+    cfg["material_source"]["account_name_keyword"] = "点点英雄"
+    plan = build_source_material_account_push_plan(
+        db_path=db_path,
+        cfg=cfg,
+        period_start="2026-05-12",
+        period_end="2026-05-12",
+    )
+
+    assert plan["summary"]["spent_account_count"] == 2
+    assert plan["summary"]["spent_material_count"] == 2
+    assert [batch["source_advertiser_id"] for batch in plan["push_batches"]] == ["dd-1", "dd-2"]
+    assert {item for batch in plan["push_batches"] for item in batch["material_ids"]} == {"daily-1", "daily-2"}
+
+
 def test_material_detail_fetch_uses_top_level_material_ids(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     bootstrap_database(db_path)

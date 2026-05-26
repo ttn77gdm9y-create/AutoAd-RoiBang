@@ -161,17 +161,19 @@ def _select_spent_materials(
     period_start: str,
     period_end: str,
 ) -> list[dict[str, Any]]:
-    summary_rows = _select_spent_video_summary_materials(
-        db_path=db_path,
-        cfg=cfg,
-        period_start=period_start,
-        period_end=period_end,
-    )
-    if summary_rows:
-        return summary_rows
-
     source_advertiser_id = _text(cfg.get("source_advertiser_id"))
     material_cfg = cfg.get("material_source") if isinstance(cfg.get("material_source"), dict) else {}
+    material_source = _text(material_cfg.get("from"))
+    if material_source != "material_daily_metrics":
+        summary_rows = _select_spent_video_summary_materials(
+            db_path=db_path,
+            cfg=cfg,
+            period_start=period_start,
+            period_end=period_end,
+        )
+        if summary_rows:
+            return summary_rows
+
     min_cost = _float(material_cfg.get("min_stat_cost"))
     limit = _int(material_cfg.get("max_materials"), 500)
     account_ids = [str(item) for item in material_cfg.get("account_ids", []) if str(item).strip()] if isinstance(material_cfg.get("account_ids"), list) else []
@@ -224,7 +226,7 @@ def _select_spent_materials(
           ON mb.advertiser_id = mdm.advertiser_id AND mb.material_id = mdm.material_id
         WHERE mdm.metric_date BETWEEN ? AND ?
           AND mdm.advertiser_id <> ?
-          AND mdm.material_kind = 'video'
+          AND COALESCE(NULLIF(mdm.material_kind, ''), 'unknown') IN ('video', 'unknown')
           {account_filter}
         GROUP BY mdm.advertiser_id, mdm.material_id, mdm.material_kind
         HAVING SUM(mdm.stat_cost) >= ?
@@ -234,25 +236,31 @@ def _select_spent_materials(
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(query, tuple(params)).fetchall()
-    return [
-        {
-            "advertiser_id": _text(row["advertiser_id"]),
-            "material_id": _text(row["material_id"]),
-            "material_kind": _text(row["material_kind"] or "video"),
-            "video_id": _text(row["video_id"]),
-            "name": _text(row["name"]),
-            "normalized_name": normalize_material_name(row["name"]),
-            "review_status": _text(row["review_status"]),
-            "stat_cost": float(row["stat_cost"] or 0),
-            "show_cnt": float(row["show_cnt"] or 0),
-            "click_cnt": float(row["click_cnt"] or 0),
-            "convert_cnt": float(row["convert_cnt"] or 0),
-            "active_register": float(row["active_register"] or 0),
-            "sample_project_name": _text(row["sample_project_name"]),
-            "sample_promotion_name": _text(row["sample_promotion_name"]),
-        }
-        for row in rows
-    ]
+    results: list[dict[str, Any]] = []
+    for row in rows:
+        material_kind = _text(row["material_kind"] or "video")
+        video_id = _text(row["video_id"])
+        if material_kind == "unknown" and video_id:
+            material_kind = "video"
+        results.append(
+            {
+                "advertiser_id": _text(row["advertiser_id"]),
+                "material_id": _text(row["material_id"]),
+                "material_kind": material_kind,
+                "video_id": video_id,
+                "name": _text(row["name"]),
+                "normalized_name": normalize_material_name(row["name"]),
+                "review_status": _text(row["review_status"]),
+                "stat_cost": float(row["stat_cost"] or 0),
+                "show_cnt": float(row["show_cnt"] or 0),
+                "click_cnt": float(row["click_cnt"] or 0),
+                "convert_cnt": float(row["convert_cnt"] or 0),
+                "active_register": float(row["active_register"] or 0),
+                "sample_project_name": _text(row["sample_project_name"]),
+                "sample_promotion_name": _text(row["sample_promotion_name"]),
+            }
+        )
+    return results
 
 
 def _select_spent_video_summary_materials(
