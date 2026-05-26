@@ -3,13 +3,22 @@ import json
 import sqlite3
 from pathlib import Path
 
-from roibang_v2.accounts.pool import import_accounts_csv, select_accounts, build_backfill_plan
+from roibang_v2.accounts.pool import import_accounts_csv, import_allowed_accounts_json, select_accounts, build_backfill_plan
 from roibang_v2.db.bootstrap import bootstrap_database
 
 
 def _load_import_script():
     script_path = Path("scripts/import_accounts_csv.py")
     spec = importlib.util.spec_from_file_location("import_accounts_csv", script_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_allowed_import_script():
+    script_path = Path("scripts/import_allowed_create_accounts.py")
+    spec = importlib.util.spec_from_file_location("import_allowed_create_accounts", script_path)
     module = importlib.util.module_from_spec(spec)
     assert spec and spec.loader
     spec.loader.exec_module(module)
@@ -69,6 +78,44 @@ def test_import_accounts_csv_normalizes_and_upserts_rows(tmp_path):
         ("1850000000000003", "黑旗-其他产品-微小-傲星-001", "其他产品", "WECHAT_GAME", 12.5),
         ("1858371222574218", "黑旗-勇者突进-微小-傲星-306", "勇者突进", "WECHAT_GAME", 570011.13),
     ]
+
+
+def test_import_allowed_accounts_json_syncs_enabled_rows_to_account_pool(tmp_path):
+    db_path = tmp_path / "roibang.sqlite3"
+    allowlist_path = tmp_path / "allowed.json"
+    bootstrap_database(db_path)
+    allowlist_path.write_text(
+        json.dumps(
+            {
+                "product": "点点英雄",
+                "channel": "wx",
+                "allowed_target_accounts": [
+                    {"advertiser_id": "acc-1", "account_name": "点点英雄-微小-001", "enable": True},
+                    {"advertiser_id": "acc-2", "account_name": "点点英雄-微小-002", "enable": False},
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = import_allowed_accounts_json(allowlist_path, db_path=db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT advertiser_id, account_name, product, platform, source
+            FROM account_pool
+            ORDER BY advertiser_id
+            """
+        ).fetchall()
+    assert result["ok"] is True
+    assert result["rows_seen"] == 2
+    assert result["accounts_imported"] == 1
+    assert result["skipped_disabled"] == 1
+    assert result["products"] == {"点点英雄": 1}
+    assert result["platforms"] == {"WECHAT_GAME": 1}
+    assert rows == [("acc-1", "点点英雄-微小-001", "点点英雄", "WECHAT_GAME", str(allowlist_path))]
 
 
 def test_select_accounts_filters_by_product_and_platform(tmp_path):
@@ -141,6 +188,38 @@ def test_import_accounts_csv_cli_writes_summary(tmp_path, capsys):
     captured = capsys.readouterr()
     assert exit_code == 0
     assert '"accounts_imported": 3' in captured.out
+
+
+def test_import_allowed_create_accounts_cli_can_read_product_config(tmp_path, capsys):
+    db_path = tmp_path / "roibang.sqlite3"
+    allowlist_path = tmp_path / "allowed.json"
+    product_path = tmp_path / "product.json"
+    bootstrap_database(db_path)
+    allowlist_path.write_text(
+        json.dumps(
+            {
+                "product": "点点英雄",
+                "channel": "wx",
+                "allowed_target_accounts": [
+                    {"advertiser_id": "acc-1", "account_name": "点点英雄-微小-001", "enable": True}
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    product_path.write_text(
+        json.dumps({"allowed_target_accounts_path": str(allowlist_path)}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    module = _load_allowed_import_script()
+
+    exit_code = module.import_from_args(["--product-config", str(product_path), "--db", str(db_path)])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert '"workflow": "allowed_create_accounts_import"' in captured.out
+    assert '"accounts_imported": 1' in captured.out
 
 
 def test_plan_report_backfill_cli_writes_plan(tmp_path, capsys):

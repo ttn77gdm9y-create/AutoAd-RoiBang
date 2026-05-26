@@ -431,6 +431,7 @@ def build_create_mode_request(
         }
     )
     request_id = _text(cfg.get("request_id")) or f"{mode_key}-{target_date or 'date'}-{batch_code}"
+    product_snapshot = _product_config_snapshot(product_config)
     return {
         "request_id": request_id,
         "plan_id": _text(cfg.get("plan_id")) or f"create-plan-{request_id}",
@@ -442,6 +443,7 @@ def build_create_mode_request(
         "template_key": template_key,
         "source_advertiser_id": _text(mode_config.get("source_advertiser_id")),
         "organization_id": _text(mode_config.get("organization_id")),
+        "allowed_target_accounts_path": _text(product_snapshot.get("allowed_target_accounts_path")),
         "pool_key": _text(mode_config.get("pool_key")) or f"{mode_key}-source-materials",
         "owner": _text(cfg.get("owner") or mode_config.get("owner")),
         "project_template_name": _template_name(mode_config, template),
@@ -462,7 +464,7 @@ def build_create_mode_request(
             "allow_real_create": False,
         },
         "template_parameters": _template_parameters(mode_config, template),
-        "product_config_snapshot": _product_config_snapshot(product_config),
+        "product_config_snapshot": product_snapshot,
     }
 
 

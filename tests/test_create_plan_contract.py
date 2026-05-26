@@ -222,6 +222,77 @@ def test_validate_create_plan_blocks_target_account_not_in_allowed_list(tmp_path
     assert "target account not in allowed create account list: target-1" in result["violations"]
 
 
+def test_validate_create_strategy_plan_uses_product_specific_allowed_path(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_plan_sources(db_path)
+    generic_allowlist = _write_allowed_accounts(
+        tmp_path / "generic-allowed-create-accounts.json",
+        [
+            {
+                "account_name": "Other Account",
+                "advertiser_id": "target-2",
+                "product": "yzt",
+                "enable": True,
+                "channel": "wx",
+            }
+        ],
+    )
+    product_allowlist = _write_allowed_accounts(
+        tmp_path / "product-allowed-create-accounts.json",
+        [
+            {
+                "account_name": "Target Account",
+                "advertiser_id": "target-1",
+                "product": "yzt",
+                "enable": True,
+                "channel": "wx",
+            }
+        ],
+    )
+    strategy_plan = {
+        "workflow": "create_strategy_plan",
+        "plan_id": "create-plan-mode-001",
+        "request_id": "mode-001",
+        "request": {
+            "product": "yzt",
+            "platform": "wx-mini-game",
+            "source_advertiser_id": "source-1",
+            "product_config_snapshot": {"allowed_target_accounts_path": str(product_allowlist)},
+            "target_accounts": [
+                {
+                    "advertiser_id": "target-1",
+                    "project_count": 1,
+                    "units_per_project": 1,
+                    "daily_budget": 1000,
+                }
+            ],
+        },
+        "strategy": {
+            "source_advertiser_id": "source-1",
+            "projects": [
+                {
+                    "advertiser_id": "target-1",
+                    "units": [
+                        {
+                            "unit_key": "target-1-p001-u01",
+                            "materials": [{"material_id": "material-1", "source_video_id": "video-1"}],
+                        }
+                    ],
+                }
+            ],
+        },
+    }
+    policy = _policy()
+    policy["create_plan"]["require_allowed_target_accounts"] = True
+    policy["create_plan"]["allowed_target_accounts_path"] = str(generic_allowlist)
+
+    result = validate_create_plan(strategy_plan, policy=policy, db_path=db_path)
+
+    assert result["ok"] is True
+    assert result["allowed_account_contract"]["allowed_target_accounts_path"] == str(product_allowlist)
+    assert result["violations"] == []
+
+
 def test_validate_create_plan_blocks_disabled_or_mismatched_allowed_account(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     _seed_plan_sources(db_path)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import sqlite3
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
@@ -33,6 +34,111 @@ def _read_csv_rows(path: str | Path) -> list[dict[str, str]]:
         if missing:
             raise ValueError(f"accounts csv missing required columns: {', '.join(missing)}")
         return [dict(row) for row in reader]
+
+
+def _text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _bool_value(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    text = _text(value).lower()
+    if not text:
+        return default
+    return text in {"1", "true", "yes", "y", "enabled", "enable", "启用", "是"}
+
+
+def _normalize_platform(value: Any) -> str:
+    text = _text(value)
+    lowered = text.lower()
+    if lowered in {"wx", "wechat", "weixin", "wechat_game", "wx-mini-game", "微信", "微小", "微信小游戏"}:
+        return "WECHAT_GAME"
+    if lowered in {"byte", "byte_game", "字小", "字节小游戏"}:
+        return "BYTE_GAME"
+    return text
+
+
+def _json_rows(data: Any) -> list[dict[str, Any]]:
+    if isinstance(data, list):
+        return [row for row in data if isinstance(row, dict)]
+    if isinstance(data, dict):
+        for key in ["allowed_target_accounts", "accounts", "rows"]:
+            rows = data.get(key)
+            if isinstance(rows, list):
+                return [row for row in rows if isinstance(row, dict)]
+    return []
+
+
+def import_allowed_accounts_json(path: str | Path, *, db_path: str | Path) -> dict[str, Any]:
+    source = Path(path)
+    payload = json.loads(source.read_text(encoding="utf-8"))
+    source_product = _text(payload.get("product")) if isinstance(payload, dict) else ""
+    source_channel = _text(payload.get("channel")) if isinstance(payload, dict) else ""
+    rows = _json_rows(payload)
+    synced_at = _now_iso()
+    normalized: list[dict[str, Any]] = []
+    skipped_disabled = 0
+    skipped_incomplete = 0
+    for row in rows:
+        if not _bool_value(row.get("enable", row.get("enabled", row.get("启用"))), True):
+            skipped_disabled += 1
+            continue
+        advertiser_id = _text(row.get("advertiser_id") or row.get("account_id") or row.get("账户id") or row.get("账户ID"))
+        account_name = _text(row.get("account_name") or row.get("账户名") or row.get("name"))
+        product = _text(row.get("product") or row.get("产品") or source_product)
+        platform = _normalize_platform(row.get("platform") or row.get("channel") or row.get("渠道") or source_channel)
+        if not advertiser_id or not account_name or not product or not platform:
+            skipped_incomplete += 1
+            continue
+        normalized.append(
+            {
+                "advertiser_id": advertiser_id,
+                "account_name": account_name,
+                "product": product,
+                "platform": platform,
+                "historical_spend": _parse_spend(row.get("消耗") or row.get("spend") or row.get("historical_spend")),
+            }
+        )
+
+    with sqlite3.connect(db_path) as conn:
+        for item in normalized:
+            conn.execute(
+                """
+                INSERT INTO account_pool (
+                  advertiser_id, account_name, product, platform, historical_spend, source, synced_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(advertiser_id) DO UPDATE SET
+                  account_name = excluded.account_name,
+                  product = excluded.product,
+                  platform = excluded.platform,
+                  historical_spend = excluded.historical_spend,
+                  source = excluded.source,
+                  synced_at = excluded.synced_at
+                """,
+                (
+                    item["advertiser_id"],
+                    item["account_name"],
+                    item["product"],
+                    item["platform"],
+                    item["historical_spend"],
+                    str(source),
+                    synced_at,
+                ),
+            )
+
+    return {
+        "ok": True,
+        "workflow": "allowed_create_accounts_import",
+        "rows_seen": len(rows),
+        "accounts_imported": len(normalized),
+        "skipped_disabled": skipped_disabled,
+        "skipped_incomplete": skipped_incomplete,
+        "products": dict(sorted(Counter(item["product"] for item in normalized).items())),
+        "platforms": dict(sorted(Counter(item["platform"] for item in normalized).items())),
+        "external_api_calls": 0,
+        "execution_enabled": False,
+    }
 
 
 def import_accounts_csv(path: str | Path, *, db_path: str | Path) -> dict[str, Any]:

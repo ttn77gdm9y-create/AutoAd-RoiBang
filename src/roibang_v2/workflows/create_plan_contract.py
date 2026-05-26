@@ -150,6 +150,19 @@ def _policy_path(policy: dict[str, Any], key: str) -> str:
     return _text(_policy_section(policy).get(key))
 
 
+def _plan_allowed_target_accounts_path(plan: dict[str, Any], policy: dict[str, Any]) -> str:
+    request = _strategy_plan_request(plan)
+    request_snapshot = request.get("product_config_snapshot") if isinstance(request.get("product_config_snapshot"), dict) else {}
+    plan_snapshot = plan.get("product_config_snapshot") if isinstance(plan.get("product_config_snapshot"), dict) else {}
+    return (
+        _text(plan.get("allowed_target_accounts_path"))
+        or _text(request.get("allowed_target_accounts_path"))
+        or _text(request_snapshot.get("allowed_target_accounts_path"))
+        or _text(plan_snapshot.get("allowed_target_accounts_path"))
+        or _policy_path(policy, "allowed_target_accounts_path")
+    )
+
+
 def _channel_matches(plan_platform: str, row_channel: str) -> bool:
     if not row_channel:
         return True
@@ -236,7 +249,7 @@ def _material_exists(conn: sqlite3.Connection, *, plan: dict[str, Any], material
 def _allowed_account_contract(plan: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
     section = _policy_section(policy)
     required = _bool_value(section.get("require_allowed_target_accounts"), False)
-    path_text = _policy_path(policy, "allowed_target_accounts_path")
+    path_text = _plan_allowed_target_accounts_path(plan, policy)
     if not path_text:
         return {
             "checked": False,

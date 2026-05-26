@@ -208,6 +208,7 @@ def test_create_mode_applies_product_config_to_foundation_fields(tmp_path: Path)
     assert create_request["platform"] == "WECHAT_GAME"
     assert create_request["source_advertiser_id"] == "source-acc"
     assert create_request["organization_id"] == "org-1"
+    assert create_request["allowed_target_accounts_path"] == "configs/allowed-create-accounts.local.json"
     assert create_request["field_defaults"]["action_track_url"] == "https://example.com/touch?advertiser_id=__ADVERTISER_ID__"
     template_parameters = create_request["template_parameters"]
     assert template_parameters["anchor_id"] == "anchor-1"
