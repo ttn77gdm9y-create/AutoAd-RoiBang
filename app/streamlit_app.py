@@ -726,8 +726,8 @@ def _show_create_execute_report(report: dict[str, Any]) -> None:
     summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
     readable = report.get("readable_reference") if isinstance(report.get("readable_reference"), dict) else {}
     delivery = report.get("delivery") if isinstance(report.get("delivery"), dict) else {}
-    with st.container(border=True):
-        st.markdown("**执行汇报**")
+    issues = readable.get("execution_issues") if isinstance(readable.get("execution_issues"), dict) else {}
+    with st.expander("执行汇报", expanded=False):
         cols = st.columns(5)
         cols[0].metric("状态", _format_status(report.get("status")))
         cols[1].metric("项目", str(summary.get("created_project_count", 0)))
@@ -737,6 +737,31 @@ def _show_create_execute_report(report: dict[str, Any]) -> None:
         message = str(report.get("message") or "").strip()
         if message:
             st.write(message)
+        if bool(issues.get("manual_review_required")):
+            st.error(
+                "存在需要处理的部分失败："
+                f"{int(issues.get('affected_account_count') or 0)} 个账户受影响，"
+                f"跳过 {int(issues.get('skipped_unit_count') or 0)} 个单元。"
+            )
+            accounts = issues.get("accounts") if isinstance(issues.get("accounts"), list) else []
+            if accounts:
+                st.table(
+                    [
+                        {
+                            "账户": row.get("advertiser_id"),
+                            "素材绑定异常": row.get("material_bind_failure_count"),
+                            "跳过单元": row.get("skipped_unit_count"),
+                            "错误码": "/".join(str(item) for item in row.get("codes") or []),
+                            "原因": "；".join(str(item) for item in row.get("messages") or []),
+                        }
+                        for row in accounts
+                        if isinstance(row, dict)
+                    ]
+                )
+            rebuild = issues.get("rebuild_reference") if isinstance(issues.get("rebuild_reference"), list) else []
+            if rebuild:
+                with st.expander("查看补建参考", expanded=False):
+                    st.table(rebuild)
         feishu = delivery.get("feishu") if isinstance(delivery.get("feishu"), dict) else {}
         if feishu:
             if bool(feishu.get("attempted")) and bool(feishu.get("ok", False)):
@@ -754,7 +779,18 @@ def _show_create_execute_report(report: dict[str, Any]) -> None:
             cols[2].metric("覆盖账户", str(len(selected.get("by_account") or [])))
             by_account = selected.get("by_account") if isinstance(selected.get("by_account"), list) else []
             if by_account:
-                st.table(by_account[:20])
+                with st.expander("查看账户选材分布", expanded=False):
+                    st.table(
+                        [
+                            {
+                                "账户": row.get("advertiser_id"),
+                                "素材分配": row.get("assignment_count"),
+                                "唯一素材": row.get("unique_material_count"),
+                            }
+                            for row in by_account[:20]
+                            if isinstance(row, dict)
+                        ]
+                    )
             top_materials = selected.get("top_materials_by_cost") if isinstance(selected.get("top_materials_by_cost"), list) else []
             if top_materials:
                 with st.expander("查看高消耗素材 Top", expanded=False):

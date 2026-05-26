@@ -106,6 +106,28 @@ def _format_feishu_message(result: dict) -> str:
         "",
         str(result.get("message") or ""),
     ]
+    issues = result.get("readable_reference", {}).get("execution_issues", {})
+    if isinstance(issues, dict) and bool(issues.get("manual_review_required")):
+        lines.extend(
+            [
+                "",
+                "需要处理",
+                f"- 影响账户：{int(issues.get('affected_account_count') or 0)} 个",
+                f"- 跳过单元：{int(issues.get('skipped_unit_count') or 0)} 个",
+                f"- 素材绑定异常：{int(issues.get('material_bind_failure_count') or 0)} 次",
+            ]
+        )
+        for row in (issues.get("accounts") if isinstance(issues.get("accounts"), list) else [])[:8]:
+            if not isinstance(row, dict):
+                continue
+            codes = "/".join(str(item) for item in row.get("codes") or [])
+            messages = "；".join(str(item) for item in row.get("messages") or [])
+            lines.append(
+                "- "
+                f"{row.get('advertiser_id')}："
+                f"跳过单元 {int(row.get('skipped_unit_count') or 0)}，"
+                f"错误 {codes or '-'} {messages or ''}".rstrip()
+            )
     selected = result.get("readable_reference", {}).get("selected_materials", {})
     if isinstance(selected, dict) and selected:
         lines.extend(

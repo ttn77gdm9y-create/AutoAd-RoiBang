@@ -54,6 +54,11 @@ def _source_summary(source: dict[str, Any]) -> dict[str, Any]:
         *_rows(_idempotency(source).get("skipped_material_bind_records")),
     ]
     ordered_steps = _rows(source.get("ordered_steps"))
+    skipped_accounts = _rows(source.get("skipped_accounts"))
+    bind_failures = [row for row in skipped_accounts if str(row.get("operation") or "") == "bind_material"]
+    skipped_units = [row for row in skipped_accounts if str(row.get("operation") or "") == "create_unit"]
+    affected_accounts = sorted({str(row.get("advertiser_id") or "") for row in skipped_accounts if row.get("advertiser_id")})
+    first_bind_failure = bind_failures[0] if bind_failures else {}
     failure = source.get("failure") if isinstance(source.get("failure"), dict) else None
     return {
         "source_ok": bool(source.get("ok", False)),
@@ -70,11 +75,86 @@ def _source_summary(source: dict[str, Any]) -> dict[str, Any]:
         "blocking_reasons": [str(item) for item in source.get("blocking_reasons") or []],
         "failure": failure,
         "runner_status": _status(runner),
-        "skipped_account_count": len(_rows(source.get("skipped_accounts"))),
+        "skipped_account_count": len(skipped_accounts),
+        "affected_account_count": len(affected_accounts),
+        "affected_accounts": affected_accounts,
+        "skipped_unit_count": len(skipped_units),
+        "material_bind_failure_count": len(bind_failures),
+        "first_material_bind_failure_code": int(first_bind_failure.get("code") or 0),
+        "first_material_bind_failure_message": str(first_bind_failure.get("message") or ""),
         "post_run_retry_status": str(failure_recovery.get("post_run_retry_status") or ""),
         "post_run_retry_attempted_count": int(failure_recovery.get("post_run_retry_attempted_count") or 0),
         "post_run_retry_recovered_count": int(failure_recovery.get("post_run_retry_recovered_count") or 0),
         "post_run_retry_failed_count": int(failure_recovery.get("post_run_retry_failed_count") or 0),
+    }
+
+
+def _execution_issues(source: dict[str, Any]) -> dict[str, Any]:
+    skipped_accounts = _rows(source.get("skipped_accounts"))
+    by_account: dict[str, dict[str, Any]] = {}
+    for row in skipped_accounts:
+        advertiser_id = str(row.get("advertiser_id") or "")
+        if not advertiser_id:
+            continue
+        issue = by_account.setdefault(
+            advertiser_id,
+            {
+                "advertiser_id": advertiser_id,
+                "material_bind_failure_count": 0,
+                "skipped_lookup_count": 0,
+                "skipped_unit_count": 0,
+                "codes": set(),
+                "messages": set(),
+                "bind_messages": set(),
+                "skip_messages": set(),
+                "operations": set(),
+            },
+        )
+        operation = str(row.get("operation") or "")
+        issue["operations"].add(operation)
+        if operation == "bind_material":
+            issue["material_bind_failure_count"] += 1
+        elif operation == "lookup_target_material":
+            issue["skipped_lookup_count"] += 1
+        elif operation == "create_unit":
+            issue["skipped_unit_count"] += 1
+        if row.get("code") not in (None, ""):
+            issue["codes"].add(str(row.get("code")))
+        message = str(row.get("message") or "").strip()
+        if message:
+            issue["messages"].add(message)
+            if operation == "bind_material":
+                issue["bind_messages"].add(message)
+            else:
+                issue["skip_messages"].add(message)
+    accounts = [
+        {
+            "advertiser_id": issue["advertiser_id"],
+            "material_bind_failure_count": issue["material_bind_failure_count"],
+            "skipped_lookup_count": issue["skipped_lookup_count"],
+            "skipped_unit_count": issue["skipped_unit_count"],
+            "codes": sorted(issue["codes"]),
+            "messages": [*sorted(issue["bind_messages"]), *sorted(issue["skip_messages"])],
+            "operations": sorted(operation for operation in issue["operations"] if operation),
+        }
+        for issue in by_account.values()
+    ]
+    accounts.sort(key=lambda row: str(row.get("advertiser_id") or ""))
+    return {
+        "manual_review_required": bool(accounts),
+        "affected_account_count": len(accounts),
+        "skipped_unit_count": sum(int(row.get("skipped_unit_count") or 0) for row in accounts),
+        "material_bind_failure_count": sum(int(row.get("material_bind_failure_count") or 0) for row in accounts),
+        "accounts": accounts,
+        "rebuild_reference": [
+            {
+                "advertiser_id": str(row.get("advertiser_id") or ""),
+                "skipped_unit_count": int(row.get("skipped_unit_count") or 0),
+                "reason": "；".join(row.get("messages") or []) or "素材绑定失败后跳过后续单元",
+            }
+            for row in accounts
+            if int(row.get("skipped_unit_count") or 0) > 0
+        ],
     }
 
 
@@ -93,6 +173,8 @@ def _next_steps(*, summary: dict[str, Any], efficiency: dict[str, Any]) -> list[
         steps.append("已有临时失败单元在跑后补跑中恢复，优先看最终单元数是否满足计划。")
     if int(summary.get("skipped_account_count") or 0) > 0 and int(recovery.get("post_run_retry_recovered_count") or 0) == 0:
         steps.append("存在跳过账户，先看跳过原因是素材、接口还是项目上限。")
+    if int(summary.get("material_bind_failure_count") or 0) > 0:
+        steps.append("素材绑定返回错误的账户需要换素材或先补齐目标账户素材权限，再按跳过账户补建单元。")
     if failure:
         operation = str(failure.get("operation") or "")
         if operation in {"bind_material", "lookup_target_material"}:
@@ -291,11 +373,17 @@ def _message(summary: dict[str, Any]) -> str:
                 f"恢复{int(summary.get('post_run_retry_recovered_count') or 0)}个，"
                 f"失败{int(summary.get('post_run_retry_failed_count') or 0)}个；"
             )
+        partial_text = ""
+        if int(summary.get("affected_account_count") or 0) > 0:
+            partial_text = (
+                f"{int(summary.get('affected_account_count') or 0)}个账户素材绑定异常，"
+                f"跳过单元{int(summary.get('skipped_unit_count') or 0)}个；"
+            )
         return (
             "真实创建结果：完成项目"
             f"{int(summary.get('created_project_count') or 0)}个、单元"
             f"{int(summary.get('created_unit_count') or 0)}个、素材推送"
-            f"{int(summary.get('material_bind_count') or 0)}组；{retry_text}执行脚本外部调用"
+            f"{int(summary.get('material_bind_count') or 0)}组；{partial_text}{retry_text}执行脚本外部调用"
             f"{int(summary.get('source_external_api_calls') or 0)}次。"
         )
     if failure:
@@ -446,20 +534,26 @@ def build_create_live_execute_report(
     plan_id = str(source_summary.get("plan_id") or "")
     create_plan_summary = _plan_summary(create_plan_artifact)
     selected_materials = _selected_material_reference(create_plan_artifact)
+    execution_issues = _execution_issues(source)
     payload = {
         "ok": True,
         "workflow": "create_live_execute_report",
         "phase": "phase2_preparation",
         "execution_enabled": False,
         "external_api_calls": 0,
-        "status": "reported_completed"
-        if str(summary.get("source_status") or "") == "create_http_completed"
-        else "reported_not_completed",
+        "status": "reported_partial_completed"
+        if bool(execution_issues.get("manual_review_required"))
+        else (
+            "reported_completed"
+            if str(summary.get("source_status") or "") == "create_http_completed"
+            else "reported_not_completed"
+        ),
         "message": _message(summary),
         "summary": summary,
         "efficiency_report": efficiency,
         "next_steps": _next_steps(summary=summary, efficiency=efficiency),
         "readable_reference": {
+            "execution_issues": execution_issues,
             "selected_materials": selected_materials,
         },
         "create_plan_summary": create_plan_summary,

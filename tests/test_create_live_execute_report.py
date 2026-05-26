@@ -128,6 +128,83 @@ def _failed_execute_once_artifact() -> dict:
     return payload
 
 
+def _partial_execute_once_artifact() -> dict:
+    payload = _completed_execute_once_artifact()
+    payload["external_api_calls"] = 132
+    payload["transport_call_count"] = 132
+    payload["provider_id_records"] = [
+        *[
+            {
+                "status": "recorded",
+                "entity_type": "project",
+                "local_key": f"p{i}",
+                "provider_id": f"project-{i}",
+            }
+            for i in range(20)
+        ],
+        *[
+            {
+                "status": "recorded",
+                "entity_type": "promotion",
+                "local_key": f"u{i}",
+                "provider_id": f"unit-{i}",
+            }
+            for i in range(10)
+        ],
+        *[
+            {
+                "status": "recorded",
+                "entity_type": "target_video",
+                "local_key": f"v{i}",
+                "provider_id": f"video-{i}",
+            }
+            for i in range(98)
+        ],
+    ]
+    payload["material_bind_records"] = [{"status": "recorded", "bind_key": f"bind-{i}"} for i in range(98)]
+    payload["skipped_accounts"] = [
+        {
+            "advertiser_id": "1866125088740552",
+            "operation": "bind_material",
+            "code": 400170,
+            "message": "部分视频无权限或不存在",
+        },
+        {
+            "advertiser_id": "1866125088740552",
+            "operation": "lookup_target_material",
+            "message": "素材绑定失败后跳过目标素材回查",
+        },
+        *[
+            {
+                "advertiser_id": "1866125088740552",
+                "operation": "create_unit",
+                "message": "素材绑定失败后跳过单元创建",
+            }
+            for _ in range(5)
+        ],
+        {
+            "advertiser_id": "1866125089411143",
+            "operation": "bind_material",
+            "code": 400170,
+            "message": "部分视频无权限或不存在",
+        },
+        {
+            "advertiser_id": "1866125089411143",
+            "operation": "lookup_target_material",
+            "message": "素材绑定失败后跳过目标素材回查",
+        },
+        *[
+            {
+                "advertiser_id": "1866125089411143",
+                "operation": "create_unit",
+                "message": "素材绑定失败后跳过单元创建",
+            }
+            for _ in range(5)
+        ],
+    ]
+    return payload
+
+
 def _create_plan() -> dict:
     return {
         "plan_id": "plan-1",
@@ -315,6 +392,49 @@ def test_create_live_execute_report_includes_readable_selected_materials(tmp_pat
     assert selected["by_account"][0]["projects"][0]["materials"][0]["name"] == "素材1"
 
 
+def test_create_live_execute_report_exposes_partial_material_bind_failures(tmp_path: Path):
+    result = run_create_live_execute_report_request(
+        {
+            "create_live_execute_report": {
+                "create_live_execute_once_artifact": _partial_execute_once_artifact(),
+                "create_plan_artifact": _create_mode_plan_artifact(),
+                "source_artifact_path": "/runs/create_live_execute_once/partial.json",
+                "plan_artifact_path": "/runs/create_mode/plan.json",
+            }
+        },
+        runs_dir=tmp_path / "runs",
+        db_path=tmp_path / "roibang.sqlite3",
+    )
+
+    issues = result["readable_reference"]["execution_issues"]
+    assert result["status"] == "reported_partial_completed"
+    assert result["summary"]["affected_account_count"] == 2
+    assert result["summary"]["skipped_unit_count"] == 10
+    assert result["summary"]["material_bind_failure_count"] == 2
+    assert "2个账户素材绑定异常，跳过单元10个" in result["message"]
+    assert issues["manual_review_required"] is True
+    assert issues["affected_account_count"] == 2
+    assert issues["skipped_unit_count"] == 10
+    assert issues["material_bind_failure_count"] == 2
+    assert issues["accounts"][0]["advertiser_id"] == "1866125088740552"
+    assert issues["accounts"][0]["codes"] == ["400170"]
+    assert "部分视频无权限或不存在" in issues["accounts"][0]["messages"]
+    assert issues["accounts"][0]["skipped_unit_count"] == 5
+    assert issues["rebuild_reference"] == [
+        {
+            "advertiser_id": "1866125088740552",
+            "skipped_unit_count": 5,
+            "reason": "部分视频无权限或不存在；素材绑定失败后跳过单元创建；素材绑定失败后跳过目标素材回查",
+        },
+        {
+            "advertiser_id": "1866125089411143",
+            "skipped_unit_count": 5,
+            "reason": "部分视频无权限或不存在；素材绑定失败后跳过单元创建；素材绑定失败后跳过目标素材回查",
+        },
+    ]
+    assert any("素材绑定返回错误的账户需要换素材" in step for step in result["next_steps"])
+
+
 def test_create_live_execute_report_feishu_message_includes_readable_selected_materials():
     module = _load_script("run_create_live_execute_report")
     result = {
@@ -348,6 +468,39 @@ def test_create_live_execute_report_feishu_message_includes_readable_selected_ma
     assert "target-1：2 个唯一素材" in message
     assert "素材1（m1）：消耗 2000，转化 3，使用 1 次" in message
     assert "完整 JSON：data/runs/create_live_execute_report/20260523T000000Z.json" in message
+
+
+def test_create_live_execute_report_feishu_message_includes_partial_failures():
+    module = _load_script("run_create_live_execute_report")
+    result = {
+        "message": "真实创建结果：完成项目20个、单元10个、素材推送98组；2个账户素材绑定异常，跳过单元10个；执行脚本外部调用132次。",
+        "artifact_path": "data/runs/create_live_execute_report/20260526T061230Z.json",
+        "readable_reference": {
+            "execution_issues": {
+                "manual_review_required": True,
+                "affected_account_count": 2,
+                "skipped_unit_count": 10,
+                "material_bind_failure_count": 2,
+                "accounts": [
+                    {
+                        "advertiser_id": "1866125088740552",
+                        "material_bind_failure_count": 1,
+                        "skipped_unit_count": 5,
+                        "codes": ["400170"],
+                        "messages": ["部分视频无权限或不存在"],
+                    }
+                ],
+            }
+        },
+    }
+
+    message = module._format_feishu_message(result)
+
+    assert "需要处理" in message
+    assert "影响账户：2 个" in message
+    assert "跳过单元：10 个" in message
+    assert "素材绑定异常：2 次" in message
+    assert "1866125088740552：跳过单元 5，错误 400170 部分视频无权限或不存在" in message
 
 
 def test_create_live_execute_report_script_reads_latest_execute_once_artifact(tmp_path: Path, capsys):
