@@ -131,6 +131,30 @@ def test_preload_plan_accepts_explicit_new_account_list_without_patrol_artifact(
     assert [batch["target_advertiser_id"] for batch in plan["push_batches"]] == ["target-new-1", "target-new-2"]
 
 
+def test_preload_plan_excludes_source_account_from_explicit_targets(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+    with sqlite3.connect(db_path) as conn:
+        _seed_source_material(conn, "1000000000000000001", "v28033gi0000d7m72bvog65s5f9la001", 300)
+    cfg = _request(tmp_path / "missing-patrol.json")
+    cfg["target_accounts"] = {
+        "accounts": [
+            {"advertiser_id": "source-1", "account_name": "源素材账户"},
+            {"advertiser_id": "target-new-1", "account_name": "目标账户"},
+        ]
+    }
+
+    plan = build_source_material_preload_plan(
+        db_path=db_path,
+        cfg=cfg,
+        today=date(2026, 5, 16),
+    )
+
+    assert plan["summary"]["target_account_count"] == 1
+    assert plan["target_accounts"][0]["advertiser_id"] == "target-new-1"
+    assert [batch["target_advertiser_id"] for batch in plan["push_batches"]] == ["target-new-1"]
+
+
 def test_preload_limit_round_robins_across_target_accounts(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     patrol_path = tmp_path / "patrol.json"

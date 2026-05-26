@@ -73,6 +73,7 @@ def _metric_for_window(account: dict[str, Any], window: str) -> dict[str, Any]:
 
 def _select_target_accounts(cfg: dict[str, Any], *, today: date | None = None) -> list[dict[str, Any]]:
     target_cfg = cfg.get("target_accounts") if isinstance(cfg.get("target_accounts"), dict) else {}
+    source_advertiser_id = _text(cfg.get("source_advertiser_id"))
     explicit = target_cfg.get("accounts")
     if isinstance(explicit, list) and explicit:
         return [
@@ -84,6 +85,7 @@ def _select_target_accounts(cfg: dict[str, Any], *, today: date | None = None) -
             }
             for row in explicit
             if _text(row.get("advertiser_id") if isinstance(row, dict) else row)
+            and _text(row.get("advertiser_id") if isinstance(row, dict) else row) != source_advertiser_id
         ]
 
     source = _text(target_cfg.get("source") or "delivery_patrol_artifact")
@@ -105,7 +107,7 @@ def _select_target_accounts(cfg: dict[str, Any], *, today: date | None = None) -
         if stat_cost <= min_spend:
             continue
         advertiser_id = _text(account.get("advertiser_id") or account.get("account_id"))
-        if not advertiser_id:
+        if not advertiser_id or advertiser_id == source_advertiser_id:
             continue
         selected.append(
             {
