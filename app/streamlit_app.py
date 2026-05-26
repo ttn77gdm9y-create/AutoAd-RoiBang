@@ -1032,6 +1032,12 @@ def _show_create_execution_steps(project_root: Path, plan_path: str, timeout_sec
     with st.container(border=True):
         st.markdown("**2. 真实执行**")
         st.caption("配置检查通过后，在这里确认并调用固定脚本。运行后会真实创建项目和单元。")
+        resume_existing_plan = st.checkbox(
+            "续跑已有计划（resume-existing-plan）",
+            value=False,
+            key=f"create_live_resume_existing_plan_{plan_path}",
+            help="只在同一个计划已经部分创建、需要补齐剩余项目或单元时勾选；脚本会先按本地记录跳过已完成部分。",
+        )
         confirm_text = st.text_input(
             "输入“确认执行”后解锁真实执行按钮",
             value="",
@@ -1047,10 +1053,19 @@ def _show_create_execution_steps(project_root: Path, plan_path: str, timeout_sec
             disabled=execute_disabled,
             key=f"create_live_execute_{plan_path}",
         ):
+            real_command = build_create_live_execute_command(
+                plan_path=plan_path,
+                resume_existing_plan=resume_existing_plan,
+            )
             with st.spinner("正在调用固定脚本真实创建项目和单元..."):
                 result = run_fixed_script(real_command, cwd=project_root, timeout_seconds=timeout_seconds)
             st.session_state[f"create_live_execute_result_{plan_path}"] = result.parsed_stdout
             st.session_state[f"create_live_execute_return_code_{plan_path}"] = result.return_code
+            st.session_state[f"create_live_execute_raw_{plan_path}"] = {
+                "command": result.command,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+            }
             report_payload = {}
             execute_artifact_path = str(result.parsed_stdout.get("artifact_path") or "") if isinstance(result.parsed_stdout, dict) else ""
             if execute_artifact_path:
@@ -1077,6 +1092,7 @@ def _show_create_execution_steps(project_root: Path, plan_path: str, timeout_sec
                     "plan_path": plan_path,
                     "command": result.command,
                     "confirmed_text_matched": confirmed,
+                    "resume_existing_plan": resume_existing_plan,
                 },
                 result={
                     "return_code": result.return_code,
@@ -1103,6 +1119,14 @@ def _show_create_execution_steps(project_root: Path, plan_path: str, timeout_sec
                 st.caption(f"执行结果文件：{artifact_path}")
             with st.expander("查看真实执行结果 JSON", expanded=False):
                 st.json(stored)
+        raw_result = st.session_state.get(f"create_live_execute_raw_{plan_path}")
+        if isinstance(raw_result, dict) and raw_result and not bool((stored or {}).get("ok") if isinstance(stored, dict) else False):
+            with st.expander("查看真实执行原始输出", expanded=False):
+                st.code(_format_shell_command(raw_result.get("command") or [], cwd=project_root), language="bash")
+                if str(raw_result.get("stdout") or "").strip():
+                    st.code(str(raw_result.get("stdout") or ""), language="text")
+                if str(raw_result.get("stderr") or "").strip():
+                    st.code(str(raw_result.get("stderr") or ""), language="text")
         stored_report = st.session_state.get(f"create_live_execute_report_result_{plan_path}")
         if isinstance(stored_report, dict) and stored_report:
             _show_create_execute_report(stored_report)

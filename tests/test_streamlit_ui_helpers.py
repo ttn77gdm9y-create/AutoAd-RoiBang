@@ -523,6 +523,15 @@ def test_build_create_live_execute_command_uses_fixed_json_entrypoint():
     assert "--yes" not in command
 
 
+def test_build_create_live_execute_command_can_resume_existing_plan():
+    command = build_create_live_execute_command(
+        plan_path="configs/create-plans/test.local.json",
+        resume_existing_plan=True,
+    )
+
+    assert "--resume-existing-plan" in command
+
+
 def test_build_create_live_execute_report_command_pushes_feishu_by_default():
     command = build_create_live_execute_report_command(
         plan_path="configs/create-plans/test.local.json",

@@ -286,14 +286,32 @@ def build_project_filter_command(
 
 
 def run_fixed_script(command: list[str], *, cwd: str | Path, timeout_seconds: int = 900) -> ScriptResult:
-    completed = subprocess.run(
-        command,
-        cwd=str(cwd),
-        text=True,
-        capture_output=True,
-        timeout=timeout_seconds,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=str(cwd),
+            text=True,
+            capture_output=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout if isinstance(exc.stdout, str) else (exc.stdout or b"").decode("utf-8", errors="replace")
+        stderr = exc.stderr if isinstance(exc.stderr, str) else (exc.stderr or b"").decode("utf-8", errors="replace")
+        parsed = {
+            "ok": False,
+            "status": "timeout",
+            "workflow": "fixed_script_runner",
+            "blocking_reasons": [f"script timed out after {timeout_seconds} seconds"],
+        }
+        return ScriptResult(
+            ok=False,
+            return_code=-1,
+            command=command,
+            stdout=stdout,
+            stderr=stderr,
+            parsed_stdout=parsed,
+        )
     parsed: dict[str, Any] = {}
     try:
         value = json.loads(completed.stdout)
