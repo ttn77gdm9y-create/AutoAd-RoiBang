@@ -63,6 +63,8 @@ def test_create_operation_details_from_plan_records_accounts_materials_and_copyw
     assert details["accounts"][0]["advertiser_id"] == "acc-1"
     assert details["material_assignment_count"] == 1
     assert details["unique_materials"][0]["material_id"] == "m-1"
+    assert details["material_assignments"][0]["convert_cnt"] == 0
+    assert "effective_create_date" in details["material_assignments"][0]
     assert details["copywriting"]["title_pool"] == ["标题1", "标题2"]
     assert details["copywriting"]["cta_pool"] == ["立即下载"]
     assert details["copywriting"]["selling_points"] == ["爆率高"]

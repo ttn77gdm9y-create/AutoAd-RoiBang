@@ -5,6 +5,8 @@ import copy
 import json
 import shlex
 import sys
+from collections import Counter
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -758,6 +760,135 @@ def _show_create_plan_summary(summary: dict[str, Any]) -> None:
             st.warning(f"规则异常数量：{summary.get('violation_count')}")
 
 
+def _float_display(value: Any) -> float:
+    try:
+        return round(float(value or 0), 2)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _material_review_rows(details: dict[str, Any]) -> list[dict[str, Any]]:
+    rows_by_id: dict[str, dict[str, Any]] = {}
+    accounts_by_id: dict[str, set[str]] = defaultdict(set)
+    units_by_id: dict[str, set[str]] = defaultdict(set)
+    for row in details.get("material_assignments") or []:
+        if not isinstance(row, dict):
+            continue
+        material_id = str(row.get("material_id") or "")
+        if not material_id:
+            continue
+        current = rows_by_id.setdefault(
+            material_id,
+            {
+                "素材ID": material_id,
+                "素材名": str(row.get("name") or ""),
+                "video_id（视频ID）": str(row.get("source_video_id") or ""),
+                "使用次数": 0,
+                "覆盖账户": 0,
+                "覆盖单元": 0,
+                "近窗消耗": _float_display(row.get("stat_cost")),
+                "转化数": _float_display(row.get("convert_cnt")),
+                "素材排名": row.get("rank") or 0,
+                "有效创建日期": str(row.get("effective_create_date") or ""),
+            },
+        )
+        current["使用次数"] = int(current["使用次数"]) + 1
+        accounts_by_id[material_id].add(str(row.get("advertiser_id") or ""))
+        units_by_id[material_id].add(str(row.get("unit_key") or ""))
+    for material_id, row in rows_by_id.items():
+        row["覆盖账户"] = len(accounts_by_id[material_id])
+        row["覆盖单元"] = len(units_by_id[material_id])
+    return sorted(rows_by_id.values(), key=lambda item: (-int(item["使用次数"]), -float(item["近窗消耗"]), str(item["素材ID"])))
+
+
+def _creative_review_rows(details: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    title_counter: Counter[str] = Counter()
+    cta_counter: Counter[str] = Counter()
+    selling_point_counter: Counter[str] = Counter()
+    unit_count_by_title: dict[str, set[str]] = defaultdict(set)
+    unit_count_by_cta: dict[str, set[str]] = defaultdict(set)
+    unit_count_by_selling_point: dict[str, set[str]] = defaultdict(set)
+    for row in details.get("unit_copywriting") or []:
+        if not isinstance(row, dict):
+            continue
+        unit_key = str(row.get("unit_key") or "")
+        for title_item in row.get("title_material_list") or []:
+            if isinstance(title_item, dict):
+                title = str(title_item.get("title") or "").strip()
+            else:
+                title = str(title_item or "").strip()
+            if title:
+                title_counter[title] += 1
+                unit_count_by_title[title].add(unit_key)
+        for cta in row.get("call_to_action_buttons") or []:
+            text = str(cta or "").strip()
+            if text:
+                cta_counter[text] += 1
+                unit_count_by_cta[text].add(unit_key)
+        product_info = row.get("product_info") if isinstance(row.get("product_info"), dict) else {}
+        for selling_point in product_info.get("selling_points") or []:
+            text = str(selling_point or "").strip()
+            if text:
+                selling_point_counter[text] += 1
+                unit_count_by_selling_point[text].add(unit_key)
+
+    def _rows(counter: Counter[str], unit_sets: dict[str, set[str]], label: str) -> list[dict[str, Any]]:
+        return [
+            {label: text, "使用次数": count, "覆盖单元": len(unit_sets[text])}
+            for text, count in counter.most_common()
+        ]
+
+    return {
+        "titles": _rows(title_counter, unit_count_by_title, "文案"),
+        "ctas": _rows(cta_counter, unit_count_by_cta, "CTA（行动按钮）"),
+        "selling_points": _rows(selling_point_counter, unit_count_by_selling_point, "卖点"),
+    }
+
+
+def _show_create_plan_review(project_root: Path, plan_path: str) -> None:
+    plan_payload = _load_json_path(project_root, plan_path)
+    if not plan_payload:
+        return
+    details = create_operation_details_from_plan(plan_payload)
+    material_rows = _material_review_rows(details)
+    creative_rows = _creative_review_rows(details)
+    with st.container(border=True):
+        st.subheader("执行前核对")
+        cols = st.columns(4)
+        cols[0].metric("素材分配", str(details.get("material_assignment_count", 0)))
+        cols[1].metric("唯一素材", str(details.get("unique_material_count", 0)))
+        cols[2].metric("文案使用", str(sum(int(row["使用次数"]) for row in creative_rows["titles"])))
+        cols[3].metric("CTA（行动按钮）使用", str(sum(int(row["使用次数"]) for row in creative_rows["ctas"])))
+        st.caption("这里展示生成计划已经选中的素材和创意分配；真实执行会按这份计划调用固定脚本。")
+        if material_rows:
+            st.markdown("**已选素材**")
+            st.dataframe(material_rows, use_container_width=True, hide_index=True)
+        else:
+            st.warning("当前创建计划没有选中素材。")
+        tabs = st.tabs(["文案", "CTA（行动按钮）", "卖点", "账户素材分布"])
+        with tabs[0]:
+            st.dataframe(creative_rows["titles"], use_container_width=True, hide_index=True)
+        with tabs[1]:
+            st.dataframe(creative_rows["ctas"], use_container_width=True, hide_index=True)
+        with tabs[2]:
+            st.dataframe(creative_rows["selling_points"], use_container_width=True, hide_index=True)
+        with tabs[3]:
+            account_rows = [
+                {
+                    "账户": row.get("advertiser_id"),
+                    "项目数": row.get("project_count"),
+                    "单元数": row.get("unit_count"),
+                    "素材分配": row.get("material_assignment_count"),
+                    "唯一素材": row.get("unique_material_count"),
+                }
+                for row in details.get("accounts") or []
+                if isinstance(row, dict)
+            ]
+            st.dataframe(account_rows, use_container_width=True, hide_index=True)
+        with st.expander("查看单元级文案/CTA（行动按钮）/卖点分配", expanded=False):
+            st.json(details.get("unit_copywriting") or [])
+
+
 def _show_create_execute_report(report: dict[str, Any]) -> None:
     summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
     readable = report.get("readable_reference") if isinstance(report.get("readable_reference"), dict) else {}
@@ -1161,6 +1292,7 @@ def _create(project_root: Path, config: dict[str, Any], timeout_seconds: int) ->
         if not isinstance(summary, dict) or not summary:
             summary = _create_plan_summary(project_root, plan_path)
         _show_create_plan_summary(summary)
+        _show_create_plan_review(project_root, plan_path)
         planned_material_count = int(summary.get("planned_material_count") or 0)
         source_material_count = int(summary.get("source_material_count") or 0)
         violation_count = int(summary.get("violation_count") or 0)

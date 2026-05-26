@@ -113,7 +113,11 @@ def create_operation_details_from_plan(plan_payload: dict[str, Any]) -> dict[str
                     "source_video_id": _text(material.get("source_video_id")),
                     "name": _text(material.get("name")),
                     "stat_cost": material.get("stat_cost", 0),
+                    "convert_cnt": material.get("convert_cnt", 0),
+                    "score": material.get("score", 0),
                     "rank": material.get("rank", 0),
+                    "effective_create_date": _text(material.get("effective_create_date")),
+                    "first_seen_metric_date": _text(material.get("first_seen_metric_date")),
                 }
                 assignment_rows.append(row)
                 account["material_assignment_count"] += 1
