@@ -19,6 +19,7 @@ SUPPORTED_JOBS = {
     "daily_report_sync",
     "source_material_auto_push",
     "source_material_preload",
+    "source_material_rollup",
     "delivery_patrol",
 }
 
@@ -346,6 +347,23 @@ def build_product_job_request(product: dict[str, Any], job: str, *, target_date:
             }
         }
 
+    if job == "source_material_rollup":
+        rollup_cfg = _job_config(product, job)
+        date_range = rollup_cfg.get("date_range") if isinstance(rollup_cfg.get("date_range"), dict) else {}
+        start = _text(date_range.get("start") or rollup_cfg.get("start_date") or "2026-02-10")
+        end = _text(date_range.get("end") or rollup_cfg.get("end_date") or target)
+        windows = rollup_cfg.get("windows") if isinstance(rollup_cfg.get("windows"), list) else [1, 3, 7, 15, 30, "all"]
+        return {
+            "product_source_material_rollup": {
+                "product": product_name,
+                "source_advertiser_id": source_advertiser_id,
+                "organization_id": organization_id,
+                "timezone": "Asia/Shanghai",
+                "date_range": {"start": start, "end": end},
+                "windows": windows,
+            }
+        }
+
     return {
         "delivery_patrol": {
             "product_keyword": product_name,
@@ -514,6 +532,15 @@ def build_product_job_command(
             "scripts/run_source_material_preload_to_accounts.py",
             "--config",
             "configs/runtime.openapi-execute.local.example.json",
+            "--request",
+            request_path,
+        ]
+    elif job == "source_material_rollup":
+        return [
+            python,
+            "scripts/run_source_material_rollup_rebuild.py",
+            "--config",
+            "configs/runtime.example.json",
             "--request",
             request_path,
         ]

@@ -1127,6 +1127,12 @@ def _create(project_root: Path, config: dict[str, Any], timeout_seconds: int) ->
         if not isinstance(summary, dict) or not summary:
             summary = _create_plan_summary(project_root, plan_path)
         _show_create_plan_summary(summary)
+        planned_material_count = int(summary.get("planned_material_count") or 0)
+        source_material_count = int(summary.get("source_material_count") or 0)
+        violation_count = int(summary.get("violation_count") or 0)
+        if planned_material_count <= 0 or source_material_count <= 0 or violation_count > 0:
+            st.error("创建计划没有可用素材，不能进入真实执行。请切换到素材不限/测新模板，或先补齐该产品素材消耗汇总。")
+            return
         _show_create_execution_steps(project_root, plan_path, timeout_seconds, str(config.get("runs_dir") or "data/runs"))
 
 

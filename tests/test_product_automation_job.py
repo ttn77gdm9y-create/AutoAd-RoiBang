@@ -40,6 +40,7 @@ def _product(tmp_path: Path) -> dict:
             "daily_report_sync": {"enabled": True},
             "source_material_auto_push": {"enabled": True},
             "source_material_preload": {"enabled": True, "target_scope": "allowed_accounts"},
+            "source_material_rollup": {"enabled": True},
             "delivery_patrol": {"enabled": True},
         },
     }
@@ -98,6 +99,17 @@ def test_builds_preload_request_from_allowed_accounts(tmp_path: Path):
     assert cfg["target_accounts"]["accounts"] == [
         {"advertiser_id": "target-1", "account_name": "点点账户1", "account_remark": ""}
     ]
+
+
+def test_builds_source_material_rollup_request_from_product_config(tmp_path: Path):
+    request = build_product_job_request(_product(tmp_path), "source_material_rollup", target_date="yesterday")
+    cfg = request["product_source_material_rollup"]
+
+    assert cfg["product"] == "点点英雄"
+    assert cfg["source_advertiser_id"] == "source-1"
+    assert cfg["organization_id"] == "org-1"
+    assert cfg["date_range"] == {"start": "2026-02-10", "end": "yesterday"}
+    assert cfg["windows"] == [1, 3, 7, 15, 30, "all"]
 
 
 def test_build_product_job_commands_writes_request_and_command(tmp_path: Path):

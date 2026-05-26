@@ -240,16 +240,40 @@ def _write_source_rollup_window(
     rows = conn.execute(
         """
         WITH
+        source_material_ids AS (
+          SELECT material_id
+          FROM product_source_materials
+          WHERE product = ?
+            AND source_advertiser_id = ?
+            AND is_active = 1
+          GROUP BY material_id
+        ),
+        source_video_materials AS (
+          SELECT video_id, MIN(material_id) AS material_id
+          FROM product_source_materials
+          WHERE product = ?
+            AND source_advertiser_id = ?
+            AND is_active = 1
+            AND TRIM(video_id) != ''
+          GROUP BY video_id
+        ),
         daily AS (
           SELECT
             mdm.*,
-            COALESCE(msm.source_material_id, mdm.material_id) AS canonical_source_material_id
+            COALESCE(msm.source_material_id, smi.material_id, svm.material_id, mdm.material_id) AS canonical_source_material_id
           FROM material_daily_metrics mdm
           LEFT JOIN material_source_mappings msm
             ON msm.product = ?
            AND msm.source_advertiser_id = ?
            AND msm.target_advertiser_id = mdm.advertiser_id
            AND msm.target_material_id = mdm.material_id
+          LEFT JOIN source_material_ids smi
+            ON smi.material_id = mdm.material_id
+          LEFT JOIN account_materials daily_am
+            ON daily_am.advertiser_id = mdm.advertiser_id
+           AND daily_am.material_id = mdm.material_id
+          LEFT JOIN source_video_materials svm
+            ON svm.video_id = daily_am.video_id
           WHERE mdm.metric_date BETWEEN ? AND ?
             AND mdm.stat_cost > 0
         ),
@@ -349,6 +373,10 @@ def _write_source_rollup_window(
         ORDER BY stat_cost DESC, daily.canonical_source_material_id ASC
         """,
         (
+            product,
+            source_advertiser_id,
+            product,
+            source_advertiser_id,
             product,
             source_advertiser_id,
             period["period_start"],

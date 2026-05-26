@@ -564,6 +564,12 @@ def _format_product_result_line(result: dict[str, Any]) -> str:
             f"已推 {summary.get('executed_bind_material_count', 0)} 条，"
             f"失败批次 {summary.get('failed_batch_count', 0)}"
         )
+    if job == "source_material_rollup":
+        return (
+            f"{product}：{status}源素材表现汇总，源素材 {summary.get('source_material_count', 0)} 个，"
+            f"写入汇总 {summary.get('rollup_rows_written', 0)} 行，"
+            f"映射回填 {summary.get('material_source_mappings_backfilled', 0)} 条"
+        )
     if job == "delivery_patrol":
         return (
             f"{product}：{status}投放巡检，账户 {summary.get('account_count', summary.get('accounts', 0))} 个，"

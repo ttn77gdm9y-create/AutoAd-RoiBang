@@ -399,6 +399,82 @@ def test_product_source_rollup_maps_target_material_spend_back_to_source_materia
     assert row == ("m-source-1", 250.0, 5.0, 0.2, 1)
 
 
+def test_product_source_rollup_maps_target_material_to_source_by_video_id(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+    import_product_source_materials(
+        db_path=db_path,
+        product="点点英雄",
+        source_advertiser_id="source-1",
+        organization_id="org-1",
+        materials=[
+            {
+                "material_id": "m-source-1",
+                "video_id": "same-video-1",
+                "name": "点点源素材",
+                "material_type": "video",
+                "review_status": "APPROVED",
+            },
+        ],
+        source="unit_test_source",
+    )
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO account_materials (
+              advertiser_id, material_id, video_id, material_type,
+              review_status, source, synced_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "target-a",
+                "m-target-1",
+                "same-video-1",
+                "video",
+                "APPROVED",
+                "unit_test",
+                "2026-05-08T00:00:00+00:00",
+            ),
+        )
+        _insert_metric(
+            conn,
+            metric_date="2026-05-08",
+            advertiser_id="target-a",
+            project_id="p1",
+            promotion_id="u1",
+            material_id="m-target-1",
+            cost=520,
+            convert_cnt=13,
+            roi_1day=0.35,
+        )
+
+    result = run_product_source_material_rollup_request(
+        {
+            "product_source_material_rollup": {
+                "product": "点点英雄",
+                "source_advertiser_id": "source-1",
+                "organization_id": "org-1",
+                "date_range": {"start": "2026-05-08", "end": "2026-05-08"},
+                "windows": ["all"],
+            }
+        },
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+    )
+
+    assert result["summary"]["rollup_rows_written"] == 1
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT material_id, source_video_id, stat_cost, convert_cnt, roi_1day_cost_weighted
+            FROM product_source_material_metric_rollups
+            WHERE window_key = 'all_history'
+            """
+        ).fetchone()
+
+    assert row == ("m-source-1", "same-video-1", 520.0, 13.0, 0.35)
+
+
 def test_product_source_rollup_backfills_mapping_from_create_ledger_and_account_materials(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     bootstrap_database(db_path)

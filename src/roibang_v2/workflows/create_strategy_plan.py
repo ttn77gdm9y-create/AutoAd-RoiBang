@@ -698,6 +698,8 @@ def _violations(request: dict[str, Any], policy: dict[str, Any], *, candidate_co
     requirements = _material_requirements(request)
     dedupe_scope = str(requirements.get("dedupe_scope") or "request")
     required_materials = _required_material_slots(request)
+    if required_materials > 0 and candidate_count <= 0:
+        violations.append("source material account has no usable materials")
     if dedupe_scope == "request" and candidate_count < required_materials:
         violations.append(
             f"source material account has {candidate_count} usable materials, expected {required_materials} for dedupe_scope=request"

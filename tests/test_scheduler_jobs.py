@@ -274,13 +274,13 @@ def test_scheduler_registry_keeps_daily_jobs_and_restore_due_job():
     }
     assert source_material_rollup["script"]["command"] == [
         "python3",
-        "scripts/run_source_material_rollup_rebuild.py",
-        "--config",
-        "configs/runtime.example.json",
-        "--request",
-        "configs/product-source-material-rollup.example.json",
+        "scripts/run_product_automation_job.py",
+        "--job",
+        "source_material_rollup",
+        "--target-date",
+        "yesterday",
     ]
-    assert source_material_rollup["result_contract"]["workflow"] == "product_source_material_rollup"
+    assert source_material_rollup["result_contract"]["workflow"] == "product_automation_job_source_material_rollup"
     assert source_material_rollup["result_contract"]["must_equal"] == {
         "execution_enabled": False,
         "external_api_calls": 0,

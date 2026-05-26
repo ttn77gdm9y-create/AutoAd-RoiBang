@@ -137,11 +137,11 @@
       "enabled": true,
       "schedule": {"type": "cron", "expr": "30 5 * * *", "tz": "Asia/Shanghai"},
       "script": {
-        "command": ["python3", "scripts/run_source_material_rollup_rebuild.py", "--config", "configs/runtime.example.json", "--request", "configs/product-source-material-rollup.example.json"],
+        "command": ["python3", "scripts/run_product_automation_job.py", "--job", "source_material_rollup", "--target-date", "yesterday"],
         "mode": "foreground"
       },
-      "policy": {"config": "configs/runtime.example.json", "request": "configs/product-source-material-rollup.example.json", "readonly": true, "source": "material_daily_metrics_video_only"},
-      "result_contract": {"workflow": "product_source_material_rollup", "artifact_dir": "data/runs/product_source_material_rollup", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "summary", "rollups"], "must_equal": {"execution_enabled": false, "external_api_calls": 0}},
+      "policy": {"job": "source_material_rollup", "products_dir": "configs/products", "target_date": "yesterday", "readonly": true, "source": "material_daily_metrics_video_only"},
+      "result_contract": {"workflow": "product_automation_job_source_material_rollup", "artifact_dir": "data/runs/product_automation_job_source_material_rollup", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "summary", "results"], "must_equal": {"execution_enabled": false, "external_api_calls": 0}},
       "delivery": {"channel": "none"}
     },
     {

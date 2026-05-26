@@ -502,7 +502,7 @@ def run_create_mode_request(
         "ok": plan["ok"],
         "workflow": "create_mode",
         "phase": "phase1",
-        "status": "planned",
+        "status": "planned" if plan["ok"] else "blocked",
         "execution_enabled": False,
         "external_api_calls": 0,
         "mode_key": mode_config["mode_key"],

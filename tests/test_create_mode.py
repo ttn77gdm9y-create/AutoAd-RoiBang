@@ -903,6 +903,8 @@ def test_create_mode_excludes_fixture_source_and_fake_video_ids(tmp_path: Path):
         )
         conn.execute("UPDATE product_source_materials SET video_id = 'v001' WHERE material_id = 'm-002'")
         conn.execute("UPDATE product_source_materials SET material_type = 'title' WHERE material_id = 'm-003'")
+        conn.execute("UPDATE product_source_materials SET cost_lookback = 2000, score = 2000 WHERE material_id >= 'm-005'")
+        conn.execute("UPDATE product_source_material_metric_rollups SET stat_cost = 2000 WHERE material_id >= 'm-005'")
         conn.execute(
             """
             INSERT INTO source_material_bad_videos (
@@ -938,6 +940,34 @@ def test_create_mode_excludes_fixture_source_and_fake_video_ids(tmp_path: Path):
     assert "m-003" not in material_ids
     assert "m-004" not in material_ids
     assert all(material["source_video_id"] != "v001" for material in unit["materials"])
+
+
+def test_create_mode_blocks_when_material_selection_has_no_usable_candidates(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_source_materials(db_path, count=8)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE product_source_materials SET cost_lookback = 0, score = 0")
+        conn.execute("UPDATE product_source_material_metric_rollups SET stat_cost = 0")
+
+    result = run_create_mode_request(
+        {
+            "create_mode": {
+                "mode_key": "wx_pay_male_recent_scale",
+                "target_accounts": ["acc-1"],
+                "target_date": "2026-05-13",
+                "owner": "郭靖",
+            }
+        },
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        policy={"create_strategy_plan": _policy()},
+        template_catalog_path=Path("configs/create-templates/wx-mini-game.json"),
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "blocked"
+    assert result["summary"]["source_material_count"] == 0
+    assert result["blocking_reasons"] == ["source material account has no usable materials"]
 
 
 def test_create_mode_treats_blank_source_material_review_status_as_usable(tmp_path: Path):
