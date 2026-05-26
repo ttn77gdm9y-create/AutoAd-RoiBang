@@ -378,6 +378,19 @@ def test_build_create_plan_command_splits_accounts_and_never_executes():
     assert "--yes" not in command
 
 
+def test_build_create_plan_command_rejects_empty_accounts():
+    try:
+        build_create_plan_command(
+            mode="每付通投素材不限",
+            accounts=" \n ",
+            owner="郭靖",
+        )
+    except ValueError as exc:
+        assert "账户 ID" in str(exc)
+    else:
+        raise AssertionError("expected empty accounts to be rejected")
+
+
 def test_build_create_plan_command_can_pin_product_template_catalog():
     command = build_create_plan_command(
         mode="每付通投近期放量",

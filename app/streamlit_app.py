@@ -828,25 +828,34 @@ def _create(project_root: Path, config: dict[str, Any], timeout_seconds: int) ->
         _mode_draft_editor(mode_detail, drafts_dir=drafts_dir, mode_dir=mode_dir)
         _base_template_editor(mode_detail, template_catalog=template_catalog, template_dir=template_dir)
     accounts = st.text_area("账户 ID，多个账户用逗号或换行分隔", height=100, key="create_accounts")
+    account_count = len(split_account_ids(accounts))
+    if account_count:
+        st.caption(f"当前识别到账户 {account_count} 个。")
+    else:
+        st.warning("请先填写至少一个账户 ID，再生成创建计划。")
     owner = st.text_input("负责人", value=str(config.get("default_owner") or "郭靖"), key="create_owner")
     target_date = st.text_input("目标日期，可空", value="", key="create_target_date")
     cols = st.columns(2)
     run_cpa_bid = cols[0].text_input("本次项目出价，空为不写", value="", key="create_run_cpa_bid")
     run_roi_coefficient = cols[1].text_input("本次 ROI 系数，空为不写", value="", key="create_run_roi")
-    if st.button("生成创建计划", type="primary"):
+    if st.button("生成创建计划", type="primary", disabled=account_count == 0):
         mode = selected_mode["mode_key"]
-        command = build_create_plan_command(
-            mode=mode,
-            accounts=accounts,
-            owner=owner,
-            target_date=target_date,
-            product_key=selected_mode.get("product_key", ""),
-            template_catalog=str(template_catalog_path.relative_to(PROJECT_ROOT))
-            if template_catalog_path.is_relative_to(PROJECT_ROOT)
-            else str(template_catalog_path),
-            cpa_bid=run_cpa_bid,
-            roi_coefficient=run_roi_coefficient,
-        )
+        try:
+            command = build_create_plan_command(
+                mode=mode,
+                accounts=accounts,
+                owner=owner,
+                target_date=target_date,
+                product_key=selected_mode.get("product_key", ""),
+                template_catalog=str(template_catalog_path.relative_to(PROJECT_ROOT))
+                if template_catalog_path.is_relative_to(PROJECT_ROOT)
+                else str(template_catalog_path),
+                cpa_bid=run_cpa_bid,
+                roi_coefficient=run_roi_coefficient,
+            )
+        except ValueError as exc:
+            st.error(str(exc))
+            return
         result = run_fixed_script(command, cwd=project_root, timeout_seconds=timeout_seconds)
         st.cache_data.clear()
         if result.ok:

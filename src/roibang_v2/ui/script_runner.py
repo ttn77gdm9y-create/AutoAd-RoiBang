@@ -119,6 +119,9 @@ def build_create_plan_command(
     cpa_bid: str = "",
     roi_coefficient: str = "",
 ) -> list[str]:
+    account_ids = _split_accounts(accounts)
+    if not account_ids:
+        raise ValueError("生成创建计划需要至少填写一个账户 ID。")
     command = [
         _python(),
         "scripts/run_create_mode.py",
@@ -141,7 +144,7 @@ def build_create_plan_command(
         command.extend(["--cpa-bid", cpa_bid.strip()])
     if roi_coefficient.strip():
         command.extend(["--roi-coefficient", roi_coefficient.strip()])
-    for account in _split_accounts(accounts):
+    for account in account_ids:
         command.extend(["--account", account])
     return command
 
