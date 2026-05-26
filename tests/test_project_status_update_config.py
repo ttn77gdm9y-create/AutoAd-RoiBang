@@ -474,10 +474,12 @@ def test_run_project_status_update_config_writes_project_update_json(tmp_path: P
     assert saved["actions"][0]["action_type"] == "status_update"
 
 
-def test_project_status_update_config_cli_requires_config_for_live_lookup(tmp_path: Path, capsys):
+def test_project_status_update_config_cli_uses_project_update_runtime_by_default():
     module = _load_script()
 
-    exit_code = module.run_from_args(
+    parser = module._build_parser()
+
+    args = parser.parse_args(
         [
             "--project-update-id",
             "pause-account-001",
@@ -486,17 +488,23 @@ def test_project_status_update_config_cli_requires_config_for_live_lookup(tmp_pa
             "--opt-status",
             "DISABLE",
             "--output",
-            str(tmp_path / "pause.local.json"),
-            "--runs-dir",
-            str(tmp_path / "runs"),
+            "pause.local.json",
         ]
     )
 
-    output = json.loads(capsys.readouterr().out)
-    assert exit_code == 1
-    assert output["workflow"] == "project_status_update_config"
-    assert output["status"] == "blocked"
-    assert output["blocking_reasons"] == ["project status update config requires --config for live project lookup"]
+    assert args.config == "configs/project-update-execute.local.json"
+
+
+def test_project_status_update_config_rejects_create_live_runtime_path():
+    module = _load_script()
+
+    payload = module._validate_entry_config_path("configs/runtime.create-live.local.json")
+
+    assert payload["ok"] is False
+    assert payload["status"] == "blocked"
+    assert payload["blocking_reasons"] == [
+        "项目管理生成配置必须使用 configs/project-update-execute.local.json，不能使用 configs/runtime.create-live.local.json"
+    ]
 
 
 def test_project_status_update_config_cli_reads_nested_runner_transport_config():
@@ -527,10 +535,12 @@ def test_project_realtime_filter_cli_parses_metric_filter():
     }
 
 
-def test_project_realtime_filter_cli_wrapper_defaults_to_delete_project(tmp_path: Path, capsys):
+def test_project_realtime_filter_cli_wrapper_uses_project_update_runtime_by_default():
     module = _load_script("run_project_realtime_filter_config.py")
 
-    exit_code = module.run_from_args(
+    parser = module._build_parser()
+
+    args = parser.parse_args(
         [
             "--project-update-id",
             "delete-low-cost",
@@ -541,13 +551,9 @@ def test_project_realtime_filter_cli_wrapper_defaults_to_delete_project(tmp_path
             "--metric-filter",
             "stat_cost:lt:100",
             "--output",
-            str(tmp_path / "delete.local.json"),
-            "--runs-dir",
-            str(tmp_path / "runs"),
+            "delete.local.json",
         ]
     )
 
-    output = json.loads(capsys.readouterr().out)
-    assert exit_code == 1
-    assert output["workflow"] == "project_management_update_config"
-    assert output["blocking_reasons"] == ["project management update config requires --config for live project lookup"]
+    assert args.config == "configs/project-update-execute.local.json"
+    assert args.action_type == "delete_project"

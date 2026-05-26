@@ -73,14 +73,24 @@ def _latest_scheduler_result(repo_root: Path, job_id: str) -> dict[str, Any]:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         return {"exists": True, "path": str(path), "ok": False, "violations": [f"invalid scheduler JSON: {exc.msg}"]}
+    script = payload.get("script") if isinstance(payload.get("script"), dict) else {}
+    command = script.get("command") if isinstance(script.get("command"), list) else []
     return {
         "exists": True,
         "path": str(path),
         "ok": bool(payload.get("ok")),
         "started_at": str(payload.get("started_at") or ""),
         "finished_at": str(payload.get("finished_at") or ""),
+        "script_command": [str(item) for item in command],
         "violations": [str(item) for item in payload.get("violations", [])],
     }
+
+
+def _registry_script_command(registry: dict[str, Any], job_id: str) -> list[str]:
+    job = _find_registry_job(registry, job_id)
+    script = job.get("script") if isinstance(job.get("script"), dict) else {}
+    command = script.get("command") if isinstance(script.get("command"), list) else []
+    return [str(item) for item in command]
 
 
 def _scalar(conn: sqlite3.Connection, query: str, params: tuple[Any, ...] = ()) -> Any:
@@ -335,9 +345,100 @@ def _data_check(
 
 def _job_contract(registry: dict[str, Any], job_id: str, repo_root: Path) -> dict[str, Any]:
     try:
-        return validate_artifact_contract(registry, job_id=job_id, repo_root=repo_root)
+        result = validate_artifact_contract(registry, job_id=job_id, repo_root=repo_root)
     except Exception as exc:  # status report must report, not crash, on missing stale jobs
+        legacy = _legacy_product_automation_contract(registry, job_id, repo_root)
+        if legacy:
+            return legacy
         return {"ok": False, "job_id": job_id, "artifact_path": "", "violations": [str(exc)], "missing_fields": []}
+    if not bool(result.get("ok")):
+        legacy = _legacy_product_automation_contract(registry, job_id, repo_root)
+        if legacy:
+            return legacy
+    return result
+
+
+def _find_registry_job(registry: dict[str, Any], job_id: str) -> dict[str, Any]:
+    for job in registry.get("jobs", []):
+        if isinstance(job, dict) and str(job.get("id") or "") == job_id:
+            return job
+    return {}
+
+
+def _legacy_product_automation_contract(registry: dict[str, Any], job_id: str, repo_root: Path) -> dict[str, Any]:
+    job = _find_registry_job(registry, job_id)
+    contract = job.get("result_contract") if isinstance(job.get("result_contract"), dict) else {}
+    workflow = str(contract.get("workflow") or "")
+    prefix = "product_automation_job_"
+    if not workflow.startswith(prefix):
+        return {}
+    expected_job = workflow.removeprefix(prefix)
+    legacy_dir = repo_root / "data/runs/product_automation_job"
+    for path in sorted(legacy_dir.glob("*.json"), reverse=True):
+        artifact = _load_artifact(str(path))
+        summary = artifact.get("summary") if isinstance(artifact.get("summary"), dict) else {}
+        if str(summary.get("job") or "") != expected_job:
+            continue
+        required = [str(field) for field in contract.get("must_include", []) if str(field) != "workflow"]
+        missing_fields = [field for field in required if field not in artifact]
+        violations = []
+        if missing_fields:
+            violations.append(f"missing required fields: {', '.join(missing_fields)}")
+        must_equal = contract.get("must_equal") if isinstance(contract.get("must_equal"), dict) else {}
+        for field, expected in must_equal.items():
+            if str(field) == "workflow":
+                continue
+            actual = artifact.get(str(field))
+            if actual != expected:
+                violations.append(f"field {field} must equal {expected!r}, got {actual!r}")
+        return {
+            "ok": not violations,
+            "job_id": job_id,
+            "workflow": workflow,
+            "artifact_path": str(path),
+            "missing_fields": missing_fields,
+            "violations": violations,
+            "legacy_product_automation_artifact": True,
+        }
+    return {}
+
+
+def _load_artifact(path_text: str) -> dict[str, Any]:
+    if not path_text:
+        return {}
+    path = Path(path_text)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _product_results_from_artifact(artifact: dict[str, Any]) -> list[dict[str, Any]]:
+    workflow = str(artifact.get("workflow") or "")
+    summary_root = artifact.get("summary") if isinstance(artifact.get("summary"), dict) else {}
+    if not workflow.startswith("product_automation_job_") and workflow != "product_automation_job":
+        return []
+    rows = artifact.get("results") if isinstance(artifact.get("results"), list) else []
+    product_results: list[dict[str, Any]] = []
+    for row in [item for item in rows if isinstance(item, dict)]:
+        parsed = row.get("parsed_stdout") if isinstance(row.get("parsed_stdout"), dict) else {}
+        summary = parsed.get("summary") if isinstance(parsed.get("summary"), dict) else {}
+        if not summary and isinstance(row.get("summary"), dict):
+            summary = dict(row["summary"])
+        product_results.append(
+            {
+                "product": str(row.get("product") or row.get("product_key") or "未知产品"),
+                "product_key": str(row.get("product_key") or ""),
+                "job": str(row.get("job") or summary_root.get("job") or ""),
+                "ok": bool(row.get("ok", True)),
+                "return_code": row.get("return_code", ""),
+                "status": str(parsed.get("status") or ""),
+                "summary": summary,
+                "artifact_path": str(parsed.get("artifact_path") or ""),
+            }
+        )
+    return product_results
 
 
 def _job_status(
@@ -353,6 +454,7 @@ def _job_status(
     job_id = str(job_cfg["job_id"])
     launchctl = launchctl_status_reader(job_id)
     artifact_contract = _job_contract(registry, job_id, repo_root)
+    contract_artifact = _load_artifact(str(artifact_contract.get("artifact_path") or ""))
     scheduler_result = _latest_scheduler_result(repo_root, job_id)
     data_check = _data_check(
         conn,
@@ -366,6 +468,10 @@ def _job_status(
         issues.append("launchd 未加载")
     if str(launchctl.get("last_exit_code") or "") not in {"", "0", "(never exited)"}:
         issues.append(f"launchd 上次退出码 {launchctl.get('last_exit_code')}")
+    expected_command = _registry_script_command(registry, job_id)
+    actual_command = scheduler_result.get("script_command") if isinstance(scheduler_result.get("script_command"), list) else []
+    if expected_command and actual_command and [str(item) for item in actual_command] != expected_command:
+        issues.append("定时任务命令与注册表不一致")
     if not bool(artifact_contract.get("ok")):
         issues.extend(str(item) for item in artifact_contract.get("violations", []))
     if str(data_check.get("status")) != "ok":
@@ -379,6 +485,7 @@ def _job_status(
         "scheduler_result": scheduler_result,
         "artifact_contract": artifact_contract,
         "data_check": data_check,
+        "product_results": _product_results_from_artifact(contract_artifact),
     }
 
 
@@ -420,6 +527,52 @@ def _format_data_line(data_check: dict[str, Any]) -> str:
     return f"数据到 {data_check.get('latest_date') or '无'}"
 
 
+def _format_product_result_line(result: dict[str, Any]) -> str:
+    product = str(result.get("product") or "未知产品")
+    job = str(result.get("job") or "")
+    summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+    status = "完成" if bool(result.get("ok", True)) else "需要处理"
+    if job == "material_daily_sync":
+        return (
+            f"{product}：{status}素材入库，活跃账户 {summary.get('active_account_count', 0)} 个，"
+            f"导入素材行 {summary.get('material_rows_imported', 0)}，"
+            f"接口调用 {summary.get('material_fetch_transport_calls', 0)} 次"
+        )
+    if job == "operation_log_sync":
+        return (
+            f"{product}：{status}操作日志同步，计划账户 {summary.get('planned_request_count', 0)} 个，"
+            f"导入日志 {summary.get('operation_logs_imported', 0)} 条，"
+            f"接口调用 {summary.get('transport_calls', summary.get('external_api_calls', 0))} 次"
+        )
+    if job == "daily_report_sync":
+        return (
+            f"{product}：{status}每日报表同步，发现账户 {summary.get('active_accounts_discovered', 0)} 个，"
+            f"写入快照 {summary.get('snapshots_written', 0)} 条，"
+            f"接口调用 {summary.get('transport_calls', summary.get('external_api_calls', 0))} 次"
+        )
+    if job == "source_material_auto_push":
+        return (
+            f"{product}：{status}源素材自动补材，源素材账户 {summary.get('source_advertiser_id') or '无'}，"
+            f"新增素材 {summary.get('new_material_count', 0)} 个，"
+            f"已推视频 {summary.get('pushed_video_count', 0)} 个，"
+            f"失败批次 {summary.get('failed_batch_count', 0)}"
+        )
+    if job == "source_material_preload":
+        return (
+            f"{product}：{status}源素材预推送，目标账户 {summary.get('target_account_count', 0)} 个，"
+            f"计划推送 {summary.get('planned_bind_material_count', 0)} 条，"
+            f"已推 {summary.get('executed_bind_material_count', 0)} 条，"
+            f"失败批次 {summary.get('failed_batch_count', 0)}"
+        )
+    if job == "delivery_patrol":
+        return (
+            f"{product}：{status}投放巡检，账户 {summary.get('account_count', summary.get('accounts', 0))} 个，"
+            f"项目 {summary.get('project_count', summary.get('projects', 0))} 个，"
+            f"单元 {summary.get('promotion_count', summary.get('promotions', 0))} 个"
+        )
+    return f"{product}：{status}，任务 {job or '未知'}"
+
+
 def _format_message(project_name: str, report_date: str, expected_date: str, jobs: list[dict[str, Any]]) -> str:
     ok_count = sum(1 for job in jobs if job["status"] == "ok")
     overall = "正常" if ok_count == len(jobs) else "需要处理"
@@ -434,6 +587,9 @@ def _format_message(project_name: str, report_date: str, expected_date: str, job
         status_text = "正常" if job["status"] == "ok" else "需要处理"
         lines.append(f"{job['display_name']}：{status_text}")
         lines.append(f"- {_format_data_line(job['data_check'])}")
+        product_results = job.get("product_results") if isinstance(job.get("product_results"), list) else []
+        for product_result in [item for item in product_results if isinstance(item, dict)]:
+            lines.append(f"- {_format_product_result_line(product_result)}")
         issues = job.get("issues") or []
         if issues:
             lines.append(f"- 问题：{'；'.join(str(item) for item in issues[:3])}")

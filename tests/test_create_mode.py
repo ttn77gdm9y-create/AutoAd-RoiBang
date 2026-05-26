@@ -124,6 +124,346 @@ def test_create_mode_builds_scale_create_request_from_mode_config():
     assert request["initial_status"] == {"project_operation": "ENABLE", "unit_operation": "ENABLE"}
 
 
+def test_create_mode_applies_product_config_to_foundation_fields(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_source_materials(db_path, count=8)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE product_source_materials SET product = '新产品', source_advertiser_id = 'source-acc'")
+        conn.execute(
+            "UPDATE product_source_material_metric_rollups SET product = '新产品', source_advertiser_id = 'source-acc'"
+        )
+    product_path = tmp_path / "product.json"
+    product_path.write_text(
+        json.dumps(
+            {
+                "product_key": "new_product_wechat",
+                "product": "新产品",
+                "platform": "WECHAT_GAME",
+                "source_advertiser_id": "source-acc",
+                "organization_id": "org-1",
+                "allowed_target_accounts_path": "configs/allowed-create-accounts.local.json",
+                "account_remark_pattern": "新产品-微小-郭靖",
+                "foundation": {
+                    "effective_touch_url": "https://example.com/touch?advertiser_id=__ADVERTISER_ID__",
+                    "anchor_id": "anchor-1",
+                    "anchor_type": "APP_GAME",
+                    "anchor_related_type": "SELECT",
+                    "landing_url": "https://example.com/landing",
+                    "product_image_id": "product-image-1",
+                    "fixed_video_cover_id": "cover-1",
+                    "micro_app_instance_id": "micro-app-1",
+                    "micro_promotion_type": "WECHAT_GAME",
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    mode_path = tmp_path / "mode.json"
+    mode_path.write_text(
+        json.dumps(
+            {
+                "mode_key": "new_product_scale",
+                "display_name": "新产品放量",
+                "product_key": "new_product_wechat",
+                "template_key": "wx_pay_general",
+                "template_name_suffix": "历史放量",
+                "defaults": {"daily_budget": 88888, "cpa_bid": 103, "project_count": 1, "units_per_project": 1},
+                "material_requirements": {
+                    "material_type": "video",
+                    "materials_per_unit": 5,
+                    "dedupe_scope": "max_account_overlap",
+                    "max_cross_account_overlap_ratio": 1.0,
+                    "cross_account_reuse_mode": "scale_top_materials",
+                    "allow_reuse_across_accounts": True,
+                    "on_insufficient": "allow_reuse",
+                },
+                "material_selection": {"lookback_days": 30, "selection_type": "high_spend", "min_stat_cost": 0},
+                "initial_status": {"project_operation": "ENABLE", "unit_operation": "ENABLE"},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_create_mode_request(
+        {
+            "create_mode": {
+                "mode_config_path": str(mode_path),
+                "product_config_path": str(product_path),
+                "target_accounts": ["acc-1"],
+                "target_date": "2026-05-13",
+                "owner": "郭靖",
+            }
+        },
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        policy={"create_strategy_plan": _policy()},
+        template_catalog_path=Path("configs/create-templates/wx-mini-game.json"),
+    )
+
+    assert result["ok"] is True
+    create_request = result["create_request"]
+    assert create_request["product"] == "新产品"
+    assert create_request["platform"] == "WECHAT_GAME"
+    assert create_request["source_advertiser_id"] == "source-acc"
+    assert create_request["organization_id"] == "org-1"
+    assert create_request["field_defaults"]["action_track_url"] == "https://example.com/touch?advertiser_id=__ADVERTISER_ID__"
+    template_parameters = create_request["template_parameters"]
+    assert template_parameters["anchor_id"] == "anchor-1"
+    assert template_parameters["landing_url"] == "https://example.com/landing"
+    assert template_parameters["product_image_id"] == "product-image-1"
+    assert template_parameters["fixed_video_cover_id"] == "cover-1"
+    snapshot = create_request["product_config_snapshot"]
+    assert snapshot["product_key"] == "new_product_wechat"
+    assert snapshot["allowed_target_accounts_path"] == "configs/allowed-create-accounts.local.json"
+    assert snapshot["foundation"]["anchor_id"] == "anchor-1"
+
+
+def test_create_mode_can_use_product_specific_template_catalog(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_source_materials(db_path, count=8)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE product_source_materials SET product = '点点英雄', source_advertiser_id = 'source-acc'")
+        conn.execute(
+            "UPDATE product_source_material_metric_rollups SET product = '点点英雄', source_advertiser_id = 'source-acc'"
+        )
+    product_path = tmp_path / "diandian-product.json"
+    product_path.write_text(
+        json.dumps(
+            {
+                "product_key": "diandian-hero",
+                "product": "点点英雄",
+                "platform": "WECHAT_GAME",
+                "source_advertiser_id": "source-acc",
+                "organization_id": "org-1",
+                "allowed_target_accounts_path": "configs/allowed-create-accounts.diandian-hero.local.json",
+                "account_remark_pattern": "点点英雄-微小-郭靖",
+                "foundation": {
+                    "effective_touch_url": "https://example.com/dd-touch",
+                    "anchor_id": "dd-anchor",
+                    "anchor_type": "APP_GAME",
+                    "anchor_related_type": "SELECT",
+                    "landing_url": "https://example.com/dd-landing",
+                    "product_image_id": "dd-image",
+                    "fixed_video_cover_id": "dd-cover",
+                    "micro_app_instance_id": "dd-mini",
+                    "micro_promotion_type": "WECHAT_GAME",
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    mode_path = tmp_path / "mode.json"
+    mode_path.write_text(
+        json.dumps(
+            {
+                "mode_key": "wx_pay_general_scale",
+                "display_name": "点点英雄每付通投历史放量",
+                "product_key": "diandian-hero",
+                "template_key": "wx_pay_general",
+                "template_name_suffix": "历史放量",
+                "defaults": {"daily_budget": 88888, "cpa_bid": 103, "project_count": 1, "units_per_project": 1},
+                "material_requirements": {"material_type": "video", "materials_per_unit": 5},
+                "material_selection": {"lookback_days": 30, "selection_type": "high_spend", "min_stat_cost": 0},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    template_path = tmp_path / "diandian-template.json"
+    template_path.write_text(
+        json.dumps(
+            {
+                "product_key": "diandian-hero",
+                "product": "点点英雄",
+                "templates": {
+                    "wx_pay_general": {
+                        "project_template_name": "点点每付通投",
+                        "unit_template_name": "点点每付通投",
+                        "title_pool": ["点点专属文案"],
+                    }
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_create_mode_request(
+        {
+            "create_mode": {
+                "mode_config_path": str(mode_path),
+                "product_config_path": str(product_path),
+                "template_catalog_path": str(template_path),
+                "target_accounts": ["acc-1"],
+                "target_date": "2026-05-25",
+                "owner": "郭靖",
+            }
+        },
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        policy={"create_strategy_plan": _policy()},
+    )
+
+    assert result["ok"] is True
+    assert result["create_request"]["project_template_name"] == "点点每付通投历史放量"
+    assert result["create_request"]["template_parameters"]["title_pool"] == ["点点专属文案"]
+    assert result["summary"]["template_catalog_path"] == str(template_path)
+
+
+def test_create_mode_random_materials_ignores_lookback_constraints():
+    request = build_create_mode_request(
+        {
+            "mode_key": "wx_pay_general_random_materials",
+            "target_accounts": ["acc-1"],
+            "target_date": "2026-05-25",
+            "owner": "郭靖",
+        },
+        mode_config={
+            "mode_key": "wx_pay_general_random_materials",
+            "display_name": "点点英雄每付通投素材不限",
+            "product_key": "diandian-hero",
+            "template_key": "wx_pay_general",
+            "defaults": {"daily_budget": 88888, "project_count": 1, "units_per_project": 1},
+            "material_selection": {
+                "selection_type": "random_materials",
+                "lookback_days": 30,
+                "first_seen_days": 7,
+                "min_create_age_days": 3,
+                "min_stat_cost": 200,
+                "sort_by": "stat_cost_desc",
+                "random_shuffle": False,
+            },
+        },
+        template_catalog={"templates": {"wx_pay_general": {"project_template_name": "微小每付通投"}}},
+    )
+
+    selection = request["material_selection"]
+    assert selection["selection_type"] == "random_materials"
+    assert selection["min_stat_cost"] == 0
+    assert selection["sort_by"] == "random_stable"
+    assert selection["random_shuffle"] is True
+    assert "lookback_days" not in selection
+    assert "first_seen_days" not in selection
+    assert "min_create_age_days" not in selection
+
+
+def test_create_mode_blocks_incomplete_product_config(tmp_path: Path):
+    product_path = tmp_path / "bad-product.json"
+    product_path.write_text(
+        json.dumps(
+            {
+                "product_key": "bad_product",
+                "product": "坏配置",
+                "platform": "WECHAT_GAME",
+                "source_advertiser_id": "source-acc",
+                "organization_id": "org-1",
+                "foundation": {"anchor_id": "anchor-1"},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    mode_path = tmp_path / "mode.json"
+    mode_path.write_text(
+        json.dumps(
+            {
+                "mode_key": "bad_product_scale",
+                "product_key": "bad_product",
+                "template_key": "wx_pay_general",
+                "defaults": {"daily_budget": 88888, "cpa_bid": 103, "project_count": 1, "units_per_project": 1},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        run_create_mode_request(
+            {
+                "create_mode": {
+                    "mode_config_path": str(mode_path),
+                    "product_config_path": str(product_path),
+                    "target_accounts": ["acc-1"],
+                    "target_date": "2026-05-13",
+                    "owner": "郭靖",
+                }
+            },
+            db_path=tmp_path / "roibang.sqlite3",
+            runs_dir=tmp_path / "runs",
+            policy={"create_strategy_plan": _policy()},
+            template_catalog_path=Path("configs/create-templates/wx-mini-game.json"),
+        )
+    except ValueError as exc:
+        assert "product config missing required fields" in str(exc)
+        assert "foundation.effective_touch_url" in str(exc)
+        assert "foundation.landing_url" in str(exc)
+    else:
+        raise AssertionError("incomplete product config must be blocked")
+
+
+def test_create_mode_requires_product_specific_mode_when_product_key_is_not_yzt(tmp_path: Path):
+    mode_root = tmp_path / "create-modes"
+    mode_root.mkdir()
+    (mode_root / "wx_pay_general_scale.example.json").write_text(
+        json.dumps(
+            {
+                "mode_key": "wx_pay_general_scale",
+                "display_name": "勇者突进每付通投历史放量",
+                "product_key": "yzt-wechat-mini-game",
+                "template_key": "wx_pay_general",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        load_create_mode_config(
+            {
+                "product_key": "diandian-hero",
+                "mode": "每付通投历史放量",
+                "mode_config_dir": str(mode_root),
+            }
+        )
+    except ValueError as exc:
+        assert "product-specific mode config is required" in str(exc)
+        assert "diandian-hero" in str(exc)
+    else:
+        raise AssertionError("new product must not silently reuse legacy create mode")
+
+
+def test_create_mode_loads_product_specific_mode_when_present(tmp_path: Path):
+    mode_root = tmp_path / "create-modes"
+    product_mode_dir = mode_root / "diandian-hero"
+    product_mode_dir.mkdir(parents=True)
+    (product_mode_dir / "wx_pay_general_scale.local.json").write_text(
+        json.dumps(
+            {
+                "mode_key": "wx_pay_general_scale",
+                "display_name": "点点英雄每付通投历史放量",
+                "product_key": "diandian-hero",
+                "template_key": "wx_pay_general",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    mode = load_create_mode_config(
+        {
+            "product_key": "diandian-hero",
+            "mode": "每付通投历史放量",
+            "mode_config_dir": str(mode_root),
+        }
+    )
+
+    assert mode["product_key"] == "diandian-hero"
+    assert mode["display_name"] == "点点英雄每付通投历史放量"
+
+
 def test_create_mode_plan_id_is_unique_per_batch_generated_at():
     mode_config = json.loads(Path("configs/create-modes/wx_pay_general_test_new.example.json").read_text(encoding="utf-8"))
     template_catalog = json.loads(Path("configs/create-templates/wx-mini-game.json").read_text(encoding="utf-8"))
@@ -152,6 +492,71 @@ def test_create_mode_plan_id_is_unique_per_batch_generated_at():
     assert second["request_id"].endswith(second["batch_code"])
     assert first["plan_id"] == f"create-plan-{first['request_id']}"
     assert first["plan_id"] != second["plan_id"]
+
+
+def test_create_mode_omits_bid_and_roi_when_template_does_not_fix_them():
+    mode_config = {
+        "mode_key": "wx_pay_general_random_materials",
+        "display_name": "点点英雄每付通投素材不限",
+        "product": "点点英雄",
+        "product_key": "diandian-hero",
+        "platform": "WECHAT_GAME",
+        "template_key": "wx_pay_general",
+        "defaults": {"daily_budget": 88888, "project_count": 5, "units_per_project": 1},
+        "material_requirements": {"material_type": "video", "materials_per_unit": 5},
+        "material_selection": {"selection_type": "random_materials", "min_stat_cost": 0, "random_shuffle": True},
+    }
+    template_catalog = {
+        "templates": {
+            "wx_pay_general": {
+                "project_template_name": "微小每付通投",
+                "project_fixed": {"aigc_dynamic_creative_switch": "OFF"},
+            }
+        }
+    }
+
+    request = build_create_mode_request(
+        {"target_accounts": ["acc-1"], "target_date": "2026-05-25", "owner": "郭靖"},
+        mode_config=mode_config,
+        template_catalog=template_catalog,
+    )
+
+    assert "cpa_bid" not in request["field_defaults"]
+    assert "roi_goal" not in request["field_defaults"]
+    assert request["field_defaults"]["aigc_dynamic_creative_switch"] == "OFF"
+    assert request["material_selection"]["selection_type"] == "random_materials"
+    assert request["material_selection"]["min_stat_cost"] == 0
+
+
+def test_create_mode_allows_runtime_bid_and_roi_without_writing_template_defaults():
+    mode_config = {
+        "mode_key": "wx_7r_general_random_materials",
+        "display_name": "点点英雄7R通投素材不限",
+        "product": "点点英雄",
+        "product_key": "diandian-hero",
+        "platform": "WECHAT_GAME",
+        "template_key": "wx_7r_general",
+        "defaults": {"daily_budget": 88888, "project_count": 5, "units_per_project": 1},
+        "material_requirements": {"material_type": "video", "materials_per_unit": 5},
+        "material_selection": {"selection_type": "random_materials", "min_stat_cost": 0, "random_shuffle": True},
+    }
+    template_catalog = {"templates": {"wx_7r_general": {"project_template_name": "微小每付7R通投"}}}
+
+    request = build_create_mode_request(
+        {
+            "target_accounts": ["acc-1"],
+            "target_date": "2026-05-25",
+            "owner": "郭靖",
+            "cpa_bid": 108,
+            "roi_coefficient": 0.41,
+        },
+        mode_config=mode_config,
+        template_catalog=template_catalog,
+    )
+
+    assert mode_config["defaults"] == {"daily_budget": 88888, "project_count": 5, "units_per_project": 1}
+    assert request["field_defaults"]["cpa_bid"] == 108
+    assert request["field_defaults"]["roi_goal"] == 0.41
 
 
 def test_bundled_create_modes_cover_7r_and_pay_scale_and_test_new():
@@ -210,7 +615,13 @@ def test_bundled_create_modes_cover_7r_and_pay_scale_and_test_new():
             assert request["material_selection"]["min_create_age_days"] == 7
         assert request["material_requirements"]["dedupe_scope"] == "max_account_overlap"
         assert request["material_requirements"]["allow_reuse_across_accounts"] is True
+        if mode_key.endswith("_scale") or mode_key.endswith("_recent_scale"):
+            assert request["material_requirements"]["max_cross_account_overlap_ratio"] == 1.0
+            assert request["material_requirements"]["cross_account_reuse_mode"] == "scale_top_materials"
         assert request["field_defaults"]["action_track_url"].startswith("https://backend.gravity-engine.com/")
+        assert request["product_key"] == "yzt-wechat-mini-game"
+        assert request["template_parameters"]["anchor_id"] == "7631055849892465418"
+        assert request["template_parameters"]["landing_url"] == "https://www.chengzijianzhan.com/tetris/page/7605144110390951986"
         assert request["template_parameters"]["unit_creative_selection"] == {
             "title_strategy": "deterministic_shuffle_per_unit",
             "cta_min_count": 2,
@@ -432,6 +843,54 @@ def test_create_mode_reuse_shortage_rotates_materials_in_same_account(tmp_path: 
     ]
     assert len(unit_material_sets) == 5
     assert len(set(unit_material_sets)) > 2
+
+
+def test_create_mode_scale_reuses_top_spend_materials_across_accounts(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_source_materials(db_path, count=40)
+    with sqlite3.connect(db_path) as conn:
+        for index in range(1, 41):
+            stat_cost = 100000 - index
+            conn.execute(
+                "UPDATE product_source_materials SET cost_lookback = ?, score = ? WHERE material_id = ?",
+                (stat_cost, stat_cost, f"m-{index:03d}"),
+            )
+            conn.execute(
+                "UPDATE product_source_material_metric_rollups SET stat_cost = ? WHERE material_id = ?",
+                (stat_cost, f"m-{index:03d}"),
+            )
+    mode_config = json.loads(Path("configs/create-modes/wx_pay_general_scale.example.json").read_text(encoding="utf-8"))
+
+    result = run_create_mode_request(
+        {
+            "create_mode": {
+                "mode_key": "wx_pay_general_scale",
+                "target_accounts": ["acc-1", "acc-2", "acc-3"],
+                "target_date": "2026-05-13",
+                "owner": "郭靖",
+                "batch_generated_at": "2026-05-13T10:00:00+00:00",
+            }
+        },
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        policy={"create_strategy_plan": _policy()},
+        template_catalog_path=Path("configs/create-templates/wx-mini-game.json"),
+    )
+
+    assert result["ok"] is True
+    assert mode_config["material_selection"]["selection_type"] == "high_spend"
+    projects = result["create_strategy_plan"]["strategy"]["projects"]
+    account_materials: dict[str, set[str]] = {}
+    for project in projects:
+        advertiser_id = project["advertiser_id"]
+        account_materials.setdefault(advertiser_id, set())
+        for unit in project["units"]:
+            material_ids = [material["material_id"] for material in unit["materials"]]
+            assert len(material_ids) == len(set(material_ids))
+            account_materials[advertiser_id].update(material_ids)
+
+    assert set(account_materials) == {"acc-1", "acc-2", "acc-3"}
+    assert all("m-001" in material_ids for material_ids in account_materials.values())
 
 
 def test_create_mode_excludes_fixture_source_and_fake_video_ids(tmp_path: Path):

@@ -148,6 +148,80 @@ def _create_plan() -> dict:
     }
 
 
+def _create_mode_plan_artifact() -> dict:
+    return {
+        "summary": {
+            "plan_id": "plan-1",
+            "request_id": "req-1",
+            "target_date": "2026-05-23",
+            "planned_project_count": 1,
+            "planned_unit_count": 1,
+            "planned_material_count": 2,
+            "source_material_count": 10,
+            "mode_key": "wx_pay_general_recent_scale",
+            "display_name": "每付通投近期放量",
+        },
+        "create_strategy_plan": {
+            "summary": {
+                "plan_id": "plan-1",
+                "request_id": "req-1",
+                "target_date": "2026-05-23",
+                "planned_project_count": 1,
+                "planned_unit_count": 1,
+                "planned_material_count": 2,
+                "source_material_count": 10,
+            },
+            "request": {
+                "plan_id": "plan-1",
+                "request_id": "req-1",
+                "target_date": "2026-05-23",
+                "product": "勇者突进",
+                "platform": "WECHAT_GAME",
+                "source_advertiser_id": "source-1",
+                "target_accounts": [
+                    {
+                        "advertiser_id": "target-1",
+                        "project_count": 1,
+                        "units_per_project": 1,
+                        "daily_budget": 1000,
+                    }
+                ],
+            },
+            "strategy": {
+                "projects": [
+                    {
+                        "advertiser_id": "target-1",
+                        "project_name": "0523_郭靖_勇者突进_01",
+                        "units": [
+                            {
+                                "promotion_name": "0523_郭靖_勇者突进_01_1",
+                                "materials": [
+                                    {
+                                        "material_id": "m1",
+                                        "source_video_id": "v1",
+                                        "name": "素材1",
+                                        "stat_cost": 2000,
+                                        "convert_cnt": 3,
+                                        "effective_create_date": "2026-05-20",
+                                    },
+                                    {
+                                        "material_id": "m2",
+                                        "source_video_id": "v2",
+                                        "name": "素材2",
+                                        "stat_cost": 500,
+                                        "convert_cnt": 1,
+                                        "effective_create_date": "2026-05-21",
+                                    },
+                                ],
+                            }
+                        ],
+                    }
+                ]
+            },
+        },
+    }
+
+
 def test_create_live_execute_report_summarizes_completed_execution_without_api_calls(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     bootstrap_database(db_path)
@@ -212,6 +286,68 @@ def test_create_live_execute_report_summarizes_completed_execution_without_api_c
     assert result["db_ledger_summary"]["material_bind_count"] == 1
     assert "完成项目1个、单元1个、素材推送1组" in result["message"]
     assert artifact["actions"] == []
+
+
+def test_create_live_execute_report_includes_readable_selected_materials(tmp_path: Path):
+    result = run_create_live_execute_report_request(
+        {
+            "create_live_execute_report": {
+                "create_live_execute_once_artifact": _completed_execute_once_artifact(),
+                "create_plan_artifact": _create_mode_plan_artifact(),
+                "source_artifact_path": "/runs/create_live_execute_once/a.json",
+                "plan_artifact_path": "/runs/create_mode/plan.json",
+            }
+        },
+        runs_dir=tmp_path / "runs",
+        db_path=tmp_path / "roibang.sqlite3",
+    )
+
+    selected = result["readable_reference"]["selected_materials"]
+    assert result["create_plan_summary"]["target_account_count"] == 1
+    assert result["create_plan_summary"]["project_count"] == 1
+    assert result["create_plan_summary"]["material_assignment_count"] == 2
+    assert result["create_plan_summary"]["material_count"] == 2
+    assert result["create_plan_summary"]["source_material_count"] == 10
+    assert selected["assignment_count"] == 2
+    assert selected["unique_material_count"] == 2
+    assert selected["top_materials_by_cost"][0]["material_id"] == "m1"
+    assert selected["by_account"][0]["advertiser_id"] == "target-1"
+    assert selected["by_account"][0]["projects"][0]["materials"][0]["name"] == "素材1"
+
+
+def test_create_live_execute_report_feishu_message_includes_readable_selected_materials():
+    module = _load_script("run_create_live_execute_report")
+    result = {
+        "message": "真实创建结果：完成项目1个、单元1个、素材推送2组；执行脚本外部调用4次。",
+        "artifact_path": "data/runs/create_live_execute_report/20260523T000000Z.json",
+        "readable_reference": {
+            "selected_materials": {
+                "assignment_count": 2,
+                "unique_material_count": 2,
+                "by_account": [
+                    {"advertiser_id": "target-1", "unique_material_count": 2},
+                ],
+                "top_materials_by_cost": [
+                    {
+                        "material_id": "m1",
+                        "name": "素材1",
+                        "stat_cost": 2000,
+                        "convert_cnt": 3,
+                        "assigned_count": 1,
+                    }
+                ],
+            }
+        },
+    }
+
+    message = module._format_feishu_message(result)
+
+    assert "RoiBang-V2 创建执行报告" in message
+    assert "素材分配：2 次" in message
+    assert "唯一素材：2 个" in message
+    assert "target-1：2 个唯一素材" in message
+    assert "素材1（m1）：消耗 2000，转化 3，使用 1 次" in message
+    assert "完整 JSON：data/runs/create_live_execute_report/20260523T000000Z.json" in message
 
 
 def test_create_live_execute_report_script_reads_latest_execute_once_artifact(tmp_path: Path, capsys):

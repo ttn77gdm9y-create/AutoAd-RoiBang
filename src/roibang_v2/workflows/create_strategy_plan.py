@@ -240,6 +240,15 @@ def _sort_candidate_rows(rows: list[dict[str, Any]], *, request: dict[str, Any])
     if _int_value(selection.get("candidate_pool_limit"), 0) > 0:
         limit = _int_value(selection.get("candidate_pool_limit"), 0)
         rows = sorted(rows, key=lambda row: _candidate_sort_key(row, selection=selection), reverse=reverse)[:limit]
+    if _scale_top_material_reuse_enabled(request):
+        seed = str(request.get("request_id") or request.get("plan_id") or "")
+        return sorted(
+            rows,
+            key=lambda row: (
+                -float(row.get("stat_cost") or 0),
+                hashlib.sha256(f"{seed}:{row.get('material_id')}".encode("utf-8")).hexdigest(),
+            ),
+        )
     if bool(selection.get("random_shuffle", False)):
         seed = str(request.get("request_id") or request.get("plan_id") or "")
         return sorted(
@@ -543,6 +552,8 @@ def _next_candidate(
 def _max_accounts_per_material(request: dict[str, Any], dedupe_scope: str) -> int:
     if dedupe_scope != "max_account_overlap":
         return 0
+    if _scale_top_material_reuse_enabled(request):
+        return len(_target_accounts(request))
     requirements = _material_requirements(request)
     ratio = _float_value(requirements.get("max_cross_account_overlap_ratio"), 0.3)
     account_count = len(_target_accounts(request))
@@ -552,6 +563,16 @@ def _max_accounts_per_material(request: dict[str, Any], dedupe_scope: str) -> in
 def _allow_reuse_on_shortage(request: dict[str, Any]) -> bool:
     requirements = _material_requirements(request)
     return bool(requirements.get("allow_reuse_across_accounts", False)) or str(requirements.get("on_insufficient") or "") == "allow_reuse"
+
+
+def _scale_top_material_reuse_enabled(request: dict[str, Any]) -> bool:
+    requirements = _material_requirements(request)
+    selection = _selection_policy(request)
+    return (
+        str(requirements.get("cross_account_reuse_mode") or "") == "scale_top_materials"
+        and str(selection.get("selection_type") or "") == "high_spend"
+        and bool(requirements.get("allow_reuse_across_accounts", False))
+    )
 
 
 def _initial_operation(request: dict[str, Any], key: str) -> str:

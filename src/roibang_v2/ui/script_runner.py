@@ -56,7 +56,69 @@ def build_ai_template_drafts_command() -> list[str]:
     ]
 
 
-def build_create_plan_command(*, mode: str, accounts: str, owner: str, target_date: str = "") -> list[str]:
+def build_product_config_publish_command(*, draft_path: str, replace: bool = False) -> list[str]:
+    command = [
+        _python(),
+        "scripts/run_product_config_publish.py",
+        "--draft",
+        draft_path.strip(),
+        "--products-dir",
+        "configs/products",
+        "--runs-dir",
+        "data/runs",
+    ]
+    if replace:
+        command.append("--replace")
+    return command
+
+
+def build_account_remark_config_command(
+    *,
+    update_id: str,
+    remark: str,
+    accounts: str,
+    output_path: str,
+) -> list[str]:
+    command = [
+        _python(),
+        "scripts/run_account_remark_update_config.py",
+        "--update-id",
+        update_id.strip(),
+        "--remark",
+        remark.strip(),
+        "--output",
+        output_path.strip(),
+    ]
+    for account in _split_accounts(accounts):
+        command.extend(["--account", account])
+    return command
+
+
+def build_account_remark_execute_command(*, account_remark_update_path: str, execute: bool = False) -> list[str]:
+    command = [
+        _python(),
+        "scripts/run_account_remark_update.py",
+        "--account-remark-update",
+        account_remark_update_path.strip(),
+        "--config",
+        "configs/project-update-execute.local.json",
+    ]
+    if execute:
+        command.extend(["--execute", "--yes"])
+    return command
+
+
+def build_create_plan_command(
+    *,
+    mode: str,
+    accounts: str,
+    owner: str,
+    target_date: str = "",
+    product_key: str = "",
+    template_catalog: str = "",
+    cpa_bid: str = "",
+    roi_coefficient: str = "",
+) -> list[str]:
     command = [
         _python(),
         "scripts/run_create_mode.py",
@@ -69,17 +131,77 @@ def build_create_plan_command(*, mode: str, accounts: str, owner: str, target_da
         "--policy",
         "policies/create-policy.example.json",
     ]
+    if product_key.strip():
+        command.extend(["--product-key", product_key.strip()])
+    if template_catalog.strip():
+        command.extend(["--template-catalog", template_catalog.strip()])
     if target_date.strip():
         command.extend(["--target-date", target_date.strip()])
+    if cpa_bid.strip():
+        command.extend(["--cpa-bid", cpa_bid.strip()])
+    if roi_coefficient.strip():
+        command.extend(["--roi-coefficient", roi_coefficient.strip()])
     for account in _split_accounts(accounts):
         command.extend(["--account", account])
+    return command
+
+
+def build_create_live_terminal_command(
+    *,
+    plan_path: str,
+    check_config_only: bool = True,
+    open_progress_window: bool = False,
+) -> list[str]:
+    command = [
+        _python(),
+        "scripts/run_create_live_execute_terminal.py",
+        "--plan",
+        plan_path.strip(),
+        "--config",
+        "configs/runtime.create-live.local.json",
+        "--policy",
+        "policies/create-live-execute.local.json",
+    ]
+    if check_config_only:
+        command.append("--check-config-only")
+    if open_progress_window and not check_config_only:
+        command.append("--open-progress-window")
+    return command
+
+
+def build_create_live_config_check_command(*, plan_path: str) -> list[str]:
+    return [
+        _python(),
+        "scripts/run_create_live_execute_once.py",
+        "--plan",
+        plan_path.strip(),
+        "--config",
+        "configs/runtime.create-live.local.json",
+        "--policy",
+        "policies/create-live-execute.local.json",
+        "--check-config-only",
+    ]
+
+
+def build_project_update_execute_command(*, project_update_path: str, execute: bool = False) -> list[str]:
+    command = [
+        _python(),
+        "scripts/run_project_update_execute.py",
+        "--project-update",
+        project_update_path.strip(),
+        "--config",
+        "configs/project-update-execute.local.json",
+    ]
+    if execute:
+        command.extend(["--execute", "--yes"])
     return command
 
 
 def build_project_filter_command(
     *,
     project_update_id: str,
-    advertiser_id: str,
+    advertiser_id: str = "",
+    advertiser_ids: str = "",
     action_type: str,
     name_contains: str,
     spend_window: str,
@@ -96,11 +218,9 @@ def build_project_filter_command(
         _python(),
         "scripts/run_project_realtime_filter_config.py",
         "--config",
-        "configs/runtime.openapi-execute.local.example.json",
+        "configs/project-update-execute.local.json",
         "--project-update-id",
         project_update_id.strip(),
-        "--advertiser-id",
-        advertiser_id.strip(),
         "--action-type",
         action_type.strip(),
         "--spend-window",
@@ -110,6 +230,8 @@ def build_project_filter_command(
         "--output",
         output_path.strip(),
     ]
+    for account in _split_accounts(advertiser_ids or advertiser_id):
+        command.extend(["--advertiser-id", account])
     if name_contains.strip():
         command.extend(["--name-contains", name_contains.strip()])
     if opt_status.strip():

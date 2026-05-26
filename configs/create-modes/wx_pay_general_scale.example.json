@@ -1,6 +1,7 @@
 {
   "mode_key": "wx_pay_general_scale",
   "display_name": "每付通投历史放量",
+  "product_key": "yzt-wechat-mini-game",
   "product": "勇者突进",
   "platform": "WECHAT_GAME",
   "template_key": "wx_pay_general",
@@ -17,7 +18,8 @@
     "material_type": "video",
     "materials_per_unit": 5,
     "dedupe_scope": "max_account_overlap",
-    "max_cross_account_overlap_ratio": 0.3,
+    "max_cross_account_overlap_ratio": 1.0,
+    "cross_account_reuse_mode": "scale_top_materials",
     "allow_reuse_across_accounts": true,
     "on_insufficient": "allow_reuse"
   },

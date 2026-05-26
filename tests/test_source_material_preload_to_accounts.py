@@ -301,3 +301,58 @@ def test_preload_execute_records_transport_error_without_crashing(tmp_path: Path
     assert result["status"] == "completed_with_errors"
     assert result["summary"]["failed_batch_count"] == 1
     assert result["results"][0]["api_code"] == "transport_error"
+
+
+def test_preload_execute_splits_400170_batch_and_records_successful_sub_batches(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    patrol_path = tmp_path / "patrol.json"
+    bootstrap_database(db_path)
+    _write_patrol(patrol_path)
+    with sqlite3.connect(db_path) as conn:
+        _seed_source_material(conn, "1000000000000000001", "v28033gi0000d7m72bvog65s5f9la001", 300)
+        _seed_source_material(conn, "1000000000000000002", "v28033gi0000d7m72bvog65s5f9la002", 200)
+        _seed_source_material(conn, "1000000000000000003", "v28033gi0000d7m72bvog65s5f9la003", 100)
+
+    calls: list[list[str]] = []
+
+    def mutation_transport(request: dict) -> dict:
+        video_ids = list(request["payload"]["video_ids"])
+        calls.append(video_ids)
+        if "v28033gi0000d7m72bvog65s5f9la002" in video_ids:
+            return {"code": 400170, "message": "部分视频无权限或不存在"}
+        return {"code": 0, "message": "OK"}
+
+    cfg = _request(patrol_path)
+    cfg["target_accounts"]["min_spend"] = 90
+    cfg["material_source"]["batch_size"] = 3
+    cfg["execute"] = {
+        "enabled": True,
+        "approved": True,
+        "allow_mutation": True,
+        "split_on_api_codes": ["400170"],
+    }
+    result = run_source_material_preload_to_accounts_request(
+        {"source_material_preload_to_accounts": cfg},
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        mutation_transport=mutation_transport,
+        today=date(2026, 5, 15),
+        sleeper=lambda _seconds: None,
+    )
+
+    assert result["ok"] is True
+    assert result["summary"]["executed_bind_material_count"] == 2
+    assert result["summary"]["failed_batch_count"] == 0
+    assert result["summary"]["skipped_bad_video_id_count"] == 1
+    assert any(row["status"] == "split_retry" for row in result["results"])
+    assert any(row["status"] == "skipped" and row["api_code"] == "400170" for row in result["results"])
+    assert calls[0] == [
+        "v28033gi0000d7m72bvog65s5f9la001",
+        "v28033gi0000d7m72bvog65s5f9la002",
+        "v28033gi0000d7m72bvog65s5f9la003",
+    ]
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT source_material_id FROM source_material_preload_ledger ORDER BY source_material_id"
+        ).fetchall()
+    assert [row[0] for row in rows] == ["1000000000000000001", "1000000000000000003"]

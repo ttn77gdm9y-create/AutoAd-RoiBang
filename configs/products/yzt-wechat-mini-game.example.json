@@ -1,0 +1,50 @@
+{
+  "product_key": "yzt-wechat-mini-game",
+  "product": "勇者突进",
+  "platform": "WECHAT_GAME",
+  "source_advertiser_id": "1856647522964490",
+  "organization_id": "1851650746645060",
+  "allowed_target_accounts_path": "configs/allowed-create-accounts.local.json",
+  "account_remark_pattern": "勇者突进-微小-郭靖",
+  "automation": {
+    "enabled": true,
+    "account_discovery": {
+      "account_name_keyword": "勇者突进-微小",
+      "account_remark_equals": "勇者突进-微小-郭靖"
+    },
+    "material_daily_sync": {
+      "enabled": true,
+      "source": "account_name_keyword",
+      "min_spend": 0
+    },
+    "operation_log_sync": {
+      "enabled": true
+    },
+    "daily_report_sync": {
+      "enabled": true
+    },
+    "source_material_auto_push": {
+      "enabled": true,
+      "from_spent_accounts": true
+    },
+    "source_material_preload": {
+      "enabled": true,
+      "target_scope": "yesterday_spent"
+    },
+    "delivery_patrol": {
+      "enabled": true,
+      "account_scope": "account_remark"
+    }
+  },
+  "foundation": {
+    "effective_touch_url": "https://backend.gravity-engine.com/event_center/api/v1/event/click/?app_id=25964701&channel=base_channel&track_id=eoUhyJSoDxLeOTZR&company=bytedance&advertiser_id=__ADVERTISER_ID__&click_id=__REQUEST_ID__&ua=__UA__&model=__MODEL__&ts=__TS__&idfa=__IDFA__&caid=__CAID__&imei_md5=__IMEI__&android_id_md5=__ANDROIDID__&oaid=__OAID__&oaid_md5=__OAID_MD5__&mac_md5=__MAC__&ip=__IP__&project_id=__PROJECT_ID__&promotion_id=__PROMOTION_ID__&mid1=__MID1__&mid2=__MID2__&mid3=__MID3__&mid4=__MID4__&mid5=__MID5__&mid6=__MID6__&csite=__CSITE__&project_name=__PROJECT_NAME__&promotion_name=__PROMOTION_NAME__&callback=__CALLBACK_PARAM__",
+    "anchor_id": "7631055849892465418",
+    "anchor_type": "APP_GAME",
+    "anchor_related_type": "SELECT",
+    "landing_url": "https://www.chengzijianzhan.com/tetris/page/7605144110390951986",
+    "product_image_id": "tos-cn-i-sd07hgqsbj/e3bff9e538b643d69dae78cf5d0a61d4",
+    "fixed_video_cover_id": "tos-cn-i-sd07hgqsbj/c9c9bef34987407daf2983fb0a01c484",
+    "micro_app_instance_id": "1856457631493124",
+    "micro_promotion_type": "WECHAT_GAME"
+  }
+}

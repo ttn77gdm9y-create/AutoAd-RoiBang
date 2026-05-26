@@ -437,8 +437,62 @@ def _workbench_config(discovery: dict[str, Any], accounts: list[dict[str, Any]])
     workbench.setdefault("enabled", bool(discovery.get("enabled", False)))
     if workbench.get("organization_id") and not workbench.get("ebpid"):
         workbench["ebpid"] = str(workbench["organization_id"])
-    workbench["allowed_account_ids"] = [str(account["advertiser_id"]) for account in accounts]
+    if accounts or not bool(discovery.get("allow_keyword_accounts", False)):
+        workbench["allowed_account_ids"] = [str(account["advertiser_id"]) for account in accounts]
     return workbench
+
+
+def _discovered_account(row: dict[str, Any], *, discovery: dict[str, Any]) -> dict[str, Any]:
+    platform = str(discovery.get("platform") or "WECHAT_GAME").strip() or "WECHAT_GAME"
+    return {
+        "advertiser_id": str(row.get("advertiser_id") or "").strip(),
+        "account_name": str(row.get("account_name") or row.get("advertiser_name") or "").strip(),
+        "product": str(discovery.get("product") or "").strip(),
+        "platform": platform,
+        "historical_spend": float(row.get("stat_cost") or 0),
+    }
+
+
+def _upsert_discovered_accounts(
+    *,
+    db_path: str | Path,
+    active_by_date: dict[str, list[dict[str, Any]]],
+    source: str,
+) -> int:
+    rows: dict[str, dict[str, Any]] = {}
+    for accounts in active_by_date.values():
+        for account in accounts:
+            advertiser_id = str(account.get("advertiser_id") or "").strip()
+            if not advertiser_id:
+                continue
+            rows[advertiser_id] = account
+    synced_at = _utc_now()
+    with sqlite3.connect(db_path) as conn:
+        for account in rows.values():
+            conn.execute(
+                """
+                INSERT INTO account_pool (
+                  advertiser_id, account_name, product, platform, historical_spend, source, synced_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(advertiser_id) DO UPDATE SET
+                  account_name = excluded.account_name,
+                  product = excluded.product,
+                  platform = excluded.platform,
+                  historical_spend = excluded.historical_spend,
+                  source = excluded.source,
+                  synced_at = excluded.synced_at
+                """,
+                (
+                    str(account.get("advertiser_id") or ""),
+                    str(account.get("account_name") or ""),
+                    str(account.get("product") or ""),
+                    str(account.get("platform") or "WECHAT_GAME"),
+                    float(account.get("historical_spend") or 0),
+                    source,
+                    synced_at,
+                ),
+            )
+    return len(rows)
 
 
 def _discover_active_accounts_by_date(
@@ -468,10 +522,20 @@ def _discover_active_accounts_by_date(
         )
         readonly_calls += int(result.get("external_api_calls") or 0)
         active_accounts: list[dict[str, Any]] = []
+        discovered_by_id = {
+            str(row.get("advertiser_id") or ""): row
+            for row in result.get("accounts") or []
+            if isinstance(row, dict) and str(row.get("advertiser_id") or "").strip()
+        }
         for advertiser_id in result.get("active_account_ids") or []:
             account = account_by_id.get(str(advertiser_id))
             if account is not None:
                 active_accounts.append(account)
+                continue
+            if bool(discovery.get("allow_keyword_accounts", False)):
+                discovered = _discovered_account(discovered_by_id.get(str(advertiser_id), {}), discovery=discovery)
+                if discovered["advertiser_id"]:
+                    active_accounts.append(discovered)
         active_by_date[target_date] = active_accounts
         summaries.append(dict(result.get("summary") or {}))
     return active_by_date, {
@@ -671,6 +735,11 @@ def run_material_history_backfill_request(
         workbench_opener=workbench_opener,
         workbench_sleeper=workbench_sleeper,
     )
+    active_accounts_upserted = _upsert_discovered_accounts(
+        db_path=db_path,
+        active_by_date=active_by_date,
+        source="material_history_backfill.active_account_discovery",
+    )
     request_plan = _detail_plan_for_active_accounts(
         active_by_date=active_by_date,
         material_fetch=material_fetch,
@@ -718,6 +787,7 @@ def run_material_history_backfill_request(
             "date_count": len(dates),
             "candidate_account_count": len(accounts),
             "active_account_count": len(active_account_ids),
+            "active_accounts_upserted": active_accounts_upserted,
             "material_fetch_planned_request_count": int(request_plan["summary"]["planned_request_count"]),
             "material_fetch_transport_calls": int(execution["summary"]["transport_calls"]),
             "material_rows_seen": int(import_result["rows_seen"]),

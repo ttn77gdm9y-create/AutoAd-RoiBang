@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any
 
 from roibang_v2.config import load_json
+from roibang_v2.create_mode_rules import normalize_create_mode_config
+from roibang_v2.create_mode_rules import normalize_material_selection
 from roibang_v2.runs import write_run_artifact
 from roibang_v2.workflows.create_strategy_plan import build_create_strategy_plan
 
@@ -21,12 +23,18 @@ MODE_ALIASES = {
     "每付通投测新": "wx_pay_general_test_new",
     "每付通投低转化复测": "wx_pay_general_retest",
     "每付通投无转化复测": "wx_pay_general_no_conversion_retest",
+    "每付通投素材不限": "wx_pay_general_random_materials",
+    "点点英雄每付通投素材不限": "wx_pay_general_random_materials",
     "每付男历史放量": "wx_pay_male_scale",
     "每付男近期放量": "wx_pay_male_recent_scale",
     "每付男测新": "wx_pay_male_test_new",
     "每付男低转化复测": "wx_pay_male_retest",
     "每付男无转化复测": "wx_pay_male_no_conversion_retest",
+    "每付男素材不限": "wx_pay_male_random_materials",
+    "点点英雄每付男素材不限": "wx_pay_male_random_materials",
 }
+
+DEFAULT_TEMPLATE_CATALOG_PATH = Path("configs/create-templates/wx-mini-game.json")
 
 AMBIGUOUS_MODE_ALIASES = {
     "7r放量": "7R 放量需要指定通投或男，并指定历史/近期，例如 7R 通投历史放量 / 7R 通投近期放量",
@@ -108,6 +116,141 @@ def _template(template_catalog: dict[str, Any], template_key: str) -> dict[str, 
     return result
 
 
+def _product_template_catalog_path(
+    cfg: dict[str, Any],
+    mode_config: dict[str, Any],
+    product_config: dict[str, Any],
+    fallback_path: str | Path,
+) -> Path:
+    explicit = _text(cfg.get("template_catalog_path"))
+    if explicit:
+        return Path(explicit)
+    fallback = Path(fallback_path)
+    if fallback != DEFAULT_TEMPLATE_CATALOG_PATH:
+        return fallback
+    product_key = _text(product_config.get("product_key") or mode_config.get("product_key"))
+    if not product_key:
+        return fallback
+    template_dir = fallback.parent
+    for filename in [f"{product_key}.local.json", f"{product_key}.json", f"{product_key}.example.json"]:
+        candidate = template_dir / filename
+        if candidate.exists():
+            return candidate
+    return fallback
+
+
+def _product_config_path(cfg: dict[str, Any], mode_config: dict[str, Any]) -> Path | None:
+    if _text(cfg.get("product_config_path")):
+        return Path(_text(cfg.get("product_config_path")))
+    product_key = _text(cfg.get("product_key") or mode_config.get("product_key"))
+    if not product_key:
+        return None
+    product_dir = Path(_text(cfg.get("product_config_dir")) or "configs/products")
+    for filename in [f"{product_key}.local.json", f"{product_key}.json", f"{product_key}.example.json"]:
+        candidate = product_dir / filename
+        if candidate.exists():
+            return candidate
+    return product_dir / f"{product_key}.example.json"
+
+
+def _foundation(product_config: dict[str, Any]) -> dict[str, Any]:
+    value = product_config.get("foundation")
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _validate_product_config(product_config: dict[str, Any]) -> None:
+    foundation = _foundation(product_config)
+    required = [
+        "product_key",
+        "product",
+        "platform",
+        "source_advertiser_id",
+        "organization_id",
+        "foundation.effective_touch_url",
+        "foundation.anchor_id",
+        "foundation.anchor_type",
+        "foundation.anchor_related_type",
+        "foundation.landing_url",
+        "foundation.product_image_id",
+        "foundation.fixed_video_cover_id",
+        "foundation.micro_app_instance_id",
+        "foundation.micro_promotion_type",
+    ]
+    missing: list[str] = []
+    for key in required:
+        if key.startswith("foundation."):
+            field = key.split(".", 1)[1]
+            if not _text(foundation.get(field)):
+                missing.append(key)
+        elif not _text(product_config.get(key)):
+            missing.append(key)
+    if missing:
+        raise ValueError("product config missing required fields: " + ", ".join(missing))
+
+
+def load_product_config(cfg: dict[str, Any], mode_config: dict[str, Any]) -> dict[str, Any]:
+    path = _product_config_path(cfg, mode_config)
+    if path is None:
+        return {}
+    product_config = load_json(path)
+    _validate_product_config(product_config)
+    return product_config
+
+
+def _apply_product_config_to_mode(mode_config: dict[str, Any], product_config: dict[str, Any]) -> dict[str, Any]:
+    if not product_config:
+        return mode_config
+    result = dict(mode_config)
+    for key in ["product_key", "product", "platform", "source_advertiser_id", "organization_id"]:
+        if _text(product_config.get(key)):
+            result[key] = product_config[key]
+    return result
+
+
+def _apply_product_config_to_template_catalog(template_catalog: dict[str, Any], product_config: dict[str, Any]) -> dict[str, Any]:
+    if not product_config:
+        return template_catalog
+    foundation = _foundation(product_config)
+    result = dict(template_catalog)
+    if _text(foundation.get("effective_touch_url")):
+        result["effective_touch_url"] = foundation["effective_touch_url"]
+    templates = result.get("templates") if isinstance(result.get("templates"), dict) else {}
+    patched_templates: dict[str, Any] = {}
+    override_fields = [
+        "anchor_id",
+        "anchor_type",
+        "anchor_related_type",
+        "landing_url",
+        "product_image_id",
+        "fixed_video_cover_id",
+        "micro_app_instance_id",
+        "micro_promotion_type",
+    ]
+    for key, value in templates.items():
+        template = dict(value) if isinstance(value, dict) else {}
+        for field in override_fields:
+            if _text(foundation.get(field)):
+                template[field] = foundation[field]
+        patched_templates[key] = template
+    result["templates"] = patched_templates
+    return result
+
+
+def _product_config_snapshot(product_config: dict[str, Any]) -> dict[str, Any]:
+    if not product_config:
+        return {}
+    return {
+        "product_key": _text(product_config.get("product_key")),
+        "product": _text(product_config.get("product")),
+        "platform": _text(product_config.get("platform")),
+        "source_advertiser_id": _text(product_config.get("source_advertiser_id")),
+        "organization_id": _text(product_config.get("organization_id")),
+        "allowed_target_accounts_path": _text(product_config.get("allowed_target_accounts_path")),
+        "account_remark_pattern": _text(product_config.get("account_remark_pattern")),
+        "foundation": _foundation(product_config),
+    }
+
+
 def _template_name(mode_config: dict[str, Any], template: dict[str, Any]) -> str:
     base = (
         _text(mode_config.get("template_name"))
@@ -125,9 +268,17 @@ def _defaults(mode_config: dict[str, Any]) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
-def _field_defaults(mode_config: dict[str, Any], template: dict[str, Any]) -> dict[str, Any]:
-    fixed = template.get("project_fixed") if isinstance(template.get("project_fixed"), dict) else {}
+def _defaults_with_request_overrides(mode_config: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
     defaults = _defaults(mode_config)
+    for key in ["cpa_bid", "roi_coefficient"]:
+        if cfg.get(key) not in (None, ""):
+            defaults[key] = cfg[key]
+    return defaults
+
+
+def _field_defaults(mode_config: dict[str, Any], template: dict[str, Any], defaults: dict[str, Any] | None = None) -> dict[str, Any]:
+    fixed = template.get("project_fixed") if isinstance(template.get("project_fixed"), dict) else {}
+    defaults = dict(defaults) if isinstance(defaults, dict) else _defaults(mode_config)
     result = {
         "landing_type": _text(fixed.get("landing_type")) or "MICRO_GAME",
         "marketing_goal": _text(fixed.get("marketing_goal")) or "VIDEO_AND_IMAGE",
@@ -135,7 +286,7 @@ def _field_defaults(mode_config: dict[str, Any], template: dict[str, Any]) -> di
         "delivery_mode": _text(fixed.get("delivery_mode")) or "PROCEDURAL",
         "micro_promotion_type": _text(fixed.get("micro_promotion_type") or template.get("micro_promotion_type")) or "WECHAT_GAME",
         "micro_app_instance_id": template.get("micro_app_instance_id"),
-        "aigc_dynamic_creative_switch": "ON",
+        "aigc_dynamic_creative_switch": _text(fixed.get("aigc_dynamic_creative_switch")) or "ON",
         "external_action": _text(fixed.get("external_action")) or "AD_CONVERT_TYPE_PAY",
         "deep_external_action": _text(fixed.get("deep_external_action")),
         "inventory_catalog": "UNIVERSAL_SMART",
@@ -146,11 +297,12 @@ def _field_defaults(mode_config: dict[str, Any], template: dict[str, Any]) -> di
         "deep_bid_type": _text(fixed.get("deep_bid_type")) or "BID_PER_ACTION",
         "bid_type": _text(fixed.get("bid_type")) or "CUSTOM",
         "budget_mode": _text(fixed.get("budget_mode")) or "BUDGET_MODE_DAY",
-        "cpa_bid": _float(defaults.get("cpa_bid"), 0),
         "district": "NONE",
         "gender": _text(fixed.get("audience_gender")) or "NONE",
         "audience_platform": [],
     }
+    if defaults.get("cpa_bid") not in (None, ""):
+        result["cpa_bid"] = _float(defaults.get("cpa_bid"), 0)
     roi = defaults.get("roi_coefficient")
     if roi not in (None, ""):
         result["roi_goal"] = _float(roi)
@@ -216,7 +368,7 @@ def _material_selection(mode_config: dict[str, Any]) -> dict[str, Any]:
     selection.setdefault("random_shuffle", True)
     selection.setdefault("exclude_recent_used", False)
     selection.setdefault("exclude_recent_used_days", 0)
-    return selection
+    return normalize_material_selection(selection)
 
 
 def _mode_config_path(cfg: dict[str, Any]) -> Path:
@@ -226,6 +378,17 @@ def _mode_config_path(cfg: dict[str, Any]) -> Path:
     if not mode_key:
         raise ValueError("create_mode requires mode_key or mode_config_path")
     mode_dir = Path(_text(cfg.get("mode_config_dir")) or "configs/create-modes")
+    product_key = _text(cfg.get("product_key"))
+    if product_key:
+        product_mode_dir = mode_dir / product_key
+        for filename in [f"{mode_key}.local.json", f"{mode_key}.json", f"{mode_key}.example.json"]:
+            candidate = product_mode_dir / filename
+            if candidate.exists():
+                return candidate
+        raise ValueError(
+            "create_mode product-specific mode config is required: "
+            f"{product_mode_dir / (mode_key + '.local.json')}"
+        )
     direct = mode_dir / f"{mode_key}.json"
     if direct.exists():
         return direct
@@ -246,9 +409,12 @@ def build_create_mode_request(
     *,
     mode_config: dict[str, Any],
     template_catalog: dict[str, Any],
+    product_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    product_config = dict(product_config or {})
     cfg = _cfg(request)
-    defaults = _defaults(mode_config)
+    mode_config = normalize_create_mode_config(mode_config)
+    defaults = _defaults_with_request_overrides(mode_config, cfg)
     template_key = _text(mode_config.get("template_key"))
     template = _template(template_catalog, template_key)
     mode_key = _text(mode_config.get("mode_key"))
@@ -271,6 +437,7 @@ def build_create_mode_request(
         "target_date": target_date,
         "product": _text(mode_config.get("product")) or "勇者突进",
         "platform": _text(mode_config.get("platform")) or "WECHAT_GAME",
+        "product_key": _text(mode_config.get("product_key")),
         "project_type": _template_name(mode_config, template),
         "template_key": template_key,
         "source_advertiser_id": _text(mode_config.get("source_advertiser_id")),
@@ -283,7 +450,7 @@ def build_create_mode_request(
         "target_accounts": target_accounts,
         "material_requirements": _material_requirements(mode_config),
         "material_selection": _material_selection(mode_config),
-        "field_defaults": _field_defaults(mode_config, template),
+        "field_defaults": _field_defaults(mode_config, template, defaults),
         "project_name_template": _text(
             (mode_config.get("naming") if isinstance(mode_config.get("naming"), dict) else {}).get("project_name_template")
         )
@@ -295,6 +462,7 @@ def build_create_mode_request(
             "allow_real_create": False,
         },
         "template_parameters": _template_parameters(mode_config, template),
+        "product_config_snapshot": _product_config_snapshot(product_config),
     }
 
 
@@ -308,11 +476,20 @@ def run_create_mode_request(
 ) -> dict[str, Any]:
     cfg = _cfg(request)
     mode_config = load_create_mode_config(cfg)
-    template_catalog = load_json(template_catalog_path)
+    product_config = load_product_config(cfg, mode_config)
+    mode_config = _apply_product_config_to_mode(mode_config, product_config)
+    resolved_template_catalog_path = _product_template_catalog_path(
+        cfg,
+        mode_config,
+        product_config,
+        template_catalog_path,
+    )
+    template_catalog = _apply_product_config_to_template_catalog(load_json(resolved_template_catalog_path), product_config)
     create_request = build_create_mode_request(
         cfg,
         mode_config=mode_config,
         template_catalog=template_catalog,
+        product_config=product_config,
     )
     plan = build_create_strategy_plan(
         request={"create_request": create_request},
@@ -331,6 +508,7 @@ def run_create_mode_request(
             **plan["summary"],
             "mode_key": mode_config["mode_key"],
             "display_name": _text(mode_config.get("display_name")),
+            "template_catalog_path": str(resolved_template_catalog_path),
         },
         "blocking_reasons": plan.get("violations", []),
         "create_request": create_request,

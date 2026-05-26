@@ -8,6 +8,7 @@ from pathlib import Path
 from roibang_v2.config import load_json, load_runtime_config
 from roibang_v2.runs import write_run_artifact
 from roibang_v2.workflows.create_live_execute_report import run_create_live_execute_report_request
+from roibang_v2.workflows.scheduler_status import send_feishu_app_chat_text
 
 
 def _latest_artifact(runs_dir: Path, workflow: str) -> Path:
@@ -73,9 +74,11 @@ def _print_result(result: dict) -> None:
                 "message": result["message"],
                 "summary": result["summary"],
                 "batch_summary": result.get("batch_summary", {}),
+                "readable_reference": result.get("readable_reference", {}),
                 "create_plan_summary": result["create_plan_summary"],
                 "create_plan_contract": result["create_plan_contract"],
                 "db_ledger_summary": result["db_ledger_summary"],
+                "delivery": result.get("delivery", {}),
                 "source_artifact_path": result["source_artifact_path"],
                 "source_artifact_paths": result.get("source_artifact_paths", []),
                 "plan_artifact_path": result["plan_artifact_path"],
@@ -87,11 +90,77 @@ def _print_result(result: dict) -> None:
     )
 
 
+def _format_number(value: object, *, digits: int = 2) -> str:
+    try:
+        number = float(value or 0)
+    except (TypeError, ValueError):
+        return "0"
+    if number.is_integer():
+        return str(int(number))
+    return f"{number:.{digits}f}".rstrip("0").rstrip(".")
+
+
+def _format_feishu_message(result: dict) -> str:
+    lines = [
+        "RoiBang-V2 创建执行报告",
+        "",
+        str(result.get("message") or ""),
+    ]
+    selected = result.get("readable_reference", {}).get("selected_materials", {})
+    if isinstance(selected, dict) and selected:
+        lines.extend(
+            [
+                "",
+                "选材摘要",
+                f"- 素材分配：{int(selected.get('assignment_count') or 0)} 次",
+                f"- 唯一素材：{int(selected.get('unique_material_count') or 0)} 个",
+            ]
+        )
+        accounts = selected.get("by_account") if isinstance(selected.get("by_account"), list) else []
+        if accounts:
+            lines.append("- 账户分布：" + " / ".join(
+                f"{row.get('advertiser_id')}：{int(row.get('unique_material_count') or 0)} 个唯一素材"
+                for row in accounts[:8]
+                if isinstance(row, dict)
+            ))
+        top_materials = selected.get("top_materials_by_cost") if isinstance(selected.get("top_materials_by_cost"), list) else []
+        if top_materials:
+            lines.extend(["", "高消耗素材 Top 5"])
+            for row in top_materials[:5]:
+                if not isinstance(row, dict):
+                    continue
+                name = str(row.get("name") or "未命名素材")
+                material_id = str(row.get("material_id") or "")
+                lines.append(
+                    "- "
+                    f"{name}（{material_id}）："
+                    f"消耗 {_format_number(row.get('stat_cost'))}，"
+                    f"转化 {_format_number(row.get('convert_cnt'))}，"
+                    f"使用 {int(row.get('assigned_count') or 0)} 次"
+                )
+    artifact_path = str(result.get("artifact_path") or "")
+    if artifact_path:
+        lines.extend(["", f"完整 JSON：{artifact_path}"])
+    return "\n".join(line for line in lines if line is not None)
+
+
+def _deliver_feishu(result: dict, *, runtime_file: str) -> dict:
+    if not str(runtime_file or "").strip():
+        return {"enabled": False, "attempted": False, "ok": True, "reason": "missing_runtime_file"}
+    try:
+        delivery = send_feishu_app_chat_text({"enabled": True, "runtime_file": runtime_file}, _format_feishu_message(result))
+    except Exception as exc:
+        return {"enabled": True, "attempted": True, "ok": False, "reason": str(exc)}
+    return {"enabled": True, "attempted": True, **delivery}
+
+
 def run_from_args(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Report latest one-shot live create execution result.")
     parser.add_argument("--config", default="configs/runtime.example.json")
     parser.add_argument("--plan", default="")
     parser.add_argument("--create-live-execute-once-artifact", action="append", default=[])
+    parser.add_argument("--push-feishu", action="store_true")
+    parser.add_argument("--feishu-runtime-file", default="data/secrets/feishu.runtime.local.json")
     args = parser.parse_args(argv)
 
     config = load_runtime_config(args.config)
@@ -129,6 +198,8 @@ def run_from_args(argv: list[str] | None = None) -> int:
             runs_dir=config.runs_dir,
             db_path=config.database_path,
         )
+        if args.push_feishu:
+            result["delivery"] = {"feishu": _deliver_feishu(result, runtime_file=args.feishu_runtime_file)}
         _print_result(result)
         return 0
 
@@ -146,6 +217,8 @@ def run_from_args(argv: list[str] | None = None) -> int:
         runs_dir=config.runs_dir,
         db_path=config.database_path,
     )
+    if args.push_feishu:
+        result["delivery"] = {"feishu": _deliver_feishu(result, runtime_file=args.feishu_runtime_file)}
     _print_result(result)
     return 0
 

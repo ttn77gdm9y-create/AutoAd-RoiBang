@@ -175,12 +175,23 @@ def _select_spent_materials(
     min_cost = _float(material_cfg.get("min_stat_cost"))
     limit = _int(material_cfg.get("max_materials"), 500)
     account_ids = [str(item) for item in material_cfg.get("account_ids", []) if str(item).strip()] if isinstance(material_cfg.get("account_ids"), list) else []
+    account_name_keyword = _text(material_cfg.get("account_name_keyword"))
     account_filter = ""
     params: list[Any] = [period_start, period_end, source_advertiser_id]
     if account_ids:
         placeholders = ",".join("?" for _ in account_ids)
         account_filter = f"AND mdm.advertiser_id IN ({placeholders})"
         params.extend(account_ids)
+    elif account_name_keyword:
+        account_filter = """
+          AND EXISTS (
+            SELECT 1
+            FROM account_pool ap
+            WHERE ap.advertiser_id = mdm.advertiser_id
+              AND ap.account_name LIKE ?
+          )
+        """
+        params.append(f"%{account_name_keyword}%")
     params.extend([min_cost, limit])
     query = f"""
         SELECT
@@ -256,12 +267,23 @@ def _select_spent_video_summary_materials(
     min_cost = _float(material_cfg.get("min_stat_cost"))
     limit = _int(material_cfg.get("max_materials"), 500)
     account_ids = [str(item) for item in material_cfg.get("account_ids", []) if str(item).strip()] if isinstance(material_cfg.get("account_ids"), list) else []
+    account_name_keyword = _text(material_cfg.get("account_name_keyword"))
     account_filter = ""
     params: list[Any] = [period_start, period_end, source_advertiser_id]
     if account_ids:
         placeholders = ",".join("?" for _ in account_ids)
         account_filter = f"AND mb.advertiser_id IN ({placeholders})"
         params.extend(account_ids)
+    elif account_name_keyword:
+        account_filter = """
+          AND EXISTS (
+            SELECT 1
+            FROM account_pool ap
+            WHERE ap.advertiser_id = mb.advertiser_id
+              AND ap.account_name LIKE ?
+          )
+        """
+        params.append(f"%{account_name_keyword}%")
     params.extend([min_cost, limit])
     query = f"""
         WITH video_bindings AS (

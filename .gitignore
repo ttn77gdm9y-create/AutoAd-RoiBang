@@ -29,8 +29,16 @@ data/sources/**/*.csv
 data/secrets/
 
 configs/create/*.local.json
+configs/create-modes/*/*.local.json
+configs/create-templates/*.local.json
+configs/account-updates/*.local.json
+configs/create-mode-drafts/*.local.json
+configs/product-drafts/*.local.json
+configs/products/*.local.json
 configs/create-plans/*.local.json
 configs/project-updates/*.local.json
 configs/strategies/*.local.json
 configs/*.local.json
 policies/*.local.json
+
+scripts/tmp_*.py

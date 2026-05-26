@@ -1,6 +1,7 @@
 {
   "mode_key": "wx_pay_male_retest",
   "display_name": "每付男低转化复测",
+  "product_key": "yzt-wechat-mini-game",
   "product": "勇者突进",
   "platform": "WECHAT_GAME",
   "template_key": "wx_pay_male",

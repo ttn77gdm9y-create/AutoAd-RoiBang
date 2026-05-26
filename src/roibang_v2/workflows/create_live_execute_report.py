@@ -11,6 +11,15 @@ def _rows(value: Any) -> list[dict[str, Any]]:
     return [row for row in value if isinstance(row, dict)] if isinstance(value, list) else []
 
 
+def _plan_body(create_plan: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(create_plan, dict) or not create_plan:
+        return {}
+    nested = create_plan.get("create_strategy_plan")
+    if isinstance(nested, dict):
+        return nested
+    return create_plan
+
+
 def _status(value: dict[str, Any]) -> str:
     return str(value.get("status") or "")
 
@@ -100,10 +109,27 @@ def _next_steps(*, summary: dict[str, Any], efficiency: dict[str, Any]) -> list[
 
 
 def _plan_summary(create_plan: dict[str, Any] | None) -> dict[str, Any]:
-    if not isinstance(create_plan, dict) or not create_plan:
+    plan = _plan_body(create_plan)
+    if not plan:
         return {}
-    accounts = _rows(create_plan.get("target_accounts"))
-    materials = _rows(create_plan.get("materials"))
+    request = plan.get("request") if isinstance(plan.get("request"), dict) else {}
+    strategy = plan.get("strategy") if isinstance(plan.get("strategy"), dict) else {}
+    summary = plan.get("summary") if isinstance(plan.get("summary"), dict) else {}
+    accounts = _rows(request.get("target_accounts") or plan.get("target_accounts"))
+    projects = _rows(strategy.get("projects"))
+    materials = [
+        material
+        for project in projects
+        for unit in _rows(project.get("units"))
+        for material in _rows(unit.get("materials"))
+    ]
+    if not materials:
+        materials = _rows(plan.get("materials"))
+    unique_material_ids = {
+        str(row.get("material_id") or row.get("source_material_id") or "")
+        for row in materials
+        if str(row.get("material_id") or row.get("source_material_id") or "")
+    }
 
     def int_value(value: Any) -> int:
         try:
@@ -111,17 +137,21 @@ def _plan_summary(create_plan: dict[str, Any] | None) -> dict[str, Any]:
         except (TypeError, ValueError):
             return 0
 
-    project_count = sum(int_value(row.get("project_count")) for row in accounts)
-    unit_count = sum(
+    project_count = int_value(summary.get("planned_project_count")) or sum(int_value(row.get("project_count")) for row in accounts)
+    unit_count = int_value(summary.get("planned_unit_count")) or sum(
         int_value(row.get("project_count")) * int_value(row.get("unit_count_per_project", row.get("units_per_project")))
         for row in accounts
     )
     return {
-        "plan_id": str(create_plan.get("plan_id") or ""),
-        "product": str(create_plan.get("product") or ""),
-        "platform": str(create_plan.get("platform") or ""),
-        "launch_mode": str(create_plan.get("launch_mode") or ""),
-        "source_advertiser_id": str(create_plan.get("source_advertiser_id") or ""),
+        "plan_id": str(summary.get("plan_id") or plan.get("plan_id") or request.get("plan_id") or ""),
+        "request_id": str(summary.get("request_id") or plan.get("request_id") or request.get("request_id") or ""),
+        "target_date": str(summary.get("target_date") or plan.get("target_date") or request.get("target_date") or ""),
+        "mode_key": str(summary.get("mode_key") or ""),
+        "display_name": str(summary.get("display_name") or ""),
+        "product": str(request.get("product") or plan.get("product") or ""),
+        "platform": str(request.get("platform") or plan.get("platform") or ""),
+        "launch_mode": str(plan.get("launch_mode") or ""),
+        "source_advertiser_id": str(request.get("source_advertiser_id") or plan.get("source_advertiser_id") or ""),
         "target_account_count": len(accounts),
         "target_accounts": [
             {
@@ -134,15 +164,107 @@ def _plan_summary(create_plan: dict[str, Any] | None) -> dict[str, Any]:
         ],
         "project_count": project_count,
         "unit_count": unit_count,
-        "material_count": len(materials),
+        "material_assignment_count": len(materials),
+        "material_count": len(unique_material_ids),
+        "source_material_count": int_value(summary.get("source_material_count")),
         "materials": [
             {
                 "source_material_id": str(row.get("source_material_id") or row.get("material_id") or ""),
                 "source_video_id": str(row.get("source_video_id") or row.get("video_id") or ""),
+                "name": str(row.get("name") or ""),
+                "stat_cost": float(row.get("stat_cost") or 0),
+                "convert_cnt": float(row.get("convert_cnt") or 0),
+                "effective_create_date": str(row.get("effective_create_date") or ""),
             }
             for row in materials
         ],
-        "reason": str(create_plan.get("reason") or ""),
+        "reason": str(plan.get("reason") or ""),
+    }
+
+
+def _selected_material_reference(create_plan: dict[str, Any] | None) -> dict[str, Any]:
+    plan = _plan_body(create_plan)
+    strategy = plan.get("strategy") if isinstance(plan.get("strategy"), dict) else {}
+    projects = _rows(strategy.get("projects"))
+    assignments: list[dict[str, Any]] = []
+    for project in projects:
+        advertiser_id = str(project.get("advertiser_id") or "")
+        project_name = str(project.get("project_name") or "")
+        for unit in _rows(project.get("units")):
+            promotion_name = str(unit.get("promotion_name") or "")
+            for material in _rows(unit.get("materials")):
+                material_id = str(material.get("material_id") or "")
+                assignments.append(
+                    {
+                        "advertiser_id": advertiser_id,
+                        "project_name": project_name,
+                        "promotion_name": promotion_name,
+                        "material_id": material_id,
+                        "name": str(material.get("name") or ""),
+                        "stat_cost": float(material.get("stat_cost") or 0),
+                        "convert_cnt": float(material.get("convert_cnt") or 0),
+                        "effective_create_date": str(material.get("effective_create_date") or ""),
+                    }
+                )
+    material_groups: dict[str, dict[str, Any]] = {}
+    for row in assignments:
+        material_id = str(row.get("material_id") or "")
+        if not material_id:
+            continue
+        group = material_groups.setdefault(
+            material_id,
+            {
+                "material_id": material_id,
+                "name": row.get("name") or "",
+                "stat_cost": float(row.get("stat_cost") or 0),
+                "convert_cnt": float(row.get("convert_cnt") or 0),
+                "effective_create_date": row.get("effective_create_date") or "",
+                "assigned_count": 0,
+                "accounts": set(),
+            },
+        )
+        group["assigned_count"] = int(group.get("assigned_count") or 0) + 1
+        group["accounts"].add(str(row.get("advertiser_id") or ""))
+    unique_materials = [
+        {**row, "accounts": sorted(account for account in row["accounts"] if account)}
+        for row in material_groups.values()
+    ]
+    unique_materials.sort(key=lambda row: (-float(row.get("stat_cost") or 0), str(row.get("material_id") or "")))
+
+    by_account: list[dict[str, Any]] = []
+    for advertiser_id in sorted({str(row.get("advertiser_id") or "") for row in assignments if row.get("advertiser_id")}):
+        account_rows = [row for row in assignments if str(row.get("advertiser_id") or "") == advertiser_id]
+        account_projects: list[dict[str, Any]] = []
+        for project_name in sorted({str(row.get("project_name") or "") for row in account_rows if row.get("project_name")}):
+            project_rows = [row for row in account_rows if str(row.get("project_name") or "") == project_name]
+            account_projects.append(
+                {
+                    "project_name": project_name,
+                    "materials": [
+                        {
+                            "material_id": str(row.get("material_id") or ""),
+                            "name": str(row.get("name") or ""),
+                            "stat_cost": float(row.get("stat_cost") or 0),
+                            "convert_cnt": float(row.get("convert_cnt") or 0),
+                            "effective_create_date": str(row.get("effective_create_date") or ""),
+                        }
+                        for row in project_rows
+                    ],
+                }
+            )
+        by_account.append(
+            {
+                "advertiser_id": advertiser_id,
+                "assignment_count": len(account_rows),
+                "unique_material_count": len({str(row.get("material_id") or "") for row in account_rows if row.get("material_id")}),
+                "projects": account_projects,
+            }
+        )
+    return {
+        "assignment_count": len(assignments),
+        "unique_material_count": len(unique_materials),
+        "top_materials_by_cost": unique_materials[:30],
+        "by_account": by_account,
     }
 
 
@@ -323,6 +445,7 @@ def build_create_live_execute_report(
         source_summary = source.get("summary") if isinstance(source.get("summary"), dict) else {}
     plan_id = str(source_summary.get("plan_id") or "")
     create_plan_summary = _plan_summary(create_plan_artifact)
+    selected_materials = _selected_material_reference(create_plan_artifact)
     payload = {
         "ok": True,
         "workflow": "create_live_execute_report",
@@ -336,6 +459,9 @@ def build_create_live_execute_report(
         "summary": summary,
         "efficiency_report": efficiency,
         "next_steps": _next_steps(summary=summary, efficiency=efficiency),
+        "readable_reference": {
+            "selected_materials": selected_materials,
+        },
         "create_plan_summary": create_plan_summary,
         "create_plan_contract": _plan_contract(plan_summary=create_plan_summary, source_plan_id=plan_id),
         "db_ledger_summary": _db_ledger_summary(db_path=db_path, plan_id=plan_id) if db_path is not None else {},

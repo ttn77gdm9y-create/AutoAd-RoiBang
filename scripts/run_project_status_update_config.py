@@ -8,6 +8,8 @@ from pathlib import Path
 from roibang_v2.workflows.create_http_transport import build_create_http_transport
 from roibang_v2.workflows.project_status_update_config import run_project_status_update_config_request
 
+PROJECT_UPDATE_RUNTIME_CONFIG = "configs/project-update-execute.local.json"
+
 
 def _blocked_payload(reason: str) -> dict:
     return {
@@ -36,7 +38,15 @@ def _transport_config(runtime: dict) -> dict:
     return {}
 
 
-def run_from_args(argv: list[str] | None = None) -> int:
+def _validate_entry_config_path(config_path: str) -> dict | None:
+    if str(config_path or "").strip() == PROJECT_UPDATE_RUNTIME_CONFIG:
+        return None
+    return _blocked_payload(
+        f"项目管理生成配置必须使用 {PROJECT_UPDATE_RUNTIME_CONFIG}，不能使用 {str(config_path or '').strip() or '空配置'}"
+    )
+
+
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Generate project_update.json for project status update from live project list.")
     parser.add_argument("--project-update-id", required=True)
     parser.add_argument("--operator", default="")
@@ -46,12 +56,17 @@ def run_from_args(argv: list[str] | None = None) -> int:
     parser.add_argument("--name-contains", action="append", default=[])
     parser.add_argument("--reason", default="")
     parser.add_argument("--output", required=True)
-    parser.add_argument("--config", default="")
+    parser.add_argument("--config", default=PROJECT_UPDATE_RUNTIME_CONFIG)
     parser.add_argument("--runs-dir", default="data/runs")
+    return parser
+
+
+def run_from_args(argv: list[str] | None = None) -> int:
+    parser = _build_parser()
     args = parser.parse_args(argv)
 
-    if not args.config:
-        payload = _blocked_payload("project status update config requires --config for live project lookup")
+    payload = _validate_entry_config_path(args.config)
+    if payload is not None:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 1
 

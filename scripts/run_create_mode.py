@@ -38,14 +38,22 @@ def _request_from_args(args: argparse.Namespace) -> dict:
         raise ValueError("run_create_mode requires --request or --mode")
     if not accounts:
         raise ValueError("run_create_mode --mode requires at least one --account or --accounts")
-    return {
+    request = {
         "create_mode": {
             "mode_key": args.mode,
+            "product_key": args.product_key or "",
+            "product_config_path": args.product_config_path or "",
+            "product_config_dir": args.product_config_dir or "",
             "target_date": args.target_date or date.today().isoformat(),
             "owner": args.owner,
             "target_accounts": accounts,
+            "cpa_bid": args.cpa_bid or "",
+            "roi_coefficient": args.roi_coefficient or "",
         }
     }
+    if args.template_catalog:
+        request["create_mode"]["template_catalog_path"] = args.template_catalog
+    return request
 
 
 def run_from_args(argv: list[str] | None = None) -> int:
@@ -53,12 +61,17 @@ def run_from_args(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", default="configs/runtime.example.json")
     parser.add_argument("--request")
     parser.add_argument("--mode", help="Create mode name or mode_key, for example 每付通投近期放量.")
+    parser.add_argument("--product-key", help="产品键，例如 yzt-wechat-mini-game；为空时使用创建模式里的 product_key。")
+    parser.add_argument("--product-config-path", help="显式指定产品配置 JSON。")
+    parser.add_argument("--product-config-dir", default="configs/products", help="产品配置目录。")
     parser.add_argument("--account", action="append", help="Target advertiser ID. Can be repeated.")
     parser.add_argument("--accounts", action="append", help="Comma/newline separated target advertiser IDs.")
     parser.add_argument("--target-date")
     parser.add_argument("--owner", default="郭靖")
+    parser.add_argument("--cpa-bid", help="本次项目出价；为空时不写入创建计划。")
+    parser.add_argument("--roi-coefficient", help="本次 ROI 系数；为空时不写入创建计划。")
     parser.add_argument("--policy", default="policies/create-policy.example.json")
-    parser.add_argument("--template-catalog", default="configs/create-templates/wx-mini-game.json")
+    parser.add_argument("--template-catalog", default="")
     args = parser.parse_args(argv)
 
     config = load_runtime_config(args.config)
@@ -71,7 +84,7 @@ def run_from_args(argv: list[str] | None = None) -> int:
         db_path=config.database_path,
         runs_dir=config.runs_dir,
         policy=load_json(args.policy),
-        template_catalog_path=args.template_catalog,
+        template_catalog_path=args.template_catalog or "configs/create-templates/wx-mini-game.json",
     )
     print(
         json.dumps(

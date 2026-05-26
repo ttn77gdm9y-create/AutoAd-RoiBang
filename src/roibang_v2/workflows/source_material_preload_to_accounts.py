@@ -7,6 +7,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timezone
 from pathlib import Path
+from threading import Lock
 from typing import Any, Callable
 
 from roibang_v2.runs import write_run_artifact
@@ -325,6 +326,18 @@ def _bind_request(batch: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _slice_batch(batch: dict[str, Any], *, suffix: str, start: int, end: int) -> dict[str, Any]:
+    video_ids = list(batch.get("video_ids") or [])
+    material_ids = list(batch.get("material_ids") or [])
+    return {
+        **batch,
+        "batch_key": f"{batch['batch_key']}_{suffix}",
+        "video_ids": video_ids[start:end],
+        "material_ids": material_ids[start:end],
+        "material_count": max(0, end - start),
+    }
+
+
 def _execute_batches(
     batches: list[dict[str, Any]],
     *,
@@ -336,8 +349,48 @@ def _execute_batches(
     max_retries = _int(execute_cfg.get("max_api_retries"), 0)
     retry_sleep = _float(execute_cfg.get("retry_sleep_seconds") or 1)
     concurrency = max(_int(execute_cfg.get("concurrency"), 1), 1)
+    split_codes = (
+        {str(item) for item in execute_cfg.get("split_on_api_codes", ["400170"])}
+        if isinstance(execute_cfg.get("split_on_api_codes", ["400170"]), list)
+        else {"400170"}
+    )
+    known_bad_video_ids: set[str] = set()
+    known_bad_lock = Lock()
 
-    def execute_one(batch: dict[str, Any]) -> dict[str, Any]:
+    def _known_bad_filtered(batch: dict[str, Any]) -> dict[str, Any]:
+        with known_bad_lock:
+            bad = set(known_bad_video_ids)
+        if not bad:
+            return batch
+        video_ids = list(batch.get("video_ids") or [])
+        material_ids = list(batch.get("material_ids") or [])
+        kept_videos: list[str] = []
+        kept_materials: list[str] = []
+        for index, video_id in enumerate(video_ids):
+            if str(video_id) in bad:
+                continue
+            kept_videos.append(str(video_id))
+            kept_materials.append(str(material_ids[index] if index < len(material_ids) else ""))
+        return {**batch, "video_ids": kept_videos, "material_ids": kept_materials, "material_count": len(kept_videos)}
+
+    def execute_one(batch: dict[str, Any], *, depth: int = 0) -> list[dict[str, Any]]:
+        batch = _known_bad_filtered(batch)
+        if not list(batch.get("video_ids") or []):
+            return [
+                {
+                    "batch_key": batch["batch_key"],
+                    "target_advertiser_id": batch["target_advertiser_id"],
+                    "video_count": 0,
+                    "material_ids": [],
+                    "video_ids": [],
+                    "status": "skipped",
+                    "api_code": "known_bad_video_id",
+                    "message": "all videos in this batch were already marked bad",
+                    "duration_seconds": 0,
+                    "external_api_calls": 0,
+                    "response": {},
+                }
+            ]
         request = _bind_request(batch)
         response: dict[str, Any] = {}
         calls = 0
@@ -349,17 +402,19 @@ def _execute_batches(
             except Exception as exc:  # keep one bad batch from aborting the whole preload run
                 calls += 1
                 duration = round(time.monotonic() - start, 4)
-                return {
+                return [{
                     "batch_key": batch["batch_key"],
                     "target_advertiser_id": batch["target_advertiser_id"],
                     "video_count": len(batch.get("video_ids") or []),
+                    "material_ids": list(batch.get("material_ids") or []),
+                    "video_ids": list(batch.get("video_ids") or []),
                     "status": "failed",
                     "api_code": "transport_error",
                     "message": str(exc),
                     "duration_seconds": duration,
                     "external_api_calls": calls,
                     "response": {"error_type": type(exc).__name__, "error": str(exc)},
-                }
+                }]
             calls += 1
             code = _api_code(response)
             if not code or code not in retry_codes or attempt == attempts:
@@ -367,28 +422,70 @@ def _execute_batches(
             sleeper(retry_sleep)
         duration = round(time.monotonic() - start, 4)
         code = _api_code(response)
-        return {
+        if code in split_codes and len(list(batch.get("video_ids") or [])) > 1:
+            video_count = len(list(batch.get("video_ids") or []))
+            midpoint = max(1, video_count // 2)
+            left = _slice_batch(batch, suffix=f"split{depth + 1}a", start=0, end=midpoint)
+            right = _slice_batch(batch, suffix=f"split{depth + 1}b", start=midpoint, end=video_count)
+            split_results = [
+                {
+                    "batch_key": batch["batch_key"],
+                    "target_advertiser_id": batch["target_advertiser_id"],
+                    "video_count": video_count,
+                    "material_ids": list(batch.get("material_ids") or []),
+                    "video_ids": list(batch.get("video_ids") or []),
+                    "status": "split_retry",
+                    "api_code": code,
+                    "message": _response_message(response),
+                    "duration_seconds": duration,
+                    "external_api_calls": calls,
+                    "response": response,
+                }
+            ]
+            split_results.extend(execute_one(left, depth=depth + 1))
+            split_results.extend(execute_one(right, depth=depth + 1))
+            return split_results
+        if code in split_codes and len(list(batch.get("video_ids") or [])) == 1:
+            with known_bad_lock:
+                known_bad_video_ids.update(str(item) for item in batch.get("video_ids") or [])
+            return [{
+                "batch_key": batch["batch_key"],
+                "target_advertiser_id": batch["target_advertiser_id"],
+                "video_count": len(batch.get("video_ids") or []),
+                "material_ids": list(batch.get("material_ids") or []),
+                "video_ids": list(batch.get("video_ids") or []),
+                "status": "skipped",
+                "api_code": code,
+                "message": _response_message(response),
+                "duration_seconds": duration,
+                "external_api_calls": calls,
+                "response": response,
+            }]
+        return [{
             "batch_key": batch["batch_key"],
             "target_advertiser_id": batch["target_advertiser_id"],
             "video_count": len(batch.get("video_ids") or []),
+            "material_ids": list(batch.get("material_ids") or []),
+            "video_ids": list(batch.get("video_ids") or []),
             "status": "completed" if not code else "failed",
             "api_code": code,
             "message": _response_message(response),
             "duration_seconds": duration,
             "external_api_calls": calls,
             "response": response,
-        }
+        }]
 
     total_start = time.monotonic()
     if concurrency <= 1 or len(batches) <= 1:
-        results = [execute_one(batch) for batch in batches]
+        results = [row for batch in batches for row in execute_one(batch)]
     else:
         results = []
         with ThreadPoolExecutor(max_workers=min(concurrency, len(batches))) as pool:
             futures = {pool.submit(execute_one, batch): index for index, batch in enumerate(batches)}
             ordered: list[tuple[int, dict[str, Any]]] = []
             for future in as_completed(futures):
-                ordered.append((futures[future], future.result()))
+                for row in future.result():
+                    ordered.append((futures[future], row))
         results = [row for _index, row in sorted(ordered, key=lambda item: item[0])]
     durations = [float(row.get("duration_seconds") or 0) for row in results]
     total_duration = round(time.monotonic() - total_start, 4)
@@ -399,6 +496,7 @@ def _execute_batches(
         "total_duration_seconds": total_duration,
         "avg_seconds_per_batch": round(sum(durations) / len(durations), 4) if durations else 0,
         "max_seconds_per_batch": max(durations) if durations else 0,
+        "known_bad_video_id_count": len(known_bad_video_ids),
     }
 
 
@@ -418,17 +516,15 @@ def _record_completed_preload_ledger(
     rows: list[tuple[Any, ...]] = []
     for batch_key, result in completed_keys.items():
         batch = batch_lookup.get(batch_key)
-        if not batch:
-            continue
-        material_ids = list(batch.get("material_ids") or [])
-        video_ids = list(batch.get("video_ids") or [])
+        material_ids = list((batch or {}).get("material_ids") or result.get("material_ids") or [])
+        video_ids = list((batch or {}).get("video_ids") or result.get("video_ids") or [])
         response_json = json.dumps(result.get("response") or {}, ensure_ascii=False, sort_keys=True)
         for index, material_id in enumerate(material_ids):
             rows.append(
                 (
                     product,
                     source_advertiser_id,
-                    _text(batch.get("target_advertiser_id")),
+                    _text((batch or result).get("target_advertiser_id")),
                     _text(material_id),
                     _text(video_ids[index] if index < len(video_ids) else ""),
                     "completed",
@@ -528,8 +624,9 @@ def run_source_material_preload_to_accounts_request(
         sleeper=sleeper or time.sleep,
     )
     results = execution["results"]
-    failed = [row for row in results if row["status"] != "completed"]
+    failed = [row for row in results if row["status"] not in {"completed", "split_retry", "skipped"}]
     completed = [row for row in results if row["status"] == "completed"]
+    skipped = [row for row in results if row["status"] == "skipped"]
     ledger_rows = _record_completed_preload_ledger(
         db_path=db_path,
         product=_text(cfg.get("product")),
@@ -541,7 +638,7 @@ def run_source_material_preload_to_accounts_request(
         "ok": not failed,
         "workflow": "source_material_preload_to_accounts",
         "phase": "source_material_preload",
-        "status": "completed" if not failed else "completed_with_errors",
+        "status": "completed" if not failed and not skipped else ("completed_with_warnings" if not failed else "completed_with_errors"),
         "execution_enabled": True,
         "external_api_calls": int(execution["external_api_calls"]),
         "summary": {
@@ -549,8 +646,16 @@ def run_source_material_preload_to_accounts_request(
             "executed_batch_count": len(completed),
             "executed_bind_material_count": sum(int(row.get("video_count") or 0) for row in completed),
             "failed_batch_count": len(failed),
+            "skipped_batch_count": len(skipped),
+            "skipped_bad_video_id_count": sum(
+                int(row.get("video_count") or 0)
+                for row in skipped
+                if str(row.get("api_code") or "") in {"400170", "known_bad_video_id"}
+            ),
+            "split_retry_batch_count": sum(1 for row in results if row.get("status") == "split_retry"),
             "ledger_rows_upserted": ledger_rows,
             "rate_limited_batch_count": sum(1 for row in results if str(row.get("api_code") or "") == "40100"),
+            "known_bad_video_id_count": int(execution.get("known_bad_video_id_count") or 0),
             "concurrency": execution["concurrency"],
             "total_duration_seconds": execution["total_duration_seconds"],
             "avg_seconds_per_batch": execution["avg_seconds_per_batch"],

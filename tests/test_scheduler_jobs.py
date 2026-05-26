@@ -154,14 +154,14 @@ def test_scheduler_registry_includes_readonly_material_history_yesterday_job():
     assert job["schedule"] == {"type": "cron", "expr": "0 2 * * *", "tz": "Asia/Shanghai"}
     assert job["script"]["command"] == [
         "python3",
-        "scripts/run_material_history_backfill.py",
-        "--config",
-        "configs/runtime.openapi-execute.local.example.json",
-        "--request",
-        "configs/material-history-backfill.daily-readonly.example.json",
+        "scripts/run_product_automation_job.py",
+        "--job",
+        "material_daily_sync",
+        "--target-date",
+        "yesterday",
         "--enable-readonly",
     ]
-    assert job["result_contract"]["workflow"] == "material_history_backfill"
+    assert job["result_contract"]["workflow"] == "product_automation_job_material_daily_sync"
     assert job["result_contract"]["must_equal"] == {"execution_enabled": False}
 
 
@@ -175,15 +175,15 @@ def test_scheduler_registry_includes_enabled_operation_log_yesterday_job():
     assert job["schedule"] == {"type": "cron", "expr": "30 2 * * *", "tz": "Asia/Shanghai"}
     assert job["script"]["command"] == [
         "python3",
-        "scripts/run_control_operation_log_history_sync.py",
-        "--config",
-        "configs/runtime.openapi-execute.local.example.json",
-        "--request",
-        "configs/operation-log-history-sync.daily-readonly.example.json",
+        "scripts/run_product_automation_job.py",
+        "--job",
+        "operation_log_sync",
+        "--target-date",
+        "yesterday",
         "--enable-readonly",
     ]
     assert job["policy"]["account_date_source"] == "material_daily_metrics_yesterday_spent_accounts"
-    assert job["result_contract"]["workflow"] == "control_operation_log_history_sync"
+    assert job["result_contract"]["workflow"] == "product_automation_job_operation_log_sync"
     assert "artifact_path" not in job["result_contract"]["must_include"]
     assert job["result_contract"]["must_equal"] == {"execution_enabled": False}
 
@@ -217,45 +217,47 @@ def test_scheduler_registry_keeps_daily_jobs_and_restore_due_job():
     restore_due_job = {job["id"]: job for job in registry["jobs"]}["roibang-project-schedule-restore-due"]
     assert daily_job["script"]["command"] == [
         "python3",
-        "scripts/run_daily_report_pipeline.py",
-        "--config",
-        "configs/runtime.openapi-execute.local.example.json",
-        "--request",
-        "configs/daily-report-pipeline.daily-readonly.example.json",
+        "scripts/run_product_automation_job.py",
+        "--job",
+        "daily_report_sync",
+        "--target-date",
+        "yesterday",
         "--enable-readonly",
     ]
     assert daily_job["policy"] == {
-        "config": "configs/runtime.openapi-execute.local.example.json",
-        "request": "configs/daily-report-pipeline.daily-readonly.example.json",
+        "job": "daily_report_sync",
+        "products_dir": "configs/products",
+        "target_date": "yesterday",
         "readonly": True,
     }
+    assert daily_job["result_contract"]["workflow"] == "product_automation_job_daily_report_sync"
     assert daily_job["result_contract"]["must_equal"] == {"execution_enabled": False}
 
     assert source_account_push["script"]["command"] == [
         "python3",
-        "scripts/run_source_material_account_auto_push.py",
-        "--config",
-        "configs/runtime.openapi-execute.local.example.json",
-        "--request",
-        "configs/source-material-account-auto-push.daily.example.json",
+        "scripts/run_product_automation_job.py",
+        "--job",
+        "source_material_auto_push",
+        "--target-date",
+        "yesterday",
         "--enable-readonly",
         "--execute",
         "--yes",
     ]
-    assert source_account_push["result_contract"]["workflow"] == "source_material_account_auto_push"
+    assert source_account_push["result_contract"]["workflow"] == "product_automation_job_source_material_auto_push"
     assert source_account_push["result_contract"]["must_equal"] == {}
     assert source_material_preload["script"]["command"] == [
         "python3",
-        "scripts/run_source_material_preload_to_accounts.py",
-        "--config",
-        "configs/runtime.openapi-execute.local.example.json",
-        "--request",
-        "configs/source-material-preload-to-accounts.daily-guojing-yesterday-spent.example.json",
+        "scripts/run_product_automation_job.py",
+        "--job",
+        "source_material_preload",
+        "--target-date",
+        "today",
         "--execute",
         "--yes",
     ]
-    assert source_material_preload["policy"]["approval_policy"] == "fixed_daily_source_material_preload"
-    assert source_material_preload["result_contract"]["workflow"] == "source_material_preload_to_accounts"
+    assert source_material_preload["policy"]["approval_policy"] == "fixed_daily_product_source_material_preload"
+    assert source_material_preload["result_contract"]["workflow"] == "product_automation_job_source_material_preload"
     assert source_material_preload["result_contract"]["must_equal"] == {"execution_enabled": True}
     assert material_kind_reconcile["script"]["command"] == [
         "python3",
@@ -322,17 +324,15 @@ def test_scheduler_registry_includes_delivery_patrol_jobs():
     assert patrol["schedule"] == {"type": "cron", "expr": "30 8-23 * * *", "tz": "Asia/Shanghai"}
     assert patrol["script"]["command"] == [
         "python3",
-        "scripts/run_delivery_patrol.py",
-        "--config",
-        "configs/runtime.openapi-execute.local.example.json",
-        "--request",
-        "configs/delivery-patrol.daily-readonly.example.json",
+        "scripts/run_product_automation_job.py",
+        "--job",
+        "delivery_patrol",
+        "--target-date",
+        "today",
         "--enable-readonly",
     ]
-    assert patrol["result_contract"]["workflow"] == "delivery_patrol"
-    assert "message" in patrol["result_contract"]["must_include"]
-    assert "delivery" in patrol["result_contract"]["must_include"]
-    assert "delivery_patrol_suggestions" in patrol["result_contract"]["must_include"]
+    assert patrol["result_contract"]["workflow"] == "product_automation_job_delivery_patrol"
+    assert "results" in patrol["result_contract"]["must_include"]
     assert patrol["result_contract"]["must_equal"] == {"execution_enabled": False}
 
     assert suggestions["enabled"] is False

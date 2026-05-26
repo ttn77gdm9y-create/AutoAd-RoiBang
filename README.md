@@ -212,6 +212,8 @@ v0.1 页面包含：
 - `Delivery Patrol（投放巡检）`：调用固定只读巡检脚本，展示飞书摘要和建议摘要。
 - `Create（创建）`：选择固定创建模式和账户，调用 `run_create_mode.py（创建计划脚本）` 生成创建计划，不执行真实创建。
 - `Project Management（项目管理）`：按账户、项目名、今天/昨天/近 3 天指标生成项目管理 JSON。
+- `Product Management（产品管理）`：维护产品基础配置，生成新产品账户准允许名单。
+- `scripts/restart_streamlit_ui.py`：重启 Streamlit（网页面板），用于代码更新后清理模块缓存。
 - `AI Drafts（AI 草稿）`：调用 `run_ai_create_template_drafts.py（AI 创建模板草稿脚本）`，展示草稿和证据。
 - `Results（结果）`：读取本地 `data/runs（运行结果目录）` 最近产物。
 
@@ -338,6 +340,8 @@ PYTHONPATH=src python3 scripts/watch_create_live_progress.py --clear --recent-ev
 - `scripts/run_project_realtime_filter_config.py`：按平台实时数据筛选项目后生成项目管理配置。
 - `scripts/run_project_delete_from_suggestions.py`：读取 `delivery_patrol_suggestions（投放巡检建议）` JSON，只提取 `suggest_delete_project（建议删除项目）`，生成删除项目配置。
 - `scripts/run_project_update_from_suggestions.py`：通用建议转项目管理配置入口，支持用 `--suggested-action（建议动作过滤）` 限定只转换某类建议；当前支持删除项目、关闭项目、按比例下调预算、按比例下调出价。
+- `scripts/run_account_remark_update_config.py`：生成账户备注修改 JSON。
+- `scripts/run_account_remark_update.py`：账户备注修改执行；使用工作台登录态，只能在用户确认后带 `--execute --yes` 执行。
 - `scripts/run_project_update_execute.py`：项目更新执行。
 - `scripts/run_project_schedule_restore_due.py`：到期时段恢复。
 
@@ -401,6 +405,60 @@ PYTHONPATH=src python3 scripts/run_project_update_execute.py \
 | 按巡检建议删除项目 | `scripts/run_project_delete_from_suggestions.py` -> `scripts/run_project_update_execute.py` |
 | 按巡检建议关闭/降预算/降出价 | `scripts/run_project_update_from_suggestions.py` -> `scripts/run_project_update_execute.py` |
 | 调预算/调出价/调 ROI 系数 | 对应 `*_config.py` -> `scripts/run_project_update_execute.py` |
+| 批量修改账户备注 | `scripts/run_account_remark_update_config.py` -> `scripts/run_account_remark_update.py` |
+
+批量修改账户备注的固定入口：
+
+```bash
+PYTHONPATH=src python3 scripts/run_account_remark_update_config.py \
+  --update-id diandian-hero-remark-20260525 \
+  --remark 点点英雄-微小-郭靖 \
+  --account 1866125087858183 \
+  --account 1866125088740552 \
+  --output configs/account-updates/diandian-hero-remark-20260525.local.json
+```
+
+这个命令只生成 `account_remark_update（账户备注修改）` JSON，不调用外部接口。
+
+用户确认后再执行：
+
+```bash
+PYTHONPATH=src python3 scripts/run_account_remark_update.py \
+  --account-remark-update configs/account-updates/diandian-hero-remark-20260525.local.json \
+  --config configs/project-update-execute.local.json \
+  --execute --yes
+```
+
+说明：
+
+- 请求体固定使用 `accountId（账户 ID）` 和 `remark（账户备注）`。
+- 工作台登录态放在 `data/secrets/oceanengine-workbench-session.local.json`，不提交。
+- 账户备注修改属于项目管理链路，但不会走项目 OpenAPI（开放接口），而是走工作台接口；执行结果仍写 JSON。
+- Streamlit（网页面板）可以在生成 JSON 后勾选确认并点击执行；页面仍然只是调用固定脚本，不直接拼接口。
+
+新产品账户准允许名单可以在 Streamlit（网页面板）`产品管理` 页生成，格式如下：
+
+```json
+{
+  "allowed_target_accounts": [
+    {
+      "advertiser_id": "185xxxxxxxxxxxxx",
+      "account_name": "点点英雄-微小-郭靖-001",
+      "product": "点点英雄",
+      "channel": "wx",
+      "enable": true
+    }
+  ]
+}
+```
+
+代码更新后重启 Streamlit（网页面板）：
+
+```bash
+PYTHONPATH=src python3 scripts/restart_streamlit_ui.py --port 8502
+```
+
+这个脚本会按端口停止旧 Streamlit 进程，重新启动网页面板，并检查本地页面是否可访问。
 
 从巡检建议生成关闭、降预算、降出价配置：
 
@@ -476,12 +534,74 @@ PYTHONPATH=src python3 scripts/run_project_update_execute.py \
 - `scripts/run_control_operation_log_history_sync.py`：操作日志同步。
 - `scripts/run_source_material_account_auto_push.py`：源素材账户自动补材。
 - `scripts/run_source_material_preload_to_accounts.py`：把源素材账户里的视频素材预推送到目标账户，减少创建时等待素材推送的时间。
+- `scripts/run_product_automation_job.py`：产品级自动化入口，按 `configs/products（产品配置目录）` 为每个产品生成请求 JSON，再调用固定脚本。
+
+产品级自动化配置放在 `configs/products/*.json`，核心字段：
+
+- `source_advertiser_id（源素材账户 ID）`：该产品自己的源素材账户。
+- `allowed_target_accounts_path（账户准允许名单路径）`：该产品可创建/预推送的目标账户名单。
+- `automation.account_discovery.account_name_keyword（账户名关键词）`：用于发现有消耗账户，例如 `点点英雄`。
+- `automation.account_discovery.account_remark_equals（账户备注匹配）`：用于巡检和目标账户筛选，例如 `点点英雄-微小-郭靖`。
+- `automation.material_daily_sync（每日素材入库）`：按账户名关键词发现有消耗账户，写入素材日维度数据。
+- `automation.source_material_auto_push（源素材账户自动补材）`：把该产品有消耗账户里的视频素材补到该产品源素材账户。
+- `automation.source_material_preload（源素材预推送）`：把该产品源素材账户里的视频素材预推送到配置的目标账户。
+- `automation.delivery_patrol（投放巡检）`：按该产品账户备注跑巡检。
+
+产品级只读 dry-run（预演，只生成请求和命令）：
+
+```bash
+PYTHONPATH=src python3 scripts/run_product_automation_job.py \
+  --job material_daily_sync \
+  --product-key diandian-hero \
+  --target-date yesterday \
+  --enable-readonly \
+  --dry-run
+```
+
+产品级每日素材入库：
+
+```bash
+PYTHONPATH=src python3 scripts/run_product_automation_job.py \
+  --job material_daily_sync \
+  --target-date yesterday \
+  --enable-readonly
+```
+
+产品级源素材账户自动补材，真实执行前仍需确认：
+
+```bash
+PYTHONPATH=src python3 scripts/run_product_automation_job.py \
+  --job source_material_auto_push \
+  --target-date yesterday \
+  --enable-readonly \
+  --execute \
+  --yes
+```
+
+产品级源素材预推送，真实执行前仍需确认：
+
+```bash
+PYTHONPATH=src python3 scripts/run_product_automation_job.py \
+  --job source_material_preload \
+  --target-date today \
+  --execute \
+  --yes
+```
+
+产品级投放巡检：
+
+```bash
+PYTHONPATH=src python3 scripts/run_product_automation_job.py \
+  --job delivery_patrol \
+  --target-date today \
+  --enable-readonly
+```
 
 源素材账户自动补材只处理视频素材，不处理文案素材；脚本会输出推送数量、失败样例和外部接口调用数。
 
 源素材预推送分两种固定用法：
 
-- 每日定时：源素材账户自动补材完成后，把新增源素材推送到昨天有消耗的 `account_remark（账户备注）=勇者突进-微小-郭靖` 账户。脚本会先查本地 `source_material_preload_ledger（源素材预推送账本）`、`account_materials（账户素材表）` 和 `material_bindings（素材绑定表）`，已经存在的素材不会重复推送。
+- 每日定时：源素材账户自动补材完成后，按产品配置把新增源素材推送到目标账户。脚本会先查本地 `source_material_preload_ledger（源素材预推送账本）`、`account_materials（账户素材表）` 和 `material_bindings（素材绑定表）`，已经存在的素材不会重复推送。
 - 新增账户手动：新增目标账户后，把源素材账户全部视频素材推送到指定新增账户。
 
 新增账户手动预推送命令：
@@ -661,11 +781,11 @@ PYTHONPATH=src python3 scripts/run_create_batch_review.py \
 - `02:30` 昨日有消耗账户操作日志同步。
 - `04:00` 每日报表同步。
 - `04:30` 素材类型校正。
-- `05:00` 源素材账户自动补材。
-- `05:20` 新增源素材预推送到昨天有消耗的郭靖账户。
+- `05:00` 产品级源素材账户自动补材。
+- `05:20` 产品级新增源素材预推送。
 - `05:30` 源素材表现汇总重建。
 - `06:00` 定时任务日报。
-- `08:30-23:30` 每小时投放账户巡检并推送飞书。
+- `08:30-23:30` 每小时产品级投放账户巡检并推送飞书。
 - `23:50` 投放运营日报。
 
 常用检查：

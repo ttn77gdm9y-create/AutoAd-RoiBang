@@ -17,6 +17,8 @@ bootstrap_project_root()
 from roibang_v2.workflows.create_http_transport import build_create_http_transport
 from roibang_v2.workflows.project_status_update_config import run_project_status_update_config_request
 
+PROJECT_UPDATE_RUNTIME_CONFIG = "configs/project-update-execute.local.json"
+
 
 def _blocked_payload(reason: str) -> dict:
     return {
@@ -59,7 +61,15 @@ def _parse_metric_filter(value: str) -> dict:
     return {"field": field, "op": op, "value": numeric_value}
 
 
-def run_from_args(argv: list[str] | None = None, *, default_action_type: str = "status_update") -> int:
+def _validate_entry_config_path(config_path: str) -> dict | None:
+    if str(config_path or "").strip() == PROJECT_UPDATE_RUNTIME_CONFIG:
+        return None
+    return _blocked_payload(
+        f"项目管理生成配置必须使用 {PROJECT_UPDATE_RUNTIME_CONFIG}，不能使用 {str(config_path or '').strip() or '空配置'}"
+    )
+
+
+def _build_parser(*, default_action_type: str = "status_update") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Generate project_update.json from live project list by account/name.")
     parser.add_argument("--project-update-id", required=True)
     parser.add_argument("--operator", default="")
@@ -89,12 +99,17 @@ def run_from_args(argv: list[str] | None = None, *, default_action_type: str = "
     parser.add_argument("--server-name-query", default="")
     parser.add_argument("--reason", default="")
     parser.add_argument("--output", required=True)
-    parser.add_argument("--config", default="")
+    parser.add_argument("--config", default=PROJECT_UPDATE_RUNTIME_CONFIG)
     parser.add_argument("--runs-dir", default="data/runs")
+    return parser
+
+
+def run_from_args(argv: list[str] | None = None, *, default_action_type: str = "status_update") -> int:
+    parser = _build_parser(default_action_type=default_action_type)
     args = parser.parse_args(argv)
 
-    if not args.config:
-        payload = _blocked_payload("project management update config requires --config for live project lookup")
+    payload = _validate_entry_config_path(args.config)
+    if payload is not None:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 1
 

@@ -25,11 +25,11 @@
       "enabled": true,
       "schedule": {"type": "cron", "expr": "0 4 * * *", "tz": "Asia/Shanghai"},
       "script": {
-        "command": ["python3", "scripts/run_daily_report_pipeline.py", "--config", "configs/runtime.openapi-execute.local.example.json", "--request", "configs/daily-report-pipeline.daily-readonly.example.json", "--enable-readonly"],
+        "command": ["python3", "scripts/run_product_automation_job.py", "--job", "daily_report_sync", "--target-date", "yesterday", "--enable-readonly"],
         "mode": "foreground"
       },
-      "policy": {"config": "configs/runtime.openapi-execute.local.example.json", "request": "configs/daily-report-pipeline.daily-readonly.example.json", "readonly": true},
-      "result_contract": {"workflow": "daily_report_pipeline", "artifact_dir": "data/runs/daily_report_pipeline", "must_include": ["ok", "execution_enabled", "external_api_calls", "summary", "steps"], "must_equal": {"execution_enabled": false}},
+      "policy": {"job": "daily_report_sync", "products_dir": "configs/products", "target_date": "yesterday", "readonly": true},
+      "result_contract": {"workflow": "product_automation_job_daily_report_sync", "artifact_dir": "data/runs/product_automation_job_daily_report_sync", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "summary", "results"], "must_equal": {"execution_enabled": false}},
       "delivery": {"channel": "none"}
     },
     {
@@ -67,11 +67,11 @@
       "enabled": true,
       "schedule": {"type": "cron", "expr": "0 2 * * *", "tz": "Asia/Shanghai"},
       "script": {
-        "command": ["python3", "scripts/run_material_history_backfill.py", "--config", "configs/runtime.openapi-execute.local.example.json", "--request", "configs/material-history-backfill.daily-readonly.example.json", "--enable-readonly"],
+        "command": ["python3", "scripts/run_product_automation_job.py", "--job", "material_daily_sync", "--target-date", "yesterday", "--enable-readonly"],
         "mode": "foreground"
       },
-      "policy": {"config": "configs/runtime.openapi-execute.local.example.json", "request": "configs/material-history-backfill.daily-readonly.example.json", "readonly": true},
-      "result_contract": {"workflow": "material_history_backfill", "artifact_dir": "data/runs/material_history_backfill", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "summary"], "must_equal": {"execution_enabled": false}},
+      "policy": {"job": "material_daily_sync", "products_dir": "configs/products", "target_date": "yesterday", "readonly": true},
+      "result_contract": {"workflow": "product_automation_job_material_daily_sync", "artifact_dir": "data/runs/product_automation_job_material_daily_sync", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "summary", "results"], "must_equal": {"execution_enabled": false}},
       "delivery": {"channel": "none"}
     },
     {
@@ -81,11 +81,11 @@
       "enabled": true,
       "schedule": {"type": "cron", "expr": "30 2 * * *", "tz": "Asia/Shanghai"},
       "script": {
-        "command": ["python3", "scripts/run_control_operation_log_history_sync.py", "--config", "configs/runtime.openapi-execute.local.example.json", "--request", "configs/operation-log-history-sync.daily-readonly.example.json", "--enable-readonly"],
+        "command": ["python3", "scripts/run_product_automation_job.py", "--job", "operation_log_sync", "--target-date", "yesterday", "--enable-readonly"],
         "mode": "foreground"
       },
-      "policy": {"config": "configs/runtime.openapi-execute.local.example.json", "request": "configs/operation-log-history-sync.daily-readonly.example.json", "readonly": true, "account_date_source": "material_daily_metrics_yesterday_spent_accounts"},
-      "result_contract": {"workflow": "control_operation_log_history_sync", "artifact_dir": "data/runs/control_operation_log_history_sync", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "summary"], "must_equal": {"execution_enabled": false}},
+      "policy": {"job": "operation_log_sync", "products_dir": "configs/products", "target_date": "yesterday", "readonly": true, "account_date_source": "material_daily_metrics_yesterday_spent_accounts"},
+      "result_contract": {"workflow": "product_automation_job_operation_log_sync", "artifact_dir": "data/runs/product_automation_job_operation_log_sync", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "summary", "results"], "must_equal": {"execution_enabled": false}},
       "delivery": {"channel": "none"}
     },
     {
@@ -109,11 +109,11 @@
       "enabled": true,
       "schedule": {"type": "cron", "expr": "0 5 * * *", "tz": "Asia/Shanghai"},
       "script": {
-        "command": ["python3", "scripts/run_source_material_account_auto_push.py", "--config", "configs/runtime.openapi-execute.local.example.json", "--request", "configs/source-material-account-auto-push.daily.example.json", "--enable-readonly", "--execute", "--yes"],
+        "command": ["python3", "scripts/run_product_automation_job.py", "--job", "source_material_auto_push", "--target-date", "yesterday", "--enable-readonly", "--execute", "--yes"],
         "mode": "foreground"
       },
-      "policy": {"config": "configs/runtime.openapi-execute.local.example.json", "request": "configs/source-material-account-auto-push.daily.example.json", "source_advertiser_id": "1856647522964490", "approval_policy": "fixed_daily_source_account_auto_push"},
-      "result_contract": {"workflow": "source_material_account_auto_push", "artifact_dir": "data/runs/source_material_account_auto_push", "must_include": ["ok", "workflow", "phase", "status", "execution_enabled", "external_api_calls", "summary", "blocking_reasons"], "must_equal": {}},
+      "policy": {"job": "source_material_auto_push", "products_dir": "configs/products", "target_date": "yesterday", "approval_policy": "fixed_daily_product_source_account_auto_push"},
+      "result_contract": {"workflow": "product_automation_job_source_material_auto_push", "artifact_dir": "data/runs/product_automation_job_source_material_auto_push", "must_include": ["ok", "workflow", "phase", "status", "execution_enabled", "external_api_calls", "summary", "blocking_reasons", "results"], "must_equal": {}},
       "delivery": {"channel": "none"}
     },
     {
@@ -123,11 +123,11 @@
       "enabled": true,
       "schedule": {"type": "cron", "expr": "20 5 * * *", "tz": "Asia/Shanghai"},
       "script": {
-        "command": ["python3", "scripts/run_source_material_preload_to_accounts.py", "--config", "configs/runtime.openapi-execute.local.example.json", "--request", "configs/source-material-preload-to-accounts.daily-guojing-yesterday-spent.example.json", "--execute", "--yes"],
+        "command": ["python3", "scripts/run_product_automation_job.py", "--job", "source_material_preload", "--target-date", "today", "--execute", "--yes"],
         "mode": "foreground"
       },
-      "policy": {"config": "configs/runtime.openapi-execute.local.example.json", "request": "configs/source-material-preload-to-accounts.daily-guojing-yesterday-spent.example.json", "source": "new_source_materials_to_yesterday_spent_guojing_accounts", "approval_policy": "fixed_daily_source_material_preload"},
-      "result_contract": {"workflow": "source_material_preload_to_accounts", "artifact_dir": "data/runs/source_material_preload_to_accounts", "must_include": ["ok", "workflow", "phase", "status", "execution_enabled", "external_api_calls", "summary", "blocking_reasons", "plan", "results"], "must_equal": {"execution_enabled": true}},
+      "policy": {"job": "source_material_preload", "products_dir": "configs/products", "target_date": "today", "source": "product_new_source_materials_to_configured_target_accounts", "approval_policy": "fixed_daily_product_source_material_preload"},
+      "result_contract": {"workflow": "product_automation_job_source_material_preload", "artifact_dir": "data/runs/product_automation_job_source_material_preload", "must_include": ["ok", "workflow", "phase", "status", "execution_enabled", "external_api_calls", "summary", "blocking_reasons", "results"], "must_equal": {"execution_enabled": true}},
       "delivery": {"channel": "none"}
     },
     {
@@ -207,11 +207,11 @@
       "enabled": true,
       "schedule": {"type": "cron", "expr": "30 8-23 * * *", "tz": "Asia/Shanghai"},
       "script": {
-        "command": ["python3", "scripts/run_delivery_patrol.py", "--config", "configs/runtime.openapi-execute.local.example.json", "--request", "configs/delivery-patrol.daily-readonly.example.json", "--enable-readonly"],
+        "command": ["python3", "scripts/run_product_automation_job.py", "--job", "delivery_patrol", "--target-date", "today", "--enable-readonly"],
         "mode": "foreground"
       },
-      "policy": {"config": "configs/runtime.openapi-execute.local.example.json", "request": "configs/delivery-patrol.daily-readonly.example.json", "readonly": true},
-      "result_contract": {"workflow": "delivery_patrol", "artifact_dir": "data/runs/delivery_patrol", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "summary", "accounts", "projects", "promotions", "message", "delivery", "delivery_patrol_suggestions"], "must_equal": {"execution_enabled": false}},
+      "policy": {"job": "delivery_patrol", "products_dir": "configs/products", "target_date": "today", "readonly": true},
+      "result_contract": {"workflow": "product_automation_job_delivery_patrol", "artifact_dir": "data/runs/product_automation_job_delivery_patrol", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "summary", "results"], "must_equal": {"execution_enabled": false}},
       "delivery": {"channel": "feishu"}
     },
     {

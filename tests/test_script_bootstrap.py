@@ -35,6 +35,9 @@ def test_fixed_project_and_scheduler_entrypoints_bootstrap_from_other_cwd(tmp_pa
     for script in (
         "run_project_management_update_config.py",
         "run_project_update_execute.py",
+        "run_account_remark_update_config.py",
+        "run_account_remark_update.py",
+        "restart_streamlit_ui.py",
         "run_scheduler_job.py",
     ):
         result = _run_help_from_tmp(script, tmp_path)

@@ -44,7 +44,7 @@ def test_render_cron_uses_fixed_script_paths_without_ai_execution_prompts():
     assert "--job-id roibang-strategy-approval" not in cron_text
     assert "--job-id roibang-strategy-execute" not in cron_text
     job_lines = [line for line in cron_text.splitlines() if line and not line.startswith("#")]
-    assert len(job_lines) == 10
+    assert len(job_lines) == 11
     assert any(line.startswith("0 2 * * * cd '/tmp/RoiBang v2'") and "--job-id roibang-material-history-yesterday" in line for line in job_lines)
     assert any(line.startswith("30 2 * * * cd '/tmp/RoiBang v2'") and "--job-id roibang-operation-log-yesterday-sync" in line for line in job_lines)
     assert any(line.startswith("0 4 * * * cd '/tmp/RoiBang v2'") and "--job-id roibang-daily-report-pipeline" in line for line in job_lines)
@@ -55,6 +55,7 @@ def test_render_cron_uses_fixed_script_paths_without_ai_execution_prompts():
     assert any(line.startswith("0 6 * * * cd '/tmp/RoiBang v2'") and "--job-id roibang-scheduler-status" in line for line in job_lines)
     assert any(line.startswith("30 8-23 * * * cd '/tmp/RoiBang v2'") and "--job-id roibang-delivery-patrol" in line for line in job_lines)
     assert any(line.startswith("10 0 * * * cd '/tmp/RoiBang v2'") and "--job-id roibang-project-schedule-restore-due" in line for line in job_lines)
+    assert any(line.startswith("50 23 * * * cd '/tmp/RoiBang v2'") and "--job-id roibang-delivery-readonly-report-chain" in line for line in job_lines)
 
 
 def test_render_launchd_plist_uses_calendar_interval_and_shell_command():
@@ -119,7 +120,7 @@ def test_render_scheduler_templates_writes_cron_and_launchd_examples(tmp_path):
 
     cron_file = tmp_path / "cron" / "roibang-v2.cron.example"
     launchd_file = tmp_path / "launchd" / "com.roibang.v2.roibang-source-material-account-auto-push.plist.example"
-    assert summary == {"cron_files": 1, "launchd_files": 10, "enabled_jobs": 10}
+    assert summary == {"cron_files": 1, "launchd_files": 11, "enabled_jobs": 11}
     assert cron_file.exists()
     assert launchd_file.exists()
     assert not stale_file.exists()
@@ -133,6 +134,7 @@ def test_render_scheduler_templates_writes_cron_and_launchd_examples(tmp_path):
     assert "roibang-scheduler-status" in cron_file.read_text()
     assert "roibang-project-schedule-restore-due" in cron_file.read_text()
     assert "roibang-delivery-patrol" in cron_file.read_text()
+    assert "roibang-delivery-readonly-report-chain" in cron_file.read_text()
     assert "roibang-strategy-plan" not in cron_file.read_text()
     assert "roibang-report-field-catalog" not in cron_file.read_text()
     assert "roibang-strategy-preflight" not in cron_file.read_text()
@@ -145,6 +147,7 @@ def test_render_scheduler_templates_writes_cron_and_launchd_examples(tmp_path):
     assert (tmp_path / "launchd" / "com.roibang.v2.roibang-material-kind-reconcile.plist.example").exists()
     assert (tmp_path / "launchd" / "com.roibang.v2.roibang-source-material-rollup-rebuild.plist.example").exists()
     assert (tmp_path / "launchd" / "com.roibang.v2.roibang-delivery-patrol.plist.example").exists()
+    assert (tmp_path / "launchd" / "com.roibang.v2.roibang-delivery-readonly-report-chain.plist.example").exists()
 
 
 def test_render_scheduler_cli_entrypoint_writes_summary(tmp_path, capsys):
@@ -163,5 +166,5 @@ def test_render_scheduler_cli_entrypoint_writes_summary(tmp_path, capsys):
 
     captured = capsys.readouterr()
     assert exit_code == 0
-    assert '"launchd_files": 10' in captured.out
+    assert '"launchd_files": 11' in captured.out
     assert (tmp_path / "cron" / "roibang-v2.cron.example").exists()

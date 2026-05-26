@@ -222,6 +222,279 @@ def test_scheduler_status_reports_data_freshness_and_contracts(tmp_path):
     assert "待恢复 0，已恢复 0，失败待处理 0" in result["message"]
 
 
+def test_scheduler_status_message_includes_product_automation_details(tmp_path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO product_source_materials
+              (product, source_advertiser_id, material_id, video_id, name, material_type, is_active, source, synced_at)
+            VALUES ('点点英雄', 'src-dd', 'm1', 'v1', '素材1', 'video', 1, 'test', 'now')
+            """
+        )
+    registry = {
+        "jobs": [
+            {
+                "id": "roibang-source-material-account-auto-push",
+                "name": "源素材账户自动补材",
+                "enabled": True,
+                "schedule": {"type": "cron", "expr": "0 5 * * *", "tz": "Asia/Shanghai"},
+                "script": {"command": ["python3", "scripts/run_product_automation_job.py"], "mode": "foreground"},
+                "policy": {},
+                "result_contract": {
+                    "workflow": "product_automation_job_source_material_auto_push",
+                    "artifact_dir": "data/runs/product_automation_job_source_material_auto_push",
+                    "must_include": ["ok", "workflow", "execution_enabled", "external_api_calls", "summary", "results"],
+                    "must_equal": {"execution_enabled": True},
+                },
+            }
+        ]
+    }
+    request = {
+        "scheduler_status": {
+            "project_name": "RoiBang-V2",
+            "timezone": "Asia/Shanghai",
+            "expected_data_date": {"mode": "yesterday"},
+            "jobs": [
+                {
+                    "job_id": "roibang-source-material-account-auto-push",
+                    "display_name": "05:00 源素材账户自动补材",
+                    "data_check": {
+                        "type": "source_material_account",
+                        "source_advertiser_id": "src-dd",
+                        "product": "点点英雄",
+                    },
+                }
+            ],
+            "delivery": {"feishu": {"enabled": False}},
+        }
+    }
+    _write_artifact(
+        tmp_path / "data/runs/product_automation_job_source_material_auto_push/20260526T050000Z.json",
+        {
+            "ok": True,
+            "workflow": "product_automation_job_source_material_auto_push",
+            "execution_enabled": True,
+            "external_api_calls": 2,
+            "summary": {"job": "source_material_auto_push", "product_count": 1},
+            "results": [
+                {
+                    "product": "点点英雄",
+                    "product_key": "diandian-hero",
+                    "job": "source_material_auto_push",
+                    "ok": True,
+                    "parsed_stdout": {
+                        "status": "completed",
+                        "summary": {
+                            "source_advertiser_id": "src-dd",
+                            "new_material_count": 3,
+                            "pushed_video_count": 3,
+                            "failed_batch_count": 0,
+                        },
+                    },
+                }
+            ],
+        },
+    )
+
+    result = build_scheduler_status_report(
+        request,
+        registry=registry,
+        db_path=db_path,
+        runs_dir=tmp_path / "data/runs",
+        repo_root=tmp_path,
+        now=datetime(2026, 5, 26, 6, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+        launchctl_status_reader=lambda job_id: {"loaded": True, "runs": 1, "last_exit_code": "0"},
+    )
+
+    assert result["ok"] is True
+    assert "点点英雄：完成源素材自动补材，源素材账户 src-dd，新增素材 3 个" in result["message"]
+
+
+def test_scheduler_status_reads_legacy_product_automation_artifact(tmp_path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO product_source_materials
+              (product, source_advertiser_id, material_id, video_id, name, material_type, is_active, source, synced_at)
+            VALUES ('点点英雄', 'src-dd', 'm1', 'v1', '素材1', 'video', 1, 'test', 'now')
+            """
+        )
+    registry = {
+        "jobs": [
+            {
+                "id": "roibang-source-material-account-auto-push",
+                "name": "源素材账户自动补材",
+                "enabled": True,
+                "schedule": {"type": "cron", "expr": "0 5 * * *", "tz": "Asia/Shanghai"},
+                "script": {"command": ["python3", "scripts/run_product_automation_job.py"], "mode": "foreground"},
+                "policy": {},
+                "result_contract": {
+                    "workflow": "product_automation_job_source_material_auto_push",
+                    "artifact_dir": "data/runs/product_automation_job_source_material_auto_push",
+                    "must_include": ["ok", "workflow", "execution_enabled", "external_api_calls", "summary", "results"],
+                    "must_equal": {"execution_enabled": True},
+                },
+            }
+        ]
+    }
+    request = {
+        "scheduler_status": {
+            "project_name": "RoiBang-V2",
+            "timezone": "Asia/Shanghai",
+            "expected_data_date": {"mode": "yesterday"},
+            "jobs": [
+                {
+                    "job_id": "roibang-source-material-account-auto-push",
+                    "display_name": "05:00 源素材账户自动补材",
+                    "data_check": {
+                        "type": "source_material_account",
+                        "source_advertiser_id": "src-dd",
+                        "product": "点点英雄",
+                    },
+                }
+            ],
+            "delivery": {"feishu": {"enabled": False}},
+        }
+    }
+    _write_artifact(
+        tmp_path / "data/runs/product_automation_job/20260526T050000Z.json",
+        {
+            "ok": True,
+            "workflow": "product_automation_job",
+            "execution_enabled": True,
+            "external_api_calls": 2,
+            "summary": {"job": "source_material_auto_push", "product_count": 1},
+            "results": [
+                {
+                    "product": "点点英雄",
+                    "product_key": "diandian-hero",
+                    "ok": True,
+                    "summary": {
+                        "source_advertiser_id": "src-dd",
+                        "new_material_count": 3,
+                        "pushed_video_count": 3,
+                        "failed_batch_count": 0,
+                    },
+                }
+            ],
+        },
+    )
+
+    result = build_scheduler_status_report(
+        request,
+        registry=registry,
+        db_path=db_path,
+        runs_dir=tmp_path / "data/runs",
+        repo_root=tmp_path,
+        now=datetime(2026, 5, 26, 6, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+        launchctl_status_reader=lambda job_id: {"loaded": True, "runs": 1, "last_exit_code": "0"},
+    )
+
+    assert result["ok"] is True
+    assert result["jobs"][0]["artifact_contract"]["legacy_product_automation_artifact"] is True
+    assert "点点英雄：完成源素材自动补材，源素材账户 src-dd，新增素材 3 个" in result["message"]
+
+
+def test_scheduler_status_reports_scheduler_command_drift(tmp_path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+    registry = {
+        "jobs": [
+            {
+                "id": "roibang-daily-report-pipeline",
+                "name": "每日报表同步",
+                "enabled": True,
+                "schedule": {"type": "cron", "expr": "0 4 * * *", "tz": "Asia/Shanghai"},
+                "script": {
+                    "command": [
+                        "python3",
+                        "scripts/run_product_automation_job.py",
+                        "--job",
+                        "daily_report_sync",
+                        "--target-date",
+                        "yesterday",
+                        "--enable-readonly",
+                    ],
+                    "mode": "foreground",
+                },
+                "policy": {},
+                "result_contract": {
+                    "workflow": "product_automation_job_daily_report_sync",
+                    "artifact_dir": "data/runs/product_automation_job_daily_report_sync",
+                    "must_include": ["ok", "workflow", "execution_enabled", "external_api_calls", "summary", "results"],
+                    "must_equal": {"execution_enabled": False},
+                },
+            }
+        ]
+    }
+    _write_artifact(
+        tmp_path / "data/runs/product_automation_job_daily_report_sync/20260526T040000Z.json",
+        {
+            "ok": True,
+            "workflow": "product_automation_job_daily_report_sync",
+            "execution_enabled": False,
+            "external_api_calls": 1,
+            "summary": {"job": "daily_report_sync", "product_count": 1},
+            "results": [],
+        },
+    )
+    _write_artifact(
+        tmp_path / "data/runs/scheduler/roibang-daily-report-pipeline/20260526T040000Z.json",
+        {
+            "ok": True,
+            "workflow": "scheduler_job",
+            "started_at": "2026-05-25T20:00:00+00:00",
+            "finished_at": "2026-05-25T20:00:01+00:00",
+            "script": {
+                "command": [
+                    "python3",
+                    "scripts/run_daily_report_pipeline.py",
+                    "--config",
+                    "configs/runtime.openapi-execute.local.example.json",
+                    "--request",
+                    "configs/daily-report-pipeline.daily-readonly.example.json",
+                    "--enable-readonly",
+                ],
+                "exit_code": 0,
+            },
+            "violations": [],
+        },
+    )
+    request = {
+        "scheduler_status": {
+            "project_name": "RoiBang-V2",
+            "timezone": "Asia/Shanghai",
+            "expected_data_date": {"mode": "yesterday"},
+            "jobs": [
+                {
+                    "job_id": "roibang-daily-report-pipeline",
+                    "display_name": "04:00 每日报表同步",
+                    "data_check": {"type": "metric_snapshots"},
+                }
+            ],
+            "delivery": {"feishu": {"enabled": False}},
+        }
+    }
+
+    result = build_scheduler_status_report(
+        request,
+        registry=registry,
+        db_path=db_path,
+        runs_dir=tmp_path / "data/runs",
+        repo_root=tmp_path,
+        now=datetime(2026, 5, 26, 6, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+        launchctl_status_reader=lambda job_id: {"loaded": True, "runs": 1, "last_exit_code": "0"},
+    )
+
+    assert result["ok"] is False
+    assert "定时任务命令与注册表不一致" in result["jobs"][0]["issues"]
+    assert "定时任务命令与注册表不一致" in result["message"]
+
+
 def test_scheduler_status_reports_restore_queue_attention(tmp_path):
     db_path = tmp_path / "roibang.sqlite3"
     bootstrap_database(db_path)
