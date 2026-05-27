@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -14,8 +15,26 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _task_timestamp() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
 def _text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _slug(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip())
+    return cleaned.strip("-") or "operation"
+
+
+def _feishu_status(result: dict[str, Any]) -> str:
+    feishu = result.get("feishu") if isinstance(result.get("feishu"), dict) else {}
+    if not feishu:
+        return ""
+    if not bool(feishu.get("attempted")):
+        return "not_attempted"
+    return "sent" if bool(feishu.get("ok")) else "failed"
 
 
 def _project_units(project: dict[str, Any]) -> list[dict[str, Any]]:
@@ -157,8 +176,14 @@ def record_frontend_operation(
     result: dict[str, Any],
     details: dict[str, Any],
 ) -> dict[str, Any]:
+    task_id = _text(request.get("task_id")) or f"ui-{_slug(operation_type)}-{_task_timestamp()}"
+    review = details.get("review") if isinstance(details.get("review"), dict) else {}
+    review_summary = review.get("summary") if isinstance(review.get("summary"), dict) else {}
+    review_blocking_reasons = review.get("blocking_reasons") if isinstance(review.get("blocking_reasons"), list) else []
+    review_warning_count = int(review_summary.get("warning_count") or len(review.get("warnings") or []))
     payload = {
         "ok": status in {"completed", "succeeded", "success"},
+        "task_id": task_id,
         "workflow": "frontend_operation_log",
         "phase": "frontend",
         "status": status,
@@ -170,9 +195,16 @@ def record_frontend_operation(
             "operation_type": operation_type,
             "status": status,
             "product": _text(details.get("product")),
+            "product_key": _text(details.get("product_key")),
             "account_count": len(details.get("accounts") or []),
             "material_assignment_count": int(details.get("material_assignment_count") or 0),
             "unique_material_count": int(details.get("unique_material_count") or 0),
+            "review_status": "passed" if (review and bool(review.get("can_execute"))) else ("blocked" if review else ""),
+            "review_blocking_reason_count": len(review_blocking_reasons),
+            "review_warning_count": review_warning_count,
+            "execute_artifact_path": _text(result.get("execute_artifact_path")),
+            "report_artifact_path": _text(result.get("report_artifact_path")),
+            "feishu_status": _feishu_status(result),
         },
         "request": request,
         "result": result,
@@ -182,6 +214,7 @@ def record_frontend_operation(
     artifact = write_run_artifact(runs_dir, "frontend_operation_log", payload)
     event = {
         "created_at": payload["created_at"],
+        "task_id": task_id,
         "operation_type": operation_type,
         "status": status,
         "actor": actor,

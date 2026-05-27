@@ -81,8 +81,20 @@ def test_record_frontend_operation_writes_artifact_and_jsonl(tmp_path: Path):
         status="completed",
         actor="郭靖",
         request={"plan_path": "data/runs/create_mode/example.json"},
-        result={"ok": True},
-        details=details,
+        result={
+            "ok": True,
+            "execute_artifact_path": "data/runs/create_live_execute_once/result.json",
+            "report_artifact_path": "data/runs/create_live_execute_report/report.json",
+            "feishu": {"attempted": True, "ok": True},
+        },
+        details={
+            **details,
+            "review": {
+                "can_execute": False,
+                "summary": {"missing_video_id_material_count": 1, "warning_count": 2},
+                "blocking_reasons": ["缺 video_id（视频 ID）素材数：1"],
+            },
+        },
     )
 
     artifact_path = Path(result["artifact_path"])
@@ -90,8 +102,17 @@ def test_record_frontend_operation_writes_artifact_and_jsonl(tmp_path: Path):
     assert artifact_path.exists()
     assert event_log_path.exists()
     artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+    assert artifact["task_id"].startswith("ui-create_plan_generate-")
     assert artifact["summary"]["product"] == "点点英雄"
+    assert artifact["summary"]["product_key"] == "diandian-hero"
     assert artifact["summary"]["material_assignment_count"] == 1
+    assert artifact["summary"]["review_status"] == "blocked"
+    assert artifact["summary"]["review_blocking_reason_count"] == 1
+    assert artifact["summary"]["review_warning_count"] == 2
+    assert artifact["summary"]["execute_artifact_path"] == "data/runs/create_live_execute_once/result.json"
+    assert artifact["summary"]["report_artifact_path"] == "data/runs/create_live_execute_report/report.json"
+    assert artifact["summary"]["feishu_status"] == "sent"
     event = json.loads(event_log_path.read_text(encoding="utf-8").strip())
+    assert event["task_id"] == artifact["task_id"]
     assert event["operation_type"] == "create_plan_generate"
     assert event["artifact_path"] == str(artifact_path)

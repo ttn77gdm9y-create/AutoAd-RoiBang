@@ -310,6 +310,25 @@ def test_scheduler_status_message_includes_product_automation_details(tmp_path):
 
     assert result["ok"] is True
     assert "点点英雄：完成源素材自动补材，源素材账户 src-dd，新增素材 3 个" in result["message"]
+    assert result["summary"]["product_count"] == 1
+    product_summary = result["product_summary"][0]
+    assert product_summary["product"] == "点点英雄"
+    assert product_summary["product_key"] == "diandian-hero"
+    assert product_summary["job_count"] == 1
+    assert product_summary["ok_count"] == 1
+    assert product_summary["attention_count"] == 0
+    product_job = product_summary["jobs"][0]
+    assert product_job["job_id"] == "roibang-source-material-account-auto-push"
+    assert product_job["display_name"] == "05:00 源素材账户自动补材"
+    assert product_job["job"] == "source_material_auto_push"
+    assert product_job["status"] == "ok"
+    assert product_job["artifact_path"].endswith("product_automation_job_source_material_auto_push/20260526T050000Z.json")
+    assert product_job["summary"] == {
+        "source_advertiser_id": "src-dd",
+        "new_material_count": 3,
+        "pushed_video_count": 3,
+        "failed_batch_count": 0,
+    }
 
 
 def test_scheduler_status_reads_legacy_product_automation_artifact(tmp_path):

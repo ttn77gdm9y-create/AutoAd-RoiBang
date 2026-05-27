@@ -441,6 +441,45 @@ def _product_results_from_artifact(artifact: dict[str, Any]) -> list[dict[str, A
     return product_results
 
 
+def _product_summary_from_jobs(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    products: dict[str, dict[str, Any]] = {}
+    for job in jobs:
+        job_id = str(job.get("job_id") or "")
+        display_name = str(job.get("display_name") or job_id)
+        for result in job.get("product_results") or []:
+            if not isinstance(result, dict):
+                continue
+            product_key = str(result.get("product_key") or "")
+            product = str(result.get("product") or product_key or "未知产品")
+            key = product_key or product
+            row = products.setdefault(
+                key,
+                {
+                    "product": product,
+                    "product_key": product_key,
+                    "job_count": 0,
+                    "ok_count": 0,
+                    "attention_count": 0,
+                    "jobs": [],
+                },
+            )
+            ok = bool(result.get("ok", True)) and str(job.get("status") or "") == "ok"
+            row["job_count"] = int(row["job_count"]) + 1
+            row["ok_count"] = int(row["ok_count"]) + (1 if ok else 0)
+            row["attention_count"] = int(row["attention_count"]) + (0 if ok else 1)
+            row["jobs"].append(
+                {
+                    "job_id": job_id,
+                    "display_name": display_name,
+                    "job": str(result.get("job") or ""),
+                    "status": "ok" if ok else "attention",
+                    "artifact_path": str(result.get("artifact_path") or (job.get("artifact_contract") or {}).get("artifact_path") or ""),
+                    "summary": result.get("summary") if isinstance(result.get("summary"), dict) else {},
+                }
+            )
+    return sorted(products.values(), key=lambda row: (str(row.get("product") or ""), str(row.get("product_key") or "")))
+
+
 def _job_status(
     *,
     job_cfg: dict[str, Any],
@@ -638,6 +677,7 @@ def build_scheduler_status_report(
             if isinstance(job_cfg, dict)
         ]
     message = _format_message(str(cfg.get("project_name") or "RoiBang-V2"), current.date().isoformat(), expected_date, jobs)
+    product_summary = _product_summary_from_jobs(jobs)
     return {
         "ok": all(job["status"] == "ok" for job in jobs),
         "workflow": "scheduler_status",
@@ -650,8 +690,10 @@ def build_scheduler_status_report(
             "job_count": len(jobs),
             "ok_count": sum(1 for job in jobs if job["status"] == "ok"),
             "attention_count": sum(1 for job in jobs if job["status"] != "ok"),
+            "product_count": len(product_summary),
         },
         "jobs": jobs,
+        "product_summary": product_summary,
         "message": message,
         "runs_dir": str(runs_dir),
     }

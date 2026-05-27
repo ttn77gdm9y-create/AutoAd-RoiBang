@@ -5,8 +5,6 @@ import copy
 import json
 import shlex
 import sys
-from collections import Counter
-from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +21,21 @@ import streamlit.components.v1 as components
 from roibang_v2.create_mode_rules import normalize_create_mode_config
 from roibang_v2.ui.artifact_reader import compact_summary
 from roibang_v2.ui.artifact_reader import load_latest_artifact
+from roibang_v2.ui.background_tasks import build_runner_command
+from roibang_v2.ui.background_tasks import build_task_record
+from roibang_v2.ui.background_tasks import start_runner
+from roibang_v2.ui.background_tasks import write_task_record
+from roibang_v2.ui.create_plan_preview import build_create_plan_preview
+from roibang_v2.ui.create_plan_preview import build_create_plan_preview_from_review
+from roibang_v2.ui.create_plan_preview import filter_preview_materials
+from roibang_v2.ui.create_plan_preview import filter_preview_units
+from roibang_v2.ui.create_plan_review import build_create_plan_review
+from roibang_v2.ui.create_template_health import build_create_mode_health
+from roibang_v2.ui.create_template_health import build_create_template_health
+from roibang_v2.ui.operation_logs import filter_operation_logs
+from roibang_v2.ui.operation_logs import load_operation_log_detail
+from roibang_v2.ui.operation_logs import load_operation_logs
+from roibang_v2.ui.scheduler_status_view import build_scheduler_status_view
 from roibang_v2.ui.script_runner import build_account_remark_config_command
 from roibang_v2.ui.script_runner import build_account_remark_execute_command
 from roibang_v2.ui.script_runner import build_ai_template_drafts_command
@@ -53,6 +66,11 @@ from roibang_v2.ui.streamlit_shell import save_product_draft
 from roibang_v2.ui.streamlit_shell import save_product_create_mode_config
 from roibang_v2.ui.streamlit_shell import save_product_create_template_catalog
 from roibang_v2.ui.streamlit_shell import split_account_ids
+from roibang_v2.ui.task_runs import load_frontend_task_rows
+from roibang_v2.ui.task_runs import load_recent_task_runs
+from roibang_v2.ui.task_runs import load_task_detail
+from roibang_v2.ui.task_runs import read_create_live_progress
+from roibang_v2.ui.task_status_summary import build_task_status_summary
 from roibang_v2.workflows.frontend_operation_log import create_operation_details_from_plan
 from roibang_v2.workflows.frontend_operation_log import record_frontend_operation
 
@@ -94,6 +112,91 @@ def _show_summary(title: str, payload: dict[str, Any]) -> None:
         if details:
             with st.expander("查看执行摘要 JSON", expanded=False):
                 st.json(details)
+
+
+def _show_scheduler_status_panel(payload: dict[str, Any], *, compact: bool = False) -> None:
+    view = build_scheduler_status_view(payload)
+    summary = view.get("summary") if isinstance(view.get("summary"), dict) else {}
+    with st.container(border=True):
+        st.subheader("定时任务状态")
+        cols = st.columns(6)
+        cols[0].metric("总体", "正常" if view.get("ok") else "需要处理")
+        cols[1].metric("报告日期", str(summary.get("report_date") or "-"))
+        cols[2].metric("数据应到", str(summary.get("expected_data_date") or "-"))
+        cols[3].metric("任务", str(summary.get("job_count", 0)))
+        cols[4].metric("异常", str(summary.get("attention_count", 0)))
+        cols[5].metric("产品", str(summary.get("product_count", 0)))
+        message = str(view.get("message") or "").strip()
+        if message and compact:
+            with st.expander("查看定时任务日报文本", expanded=False):
+                st.code(message, language="text")
+        elif message:
+            st.text_area("定时任务日报文本", value=message, height=220)
+
+        product_rows = view.get("product_rows") if isinstance(view.get("product_rows"), list) else []
+        if product_rows:
+            st.markdown("**产品级结果**")
+            st.dataframe(
+                [
+                    {
+                        "产品": row.get("product"),
+                        "产品 key": row.get("product_key"),
+                        "任务": row.get("display_name"),
+                        "任务类型": row.get("job"),
+                        "状态": _format_status(row.get("status")),
+                        "结果状态": _format_status(row.get("result_status")),
+                        "artifact（执行结果文件）": row.get("artifact_path"),
+                    }
+                    for row in product_rows
+                    if isinstance(row, dict)
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        issue_rows = view.get("issue_rows") if isinstance(view.get("issue_rows"), list) else []
+        if issue_rows:
+            st.error(f"发现 {len(issue_rows)} 个定时任务问题。")
+            st.dataframe(
+                [
+                    {
+                        "任务": row.get("display_name"),
+                        "任务 ID": row.get("job_id"),
+                        "问题": row.get("issue"),
+                    }
+                    for row in issue_rows
+                    if isinstance(row, dict)
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        if not compact:
+            job_rows = view.get("job_rows") if isinstance(view.get("job_rows"), list) else []
+            if job_rows:
+                st.markdown("**任务级状态**")
+                st.dataframe(
+                    [
+                        {
+                            "任务": row.get("display_name"),
+                            "任务 ID": row.get("job_id"),
+                            "状态": _format_status(row.get("status")),
+                            "数据状态": _format_status(row.get("data_status")),
+                            "数据类型": row.get("data_type"),
+                            "launchd 退出码": row.get("last_exit_code"),
+                            "workflow artifact（执行结果文件）": row.get("artifact_path"),
+                            "scheduler artifact（执行结果文件）": row.get("scheduler_artifact_path"),
+                        }
+                        for row in job_rows
+                        if isinstance(row, dict)
+                    ],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            artifact_rows = view.get("artifact_rows") if isinstance(view.get("artifact_rows"), list) else []
+            if artifact_rows:
+                with st.expander("查看 artifact（执行结果文件）列表", expanded=False):
+                    st.dataframe(artifact_rows, use_container_width=True, hide_index=True)
 
 
 def _disable_streamlit_cache_shortcut() -> None:
@@ -138,14 +241,33 @@ def _format_status(value: Any) -> str:
     labels = {
         "completed": "已完成",
         "blocked": "已阻断",
+        "passed": "已通过",
         "control_analysis": "分析完成",
         "control_config": "配置生成",
         "control_execute": "执行完成",
         "phase1": "正常",
         "missing": "未找到",
         "failed": "失败",
+        "ok": "正常",
+        "attention": "需要处理",
+        "stale": "缺数据",
+        "unknown": "未知",
         "planned_only": "仅生成计划",
         "drafted": "草稿已生成",
+        "create_http_completed": "真实创建完成",
+        "create_http_failed": "真实创建失败",
+        "config_ready": "配置就绪",
+        "completed_with_failures": "部分失败",
+        "queued": "排队中",
+        "running": "执行中",
+        "running_post_1": "生成汇报中",
+        "retrying": "重试中",
+        "reported_completed": "汇报完成",
+        "reported_partial_completed": "部分失败已汇报",
+        "skipped_existing_provider_id": "跳过已创建项目",
+        "skipped_existing_target_material": "跳过已推送素材",
+        "sent": "已推送",
+        "not_attempted": "未推送",
     }
     return labels.get(raw, raw or "-")
 
@@ -285,8 +407,31 @@ def _show_mode_detail(
         or catalog.get("effective_touch_url")
         or ""
     ).strip()
+    health = build_create_template_health(mode, catalog)
+    health_summary = health.get("summary") if isinstance(health.get("summary"), dict) else {}
 
     with st.expander("当前模板内容", expanded=False):
+        st.markdown("**模板健康检查**")
+        cols = st.columns(6)
+        cols[0].metric("状态", _format_status(health.get("status")))
+        cols[1].metric("产品专属", _format_yes_no(health_summary.get("product_specific_template")))
+        cols[2].metric("随机素材", _format_yes_no(health_summary.get("selection_type") == "random_materials"))
+        cols[3].metric("写死出价", _format_yes_no(health_summary.get("hardcoded_cpa_bid")))
+        cols[4].metric("写死 ROI", _format_yes_no(health_summary.get("hardcoded_roi_coefficient")))
+        cols[5].metric("要求回看", _format_yes_no(health_summary.get("requires_lookback_days")))
+        blocking_reasons = health.get("blocking_reasons") if isinstance(health.get("blocking_reasons"), list) else []
+        warnings = health.get("warnings") if isinstance(health.get("warnings"), list) else []
+        if blocking_reasons:
+            st.error("模板健康检查未通过：" + "；".join(str(item) for item in blocking_reasons))
+        else:
+            st.success("模板健康检查通过。")
+        if warnings:
+            with st.expander("查看模板风险提示", expanded=False):
+                for item in warnings:
+                    st.warning(str(item))
+        with st.expander("查看模板健康检查 JSON", expanded=False):
+            st.json(health)
+
         cols = st.columns(5)
         cols[0].metric("日预算", str(defaults.get("daily_budget", "-")))
         cols[1].metric("项目出价", str(defaults.get("cpa_bid", "不写")))
@@ -366,7 +511,37 @@ def _show_mode_detail(
             st.json(mode)
 
 
-def _mode_draft_editor(mode: dict[str, Any], *, drafts_dir: Path, mode_dir: Path) -> None:
+def _show_create_mode_health(health: dict[str, Any], *, expanded_json: bool = False) -> None:
+    summary = health.get("summary") if isinstance(health.get("summary"), dict) else {}
+    cols = st.columns(6)
+    cols[0].metric("模式健康", _format_status(health.get("status")))
+    cols[1].metric("随机素材", _format_yes_no(summary.get("random_materials")))
+    cols[2].metric("写死出价", _format_yes_no(summary.get("hardcoded_cpa_bid")))
+    cols[3].metric("写死 ROI", _format_yes_no(summary.get("hardcoded_roi_coefficient")))
+    cols[4].metric("要求回看", _format_yes_no(summary.get("requires_lookback_days")))
+    cols[5].metric("产品专属", _format_yes_no(summary.get("product_specific_template")))
+    blocking_reasons = health.get("blocking_reasons") if isinstance(health.get("blocking_reasons"), list) else []
+    warnings = health.get("warnings") if isinstance(health.get("warnings"), list) else []
+    if blocking_reasons:
+        st.error("创建模式健康检查未通过：" + "；".join(str(item) for item in blocking_reasons))
+    else:
+        st.success("创建模式健康检查通过。")
+    if warnings:
+        with st.expander("查看创建模式风险提示", expanded=False):
+            for item in warnings:
+                st.warning(str(item))
+    with st.expander("查看创建模式健康检查 JSON", expanded=expanded_json):
+        st.json(health)
+
+
+def _mode_draft_editor(
+    mode: dict[str, Any],
+    *,
+    drafts_dir: Path,
+    mode_dir: Path,
+    template_catalog: dict[str, Any],
+    runs_dir: str,
+) -> None:
     defaults = dict(mode.get("defaults")) if isinstance(mode.get("defaults"), dict) else {}
     requirements = dict(mode.get("material_requirements")) if isinstance(mode.get("material_requirements"), dict) else {}
     selection = dict(mode.get("material_selection")) if isinstance(mode.get("material_selection"), dict) else {}
@@ -380,6 +555,7 @@ def _mode_draft_editor(mode: dict[str, Any], *, drafts_dir: Path, mode_dir: Path
             st.caption("这里会覆盖该产品专属 .local.json 创建模板；只改本地 JSON，不执行真实创建。")
         else:
             st.caption("这里保存的是草稿，不会覆盖正式创建模板，也不会被创建脚本自动读取。")
+        _show_create_mode_health(build_create_mode_health(mode, template_catalog))
         base_key = str(mode.get("mode_key") or "create_mode")
         draft_key = st.text_input(
             "模式键",
@@ -555,6 +731,11 @@ def _mode_draft_editor(mode: dict[str, Any], *, drafts_dir: Path, mode_dir: Path
             draft["material_selection"] = draft_selection
             draft["unit_creative_selection"] = creative
             draft = normalize_create_mode_config(draft)
+            health = build_create_mode_health(draft, template_catalog)
+            if not bool(health.get("ok")):
+                st.error("保存已阻断，请先修复创建模式健康检查问题。")
+                _show_create_mode_health(health, expanded_json=True)
+                return
 
             try:
                 if can_save_official:
@@ -564,11 +745,39 @@ def _mode_draft_editor(mode: dict[str, Any], *, drafts_dir: Path, mode_dir: Path
             except Exception as exc:
                 st.error(f"保存失败：{exc}")
             else:
+                operation_log = _record_simple_ui_operation(
+                    runs_dir=runs_dir,
+                    operation_type="create_mode_update",
+                    status="completed",
+                    actor="",
+                    request={
+                        "mode_key": draft.get("mode_key"),
+                        "product_key": draft.get("product_key"),
+                        "template_key": draft.get("template_key"),
+                        "official": can_save_official,
+                    },
+                    result={
+                        "ok": True,
+                        "status": "saved",
+                        "artifact_path": str(output),
+                        "health": health,
+                    },
+                    details={
+                        "product": str(draft.get("product") or ""),
+                        "product_key": str(draft.get("product_key") or ""),
+                        "mode_key": str(draft.get("mode_key") or ""),
+                        "template_key": str(draft.get("template_key") or ""),
+                        "official": can_save_official,
+                        "health": health,
+                    },
+                )
                 st.success(f"已保存：{output}")
                 if can_save_official:
                     st.caption("已保存为该产品正式创建模板；后续生成计划会读取这个 .local.json。")
                 else:
                     st.caption("这只是草稿；正式模板仍需后续转正脚本处理。")
+                st.caption(f"前端操作日志：{operation_log.get('artifact_path')}")
+                _show_create_mode_health(health)
                 st.json(draft)
 
 
@@ -589,7 +798,13 @@ def _list_to_text(values: Any) -> str:
     return "\n".join(str(item) for item in values)
 
 
-def _base_template_editor(mode: dict[str, Any], *, template_catalog: dict[str, Any], template_dir: Path) -> None:
+def _base_template_editor(
+    mode: dict[str, Any],
+    *,
+    template_catalog: dict[str, Any],
+    template_dir: Path,
+    runs_dir: str,
+) -> None:
     product_key = str(mode.get("product_key") or "").strip()
     template_key = str(mode.get("template_key") or "").strip()
     if not product_key or not template_key:
@@ -618,6 +833,22 @@ def _base_template_editor(mode: dict[str, Any], *, template_catalog: dict[str, A
             "游戏名",
             value=str(template.get("game_name") or catalog.get("product") or ""),
             key=f"base_game_name_{product_key}_{template_key}",
+        )
+        cols = st.columns(3)
+        copy_product_name = cols[0].text_input(
+            "文案产品名",
+            value=str(template.get("copy_product_name") or template.get("product_name") or ""),
+            key=f"base_copy_product_{product_key}_{template_key}",
+        )
+        copy_source_name = cols[1].text_input(
+            "文案来源名",
+            value=str(template.get("copy_source_name") or template.get("source_name") or ""),
+            key=f"base_copy_source_{product_key}_{template_key}",
+        )
+        copy_review_note = cols[2].text_input(
+            "文案审核备注",
+            value=str(template.get("copy_review_note") or ""),
+            key=f"base_copy_note_{product_key}_{template_key}",
         )
         title_text = st.text_area(
             "文案池，每行一条",
@@ -651,20 +882,64 @@ def _base_template_editor(mode: dict[str, Any], *, template_catalog: dict[str, A
             updated_template["game_name"] = game_name.strip()
             updated_template["source_name"] = game_name.strip()
             updated_template["product_name"] = game_name.strip()
+            updated_template["copy_product_name"] = copy_product_name.strip()
+            updated_template["copy_source_name"] = copy_source_name.strip()
+            updated_template["copy_review_note"] = copy_review_note.strip()
             updated_template["title_pool"] = _lines_to_list(title_text)
             updated_template["cta_pool"] = _lines_to_list(cta_text)
             updated_template["product_selling_points"] = _lines_to_list(selling_text)
             updated_template["aweme_ids"] = _lines_to_list(aweme_text)
             templates[template_key] = updated_template
             catalog["templates"] = templates
+            health = build_create_template_health(mode, catalog)
+            blocking_reasons = health.get("blocking_reasons") if isinstance(health.get("blocking_reasons"), list) else []
+            if blocking_reasons:
+                st.error("保存已阻断：" + "；".join(str(item) for item in blocking_reasons))
+                with st.expander("查看模板健康检查 JSON", expanded=False):
+                    st.json(health)
+                return
             try:
                 output = save_product_create_template_catalog(template_dir, catalog)
             except Exception as exc:
                 st.error(f"保存失败：{exc}")
             else:
+                operation_log = _record_simple_ui_operation(
+                    runs_dir=runs_dir,
+                    operation_type="create_template_update",
+                    status="completed",
+                    actor="",
+                    request={
+                        "product_key": product_key,
+                        "template_key": template_key,
+                        "output_path": str(output),
+                    },
+                    result={
+                        "ok": True,
+                        "artifact_path": str(output),
+                        "status": "saved",
+                        "health": health,
+                    },
+                    details={
+                        "product": str(catalog.get("product") or mode.get("product") or ""),
+                        "product_key": product_key,
+                        "template_key": template_key,
+                        "title_count": len(updated_template["title_pool"]),
+                        "cta_count": len(updated_template["cta_pool"]),
+                        "selling_point_count": len(updated_template["product_selling_points"]),
+                        "health": health,
+                    },
+                )
                 st.success(f"基础模板已保存：{output}")
                 st.cache_data.clear()
                 st.caption("后续生成创建计划会优先读取这个产品专属基础模板。")
+                st.caption(f"前端操作日志：{operation_log.get('artifact_path')}")
+                cols = st.columns(4)
+                cols[0].metric("文案", str(len(updated_template["title_pool"])))
+                cols[1].metric("CTA（行动按钮）", str(len(updated_template["cta_pool"])))
+                cols[2].metric("卖点", str(len(updated_template["product_selling_points"])))
+                cols[3].metric("健康检查", _format_status(health.get("status")))
+                with st.expander("查看模板健康检查 JSON", expanded=False):
+                    st.json(health)
                 st.json(updated_template)
 
 
@@ -694,6 +969,9 @@ def _run_confirmed_execution(
     project_root: Path,
     timeout_seconds: int,
     state_key: str,
+    runs_dir: str = "",
+    operation_type: str = "",
+    request: dict[str, Any] | None = None,
 ) -> None:
     with st.container(border=True):
         st.markdown(f"**{title}**")
@@ -703,12 +981,32 @@ def _run_confirmed_execution(
         if st.button("确认执行", type="primary", disabled=not confirmed, key=f"{state_key}_execute"):
             result = run_fixed_script(command, cwd=project_root, timeout_seconds=timeout_seconds)
             st.session_state[f"{state_key}_result"] = result.parsed_stdout
+            if runs_dir and operation_type:
+                operation_log = _record_simple_ui_operation(
+                    runs_dir=runs_dir,
+                    operation_type=operation_type,
+                    status="completed" if result.ok else "failed",
+                    request={**(request or {}), "command": command, "confirmed": confirmed},
+                    result={
+                        "return_code": result.return_code,
+                        "artifact_path": str(result.parsed_stdout.get("artifact_path") or "") if isinstance(result.parsed_stdout, dict) else "",
+                        "status": result.parsed_stdout.get("status") if isinstance(result.parsed_stdout, dict) else "",
+                        "ok": result.ok,
+                    },
+                )
+                st.session_state[f"{state_key}_operation_log"] = operation_log
             st.cache_data.clear()
             _show_script_result(result)
+            operation_log = st.session_state.get(f"{state_key}_operation_log")
+            if isinstance(operation_log, dict) and operation_log:
+                st.caption(f"前端操作日志：{operation_log.get('artifact_path')}")
         stored = st.session_state.get(f"{state_key}_result")
         if isinstance(stored, dict) and stored:
             with st.expander("查看最近执行结果 JSON", expanded=False):
                 st.json(stored)
+        operation_log = st.session_state.get(f"{state_key}_operation_log")
+        if isinstance(operation_log, dict) and operation_log:
+            st.caption(f"前端操作日志：{operation_log.get('artifact_path')}")
 
 
 def _format_shell_command(command: list[str], *, cwd: Path | None = None) -> str:
@@ -730,6 +1028,83 @@ def _load_json_path(project_root: Path, path_value: str) -> dict[str, Any]:
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
     return value if isinstance(value, dict) else {}
+
+
+def _read_text_path(project_root: Path, path_value: str, *, max_chars: int = 20000) -> str:
+    text = str(path_value or "").strip()
+    if not text:
+        return ""
+    path = Path(text)
+    if not path.is_absolute():
+        path = project_root / text
+    try:
+        value = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return ""
+    if len(value) <= max_chars:
+        return value
+    return value[-max_chars:]
+
+
+def _load_frontend_task_record(runs_dir: str, task_id: str) -> dict[str, Any]:
+    text = str(task_id or "").strip()
+    if not text:
+        return {}
+    return _load_json_path(Path(runs_dir), f"frontend_tasks/{text}.json")
+
+
+def _execution_payloads_from_task(project_root: Path, task: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    result = task.get("result") if isinstance(task.get("result"), dict) else {}
+    execute_payload = _load_json_path(project_root, str(result.get("execute_artifact_path") or result.get("artifact_path") or ""))
+    report_payload: dict[str, Any] = {}
+    post_results = task.get("post_results") if isinstance(task.get("post_results"), list) else []
+    for post_result in post_results:
+        if not isinstance(post_result, dict):
+            continue
+        report_payload = _load_json_path(project_root, str(post_result.get("artifact_path") or ""))
+        if not report_payload:
+            report_payload = post_result
+        break
+    return execute_payload, report_payload
+
+
+def _show_progress_snapshot(progress: dict[str, Any], *, title: str = "执行进度") -> None:
+    current = progress.get("current") if isinstance(progress.get("current"), dict) else {}
+    events = progress.get("events") if isinstance(progress.get("events"), list) else []
+    percent = int(progress.get("percent") or 0)
+    with st.container(border=True):
+        st.subheader(title)
+        if not current:
+            st.caption("暂无执行进度。真实执行开始后，固定脚本会写入 current.json（当前进度）和 events.jsonl（事件日志）。")
+            return
+        cols = st.columns(5)
+        cols[0].metric("状态", _format_status(current.get("status")))
+        cols[1].metric("步骤", str(current.get("operation") or "-"))
+        cols[2].metric("进度", f"{current.get('done', 0)}/{current.get('total', 0)}")
+        cols[3].metric("接口调用", str(current.get("external_api_calls", 0)))
+        cols[4].metric("账户", str(current.get("advertiser_id") or "-"))
+        st.progress(percent)
+        message = str(current.get("message") or "").strip()
+        if message:
+            st.error(message) if str(current.get("status") or "") == "failed" else st.caption(message)
+        if events:
+            with st.expander("查看最近进度事件", expanded=False):
+                st.dataframe(
+                    [
+                        {
+                            "时间": row.get("created_at") or row.get("updated_at") or "",
+                            "状态": _format_status(row.get("status")),
+                            "步骤": row.get("operation"),
+                            "进度": f"{row.get('done', 0)}/{row.get('total', 0)}",
+                            "账户": row.get("advertiser_id") or "",
+                            "信息": row.get("message") or "",
+                        }
+                        for row in events
+                        if isinstance(row, dict)
+                    ],
+                    use_container_width=True,
+                    hide_index=True,
+                )
 
 
 def _create_plan_summary(project_root: Path, plan_path: str, fallback: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -760,120 +1135,135 @@ def _show_create_plan_summary(summary: dict[str, Any]) -> None:
             st.warning(f"规则异常数量：{summary.get('violation_count')}")
 
 
-def _float_display(value: Any) -> float:
-    try:
-        return round(float(value or 0), 2)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _material_review_rows(details: dict[str, Any]) -> list[dict[str, Any]]:
-    rows_by_id: dict[str, dict[str, Any]] = {}
-    accounts_by_id: dict[str, set[str]] = defaultdict(set)
-    units_by_id: dict[str, set[str]] = defaultdict(set)
-    for row in details.get("material_assignments") or []:
+def _preview_account_options(preview: dict[str, Any]) -> list[str]:
+    values: set[str] = set()
+    for row in preview.get("accounts") or []:
+        if isinstance(row, dict) and str(row.get("advertiser_id") or "").strip():
+            values.add(str(row.get("advertiser_id")).strip())
+    for row in preview.get("materials") or []:
         if not isinstance(row, dict):
             continue
-        material_id = str(row.get("material_id") or "")
-        if not material_id:
-            continue
-        current = rows_by_id.setdefault(
-            material_id,
-            {
-                "素材ID": material_id,
-                "素材名": str(row.get("name") or ""),
-                "video_id（视频ID）": str(row.get("source_video_id") or ""),
-                "使用次数": 0,
-                "覆盖账户": 0,
-                "覆盖单元": 0,
-                "近窗消耗": _float_display(row.get("stat_cost")),
-                "转化数": _float_display(row.get("convert_cnt")),
-                "素材排名": row.get("rank") or 0,
-                "有效创建日期": str(row.get("effective_create_date") or ""),
-            },
-        )
-        current["使用次数"] = int(current["使用次数"]) + 1
-        accounts_by_id[material_id].add(str(row.get("advertiser_id") or ""))
-        units_by_id[material_id].add(str(row.get("unit_key") or ""))
-    for material_id, row in rows_by_id.items():
-        row["覆盖账户"] = len(accounts_by_id[material_id])
-        row["覆盖单元"] = len(units_by_id[material_id])
-    return sorted(rows_by_id.values(), key=lambda item: (-int(item["使用次数"]), -float(item["近窗消耗"]), str(item["素材ID"])))
+        for account_id in row.get("covered_accounts") or []:
+            if str(account_id or "").strip():
+                values.add(str(account_id).strip())
+    for row in preview.get("units") or []:
+        if isinstance(row, dict) and str(row.get("advertiser_id") or "").strip():
+            values.add(str(row.get("advertiser_id")).strip())
+    return ["全部账户"] + sorted(values)
 
 
-def _creative_review_rows(details: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
-    title_counter: Counter[str] = Counter()
-    cta_counter: Counter[str] = Counter()
-    selling_point_counter: Counter[str] = Counter()
-    unit_count_by_title: dict[str, set[str]] = defaultdict(set)
-    unit_count_by_cta: dict[str, set[str]] = defaultdict(set)
-    unit_count_by_selling_point: dict[str, set[str]] = defaultdict(set)
-    for row in details.get("unit_copywriting") or []:
-        if not isinstance(row, dict):
-            continue
-        unit_key = str(row.get("unit_key") or "")
-        for title_item in row.get("title_material_list") or []:
-            if isinstance(title_item, dict):
-                title = str(title_item.get("title") or "").strip()
-            else:
-                title = str(title_item or "").strip()
-            if title:
-                title_counter[title] += 1
-                unit_count_by_title[title].add(unit_key)
-        for cta in row.get("call_to_action_buttons") or []:
-            text = str(cta or "").strip()
-            if text:
-                cta_counter[text] += 1
-                unit_count_by_cta[text].add(unit_key)
-        product_info = row.get("product_info") if isinstance(row.get("product_info"), dict) else {}
-        for selling_point in product_info.get("selling_points") or []:
-            text = str(selling_point or "").strip()
-            if text:
-                selling_point_counter[text] += 1
-                unit_count_by_selling_point[text].add(unit_key)
-
-    def _rows(counter: Counter[str], unit_sets: dict[str, set[str]], label: str) -> list[dict[str, Any]]:
-        return [
-            {label: text, "使用次数": count, "覆盖单元": len(unit_sets[text])}
-            for text, count in counter.most_common()
-        ]
-
-    return {
-        "titles": _rows(title_counter, unit_count_by_title, "文案"),
-        "ctas": _rows(cta_counter, unit_count_by_cta, "CTA（行动按钮）"),
-        "selling_points": _rows(selling_point_counter, unit_count_by_selling_point, "卖点"),
-    }
-
-
-def _show_create_plan_review(project_root: Path, plan_path: str) -> None:
-    plan_payload = _load_json_path(project_root, plan_path)
-    if not plan_payload:
+def _show_create_plan_preview_panel(
+    preview: dict[str, Any],
+    *,
+    key_prefix: str,
+    title: str = "执行前核对",
+    use_expanders: bool = True,
+) -> None:
+    if not preview:
+        st.warning("没有可展示的创建计划审查数据。")
         return
-    details = create_operation_details_from_plan(plan_payload)
-    material_rows = _material_review_rows(details)
-    creative_rows = _creative_review_rows(details)
-    with st.container(border=True):
-        st.subheader("执行前核对")
-        cols = st.columns(4)
-        cols[0].metric("素材分配", str(details.get("material_assignment_count", 0)))
-        cols[1].metric("唯一素材", str(details.get("unique_material_count", 0)))
-        cols[2].metric("文案使用", str(sum(int(row["使用次数"]) for row in creative_rows["titles"])))
-        cols[3].metric("CTA（行动按钮）使用", str(sum(int(row["使用次数"]) for row in creative_rows["ctas"])))
-        st.caption("这里展示生成计划已经选中的素材和创意分配；真实执行会按这份计划调用固定脚本。")
-        if material_rows:
-            st.markdown("**已选素材**")
-            st.dataframe(material_rows, use_container_width=True, hide_index=True)
-        else:
-            st.warning("当前创建计划没有选中素材。")
-        tabs = st.tabs(["文案", "CTA（行动按钮）", "卖点", "账户素材分布"])
-        with tabs[0]:
-            st.dataframe(creative_rows["titles"], use_container_width=True, hide_index=True)
-        with tabs[1]:
-            st.dataframe(creative_rows["ctas"], use_container_width=True, hide_index=True)
-        with tabs[2]:
-            st.dataframe(creative_rows["selling_points"], use_container_width=True, hide_index=True)
-        with tabs[3]:
-            account_rows = [
+    summary = preview.get("summary") if isinstance(preview.get("summary"), dict) else {}
+    blocking_reasons = preview.get("blocking_reasons") if isinstance(preview.get("blocking_reasons"), list) else []
+    warnings = preview.get("warnings") if isinstance(preview.get("warnings"), list) else []
+
+    st.subheader(title)
+    cols = st.columns(7)
+    cols[0].metric("审查状态", "可执行" if summary.get("can_execute") else "不可执行")
+    cols[1].metric("账户", str(summary.get("target_account_count", 0)))
+    cols[2].metric("项目", str(summary.get("planned_project_count", 0)))
+    cols[3].metric("单元", str(summary.get("planned_unit_count", 0)))
+    cols[4].metric("素材分配", str(summary.get("material_assignment_count", 0)))
+    cols[5].metric("唯一素材", str(summary.get("unique_material_count", 0)))
+    cols[6].metric("缺视频 ID", str(summary.get("missing_video_id_material_count", 0)))
+    st.caption("这里展示生成计划已经选中的素材、文案、CTA（行动按钮）和卖点；素材消耗/转化按当前产品统计，不使用跨产品全局消耗。")
+
+    if blocking_reasons:
+        st.error("不能进入真实执行：" + "；".join(str(item) for item in blocking_reasons))
+    else:
+        st.success("执行前审查通过。")
+    if warnings and use_expanders:
+        with st.expander("查看风险提示", expanded=False):
+            for item in warnings:
+                st.warning(str(item))
+    elif warnings:
+        for item in warnings:
+            st.warning(str(item))
+
+    account_options = _preview_account_options(preview)
+    filter_cols = st.columns([2, 1, 1, 2])
+    material_query = filter_cols[0].text_input("筛选素材 ID / 视频 ID / 素材名", key=f"{key_prefix}_material_query")
+    missing_video_only = filter_cols[1].checkbox("只看缺 video_id（视频 ID）", key=f"{key_prefix}_missing_video")
+    min_usage_count = filter_cols[2].number_input("最小使用次数", min_value=0, value=0, step=1, key=f"{key_prefix}_min_usage")
+    selected_account = filter_cols[3].selectbox("账户筛选", account_options, key=f"{key_prefix}_material_account")
+    material_account_id = "" if selected_account == "全部账户" else selected_account
+    material_rows = filter_preview_materials(
+        preview.get("materials") or [],
+        missing_video_only=missing_video_only,
+        min_usage_count=int(min_usage_count or 0),
+        account_id=material_account_id,
+        query=material_query,
+    )
+    if material_rows:
+        st.markdown("**已选素材（该产品维度数据）**")
+        st.dataframe(
+            [
+                {
+                    "缺 video_id": "是" if row.get("missing_video_id") else "",
+                    "material_id（素材 ID）": row.get("material_id"),
+                    "video_id（视频 ID）": row.get("video_id"),
+                    "素材名": row.get("name"),
+                    "产品": row.get("product"),
+                    "源素材账户": row.get("source_advertiser_id"),
+                    "该产品消耗": row.get("product_stat_cost"),
+                    "该产品转化": row.get("product_convert_cnt"),
+                    "使用次数": row.get("usage_count"),
+                    "覆盖账户": row.get("covered_account_count"),
+                    "覆盖单元": row.get("covered_unit_count"),
+                    "有效创建日期": row.get("effective_create_date"),
+                }
+                for row in material_rows
+                if isinstance(row, dict)
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.warning("当前筛选下没有素材。")
+
+    tabs = st.tabs(["文案", "CTA（行动按钮）", "卖点", "账户素材分布", "单元级明细"])
+    with tabs[0]:
+        st.dataframe(
+            [
+                {"文案": row.get("title"), "使用次数": row.get("usage_count"), "覆盖单元": row.get("covered_unit_count")}
+                for row in preview.get("copywriting") or []
+                if isinstance(row, dict)
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+    with tabs[1]:
+        st.dataframe(
+            [
+                {"CTA（行动按钮）": row.get("cta"), "使用次数": row.get("usage_count"), "覆盖单元": row.get("covered_unit_count")}
+                for row in preview.get("ctas") or []
+                if isinstance(row, dict)
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+    with tabs[2]:
+        st.dataframe(
+            [
+                {"卖点": row.get("selling_point"), "使用次数": row.get("usage_count"), "覆盖单元": row.get("covered_unit_count")}
+                for row in preview.get("selling_points") or []
+                if isinstance(row, dict)
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+    with tabs[3]:
+        st.dataframe(
+            [
                 {
                     "账户": row.get("advertiser_id"),
                     "项目数": row.get("project_count"),
@@ -881,12 +1271,54 @@ def _show_create_plan_review(project_root: Path, plan_path: str) -> None:
                     "素材分配": row.get("material_assignment_count"),
                     "唯一素材": row.get("unique_material_count"),
                 }
-                for row in details.get("accounts") or []
+                for row in preview.get("accounts") or []
                 if isinstance(row, dict)
-            ]
-            st.dataframe(account_rows, use_container_width=True, hide_index=True)
-        with st.expander("查看单元级文案/CTA（行动按钮）/卖点分配", expanded=False):
-            st.json(details.get("unit_copywriting") or [])
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+    with tabs[4]:
+        unit_cols = st.columns([1, 2])
+        selected_unit_account = unit_cols[0].selectbox("单元账户筛选", account_options, key=f"{key_prefix}_unit_account")
+        project_query = unit_cols[1].text_input("筛选项目 / 单元", key=f"{key_prefix}_unit_query")
+        unit_account_id = "" if selected_unit_account == "全部账户" else selected_unit_account
+        unit_rows = filter_preview_units(
+            preview.get("units") or [],
+            account_id=unit_account_id,
+            project_query=project_query,
+        )
+        st.dataframe(
+            [
+                {
+                    "账户": row.get("advertiser_id"),
+                    "项目": row.get("project_name"),
+                    "单元": row.get("promotion_name"),
+                    "素材数": row.get("material_count"),
+                    "文案数": row.get("title_count"),
+                    "CTA 数": row.get("cta_count"),
+                    "卖点数": row.get("selling_point_count"),
+                }
+                for row in unit_rows
+                if isinstance(row, dict)
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+        if use_expanders:
+            with st.expander("查看单元级完整分配 JSON", expanded=False):
+                st.json(unit_rows)
+        else:
+            st.caption("完整单元分配 JSON 可在操作日志 JSON 中查看。")
+
+
+def _show_create_plan_review(project_root: Path, plan_path: str) -> dict[str, Any]:
+    plan_payload = _load_json_path(project_root, plan_path)
+    if not plan_payload:
+        return {}
+    preview = build_create_plan_preview(plan_payload)
+    with st.container(border=True):
+        _show_create_plan_preview_panel(preview, key_prefix=f"create_plan_review_{Path(plan_path).stem}")
+    return preview.get("review") if isinstance(preview.get("review"), dict) else {}
 
 
 def _show_create_execute_report(report: dict[str, Any]) -> None:
@@ -969,6 +1401,116 @@ def _show_create_execute_report(report: dict[str, Any]) -> None:
             st.json(report)
 
 
+def _show_create_execution_summary_card(
+    *,
+    task: dict[str, Any] | None = None,
+    progress: dict[str, Any] | None = None,
+    execute_payload: dict[str, Any] | None = None,
+    report_payload: dict[str, Any] | None = None,
+    expanded: bool = False,
+) -> None:
+    summary = build_task_status_summary(
+        task=task or {},
+        progress=progress or {},
+        execute_payload=execute_payload or {},
+        report_payload=report_payload or {},
+    )
+    if not any([summary.get("status"), summary.get("task_status"), summary.get("progress_operation"), execute_payload, report_payload]):
+        return
+    title = "任务状态与执行结果"
+    with st.expander(title, expanded=expanded):
+        level = str(summary.get("status_level") or "")
+        message = str(summary.get("message") or "").strip()
+        if level == "running":
+            st.info(message or "任务正在执行，页面会自动刷新。")
+        elif level == "error":
+            st.error(message or "任务执行失败。")
+        elif level == "warning":
+            st.warning(message or "任务完成但存在需要处理的问题。")
+        elif level == "success":
+            st.success(message or "任务已完成。")
+        elif message:
+            st.write(message)
+
+        cols = st.columns(7)
+        cols[0].metric("状态", _format_status(summary.get("status")))
+        cols[1].metric("任务", _format_status(summary.get("task_status")))
+        cols[2].metric("进度", f"{summary.get('progress_done', 0)}/{summary.get('progress_total', 0)}")
+        cols[3].metric("项目", str(summary.get("created_project_count", 0)))
+        cols[4].metric("单元", str(summary.get("created_unit_count", 0)))
+        cols[5].metric("绑定素材", str(summary.get("material_bind_count", 0)))
+        cols[6].metric("飞书", _format_status(summary.get("feishu_status")))
+
+        progress_percent = int(summary.get("progress_percent") or 0)
+        if progress_percent or int(summary.get("progress_total") or 0) > 0:
+            st.progress(progress_percent)
+            progress_parts = [
+                f"步骤：{summary.get('progress_operation') or '-'}",
+                f"账户：{summary.get('progress_account') or '-'}",
+                f"接口调用：{summary.get('external_api_calls') or 0}",
+            ]
+            st.caption("；".join(progress_parts))
+        if summary.get("feishu_status") == "failed":
+            st.error(f"飞书推送失败：{summary.get('feishu_reason') or 'unknown'}")
+        if bool(summary.get("manual_review_required")):
+            st.error(
+                "存在需要处理的部分失败："
+                f"{int(summary.get('affected_account_count') or 0)} 个账户受影响，"
+                f"跳过 {int(summary.get('skipped_unit_count') or 0)} 个单元，"
+                f"素材绑定异常 {int(summary.get('material_bind_failure_count') or 0)} 次。"
+            )
+            accounts = summary.get("issue_accounts") if isinstance(summary.get("issue_accounts"), list) else []
+            if accounts:
+                st.table(
+                    [
+                        {
+                            "账户": row.get("advertiser_id"),
+                            "跳过单元": row.get("skipped_unit_count"),
+                            "错误码": "/".join(str(item) for item in row.get("codes") or []),
+                            "原因": "；".join(str(item) for item in row.get("messages") or []),
+                        }
+                        for row in accounts
+                        if isinstance(row, dict)
+                    ]
+                )
+            rebuild = summary.get("rebuild_reference") if isinstance(summary.get("rebuild_reference"), list) else []
+            if rebuild:
+                with st.expander("查看补建参考", expanded=False):
+                    st.table(rebuild)
+        failure = summary.get("failure") if isinstance(summary.get("failure"), dict) else {}
+        if failure:
+            st.error("执行失败明细")
+            st.table(
+                [
+                    {
+                        "操作": failure.get("operation"),
+                        "序号": failure.get("index"),
+                        "错误码": failure.get("code"),
+                        "原因": failure.get("message"),
+                    }
+                ]
+            )
+        recent_events = summary.get("recent_events") if isinstance(summary.get("recent_events"), list) else []
+        if recent_events:
+            with st.expander("查看最近进度事件", expanded=False):
+                st.dataframe(
+                    [
+                        {
+                            "时间": row.get("created_at") or row.get("updated_at") or "",
+                            "状态": _format_status(row.get("status")),
+                            "步骤": row.get("operation"),
+                            "进度": f"{row.get('done', 0)}/{row.get('total', 0)}",
+                            "账户": row.get("advertiser_id") or "",
+                            "信息": row.get("message") or "",
+                        }
+                        for row in recent_events
+                        if isinstance(row, dict)
+                    ],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+
 def _record_create_ui_operation(
     *,
     runs_dir: str,
@@ -994,7 +1536,35 @@ def _record_create_ui_operation(
     )
 
 
-def _show_create_execution_steps(project_root: Path, plan_path: str, timeout_seconds: int, runs_dir: str) -> None:
+def _record_simple_ui_operation(
+    *,
+    runs_dir: str,
+    operation_type: str,
+    status: str,
+    actor: str = "",
+    request: dict[str, Any] | None = None,
+    result: dict[str, Any] | None = None,
+    details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return record_frontend_operation(
+        runs_dir=runs_dir,
+        operation_type=operation_type,
+        status=status,
+        actor=actor,
+        request=request or {},
+        result=result or {},
+        details=details or {},
+    )
+
+
+def _show_create_execution_steps(
+    project_root: Path,
+    plan_path: str,
+    timeout_seconds: int,
+    runs_dir: str,
+    *,
+    plan_review: dict[str, Any] | None = None,
+) -> None:
     st.subheader("下一步")
     st.caption("网页调用固定脚本完成检查和真实执行；真实创建前仍必须人工确认。")
     check_command = build_create_live_config_check_command(plan_path=plan_path)
@@ -1007,6 +1577,29 @@ def _show_create_execution_steps(project_root: Path, plan_path: str, timeout_sec
             result = run_fixed_script(check_command, cwd=project_root, timeout_seconds=timeout_seconds)
             st.session_state[check_state_key] = result.parsed_stdout
             st.session_state[check_return_key] = result.return_code
+            plan_payload = _load_json_path(project_root, plan_path)
+            operation_log = _record_create_ui_operation(
+                runs_dir=runs_dir,
+                operation_type="create_live_config_check",
+                status="completed"
+                if result.ok and str(result.parsed_stdout.get("status") if isinstance(result.parsed_stdout, dict) else "") == "config_ready"
+                else "failed",
+                actor=str((plan_payload.get("create_request") or {}).get("owner") or ""),
+                request={
+                    "plan_path": plan_path,
+                    "command": result.command,
+                },
+                result={
+                    "return_code": result.return_code,
+                    "artifact_path": str(result.parsed_stdout.get("artifact_path") or "") if isinstance(result.parsed_stdout, dict) else "",
+                    "summary": result.parsed_stdout.get("summary") if isinstance(result.parsed_stdout, dict) else {},
+                    "status": result.parsed_stdout.get("status") if isinstance(result.parsed_stdout, dict) else "",
+                    "blocking_reasons": result.parsed_stdout.get("blocking_reasons") if isinstance(result.parsed_stdout, dict) else [],
+                    "ok": result.ok,
+                },
+                plan_payload=plan_payload,
+            )
+            st.session_state[f"create_live_config_check_operation_log_{plan_path}"] = operation_log
             st.cache_data.clear()
         result_payload = st.session_state.get(check_state_key)
         ready = False
@@ -1022,6 +1615,9 @@ def _show_create_execution_steps(project_root: Path, plan_path: str, timeout_sec
                     st.write("阻断原因：" + "；".join(str(item) for item in reasons))
             with st.expander("查看检查结果 JSON", expanded=False):
                 st.json(result_payload)
+        operation_log = st.session_state.get(f"create_live_config_check_operation_log_{plan_path}")
+        if isinstance(operation_log, dict) and operation_log:
+            st.caption(f"配置检查操作日志：{operation_log.get('artifact_path')}")
 
     real_command = build_create_live_execute_command(plan_path=plan_path)
     progress_command = build_create_live_terminal_command(
@@ -1032,6 +1628,11 @@ def _show_create_execution_steps(project_root: Path, plan_path: str, timeout_sec
     with st.container(border=True):
         st.markdown("**2. 真实执行**")
         st.caption("配置检查通过后，在这里确认并调用固定脚本。运行后会真实创建项目和单元。")
+        _show_progress_snapshot(read_create_live_progress(runs_dir), title="最近真实执行进度")
+        review_ready = bool(plan_review.get("can_execute")) if isinstance(plan_review, dict) else False
+        if not review_ready:
+            reasons = plan_review.get("blocking_reasons") if isinstance(plan_review, dict) and isinstance(plan_review.get("blocking_reasons"), list) else []
+            st.error("执行前审查未通过，不能真实执行。" + ("阻断原因：" + "；".join(str(item) for item in reasons) if reasons else ""))
         resume_existing_plan = st.checkbox(
             "续跑已有计划（resume-existing-plan）",
             value=False,
@@ -1044,9 +1645,11 @@ def _show_create_execution_steps(project_root: Path, plan_path: str, timeout_sec
             key=f"create_live_confirm_text_{plan_path}",
         )
         confirmed = confirm_text.strip() == "确认执行"
-        execute_disabled = not (ready and confirmed)
+        execute_disabled = not (ready and confirmed and review_ready)
         if not ready:
             st.info("请先完成并通过真实执行配置检查。")
+        if not review_ready:
+            st.info("请先修复执行前审查里的阻断原因。")
         if st.button(
             "确认执行并真实创建",
             type="primary",
@@ -1057,56 +1660,77 @@ def _show_create_execution_steps(project_root: Path, plan_path: str, timeout_sec
                 plan_path=plan_path,
                 resume_existing_plan=resume_existing_plan,
             )
-            with st.spinner("正在调用固定脚本真实创建项目和单元..."):
-                result = run_fixed_script(real_command, cwd=project_root, timeout_seconds=timeout_seconds)
-            st.session_state[f"create_live_execute_result_{plan_path}"] = result.parsed_stdout
-            st.session_state[f"create_live_execute_return_code_{plan_path}"] = result.return_code
-            st.session_state[f"create_live_execute_raw_{plan_path}"] = {
-                "command": result.command,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-            }
-            report_payload = {}
-            execute_artifact_path = str(result.parsed_stdout.get("artifact_path") or "") if isinstance(result.parsed_stdout, dict) else ""
-            if execute_artifact_path:
-                with st.spinner("正在生成执行汇报并推送飞书..."):
-                    report_result = run_fixed_script(
-                        build_create_live_execute_report_command(
-                            plan_path=plan_path,
-                            execute_artifact_path=execute_artifact_path,
-                            push_feishu=True,
-                        ),
-                        cwd=project_root,
-                        timeout_seconds=timeout_seconds,
-                    )
-                report_payload = report_result.parsed_stdout
-                st.session_state[f"create_live_execute_report_result_{plan_path}"] = report_payload
-                st.session_state[f"create_live_execute_report_return_code_{plan_path}"] = report_result.return_code
             plan_payload = _load_json_path(project_root, plan_path)
-            operation_log = _record_create_ui_operation(
+            report_command_template = build_create_live_execute_report_command(
+                plan_path=plan_path,
+                execute_artifact_path="{result.artifact_path}",
+                push_feishu=True,
+            )
+            task_record = build_task_record(
                 runs_dir=runs_dir,
                 operation_type="create_live_execute",
-                status="completed" if result.ok else "failed",
-                actor=str((plan_payload.get("create_request") or {}).get("owner") or ""),
+                command=real_command,
+                cwd=str(project_root),
                 request={
                     "plan_path": plan_path,
-                    "command": result.command,
                     "confirmed_text_matched": confirmed,
                     "resume_existing_plan": resume_existing_plan,
                 },
+                post_commands=[report_command_template],
+            )
+            task_path = write_task_record(runs_dir, task_record)
+            runner_pid = start_runner(build_runner_command(task_path), cwd=project_root)
+            operation_log = _record_create_ui_operation(
+                runs_dir=runs_dir,
+                operation_type="create_live_execute",
+                status="running",
+                actor=str((plan_payload.get("create_request") or {}).get("owner") or ""),
+                request={
+                    "plan_path": plan_path,
+                    "command": real_command,
+                    "post_commands": [report_command_template],
+                    "confirmed_text_matched": confirmed,
+                    "resume_existing_plan": resume_existing_plan,
+                    "task_id": task_record["task_id"],
+                    "runner_pid": runner_pid,
+                },
                 result={
-                    "return_code": result.return_code,
-                    "execute_artifact_path": execute_artifact_path,
-                    "report_artifact_path": str(report_payload.get("artifact_path") or "") if isinstance(report_payload, dict) else "",
-                    "summary": result.parsed_stdout.get("summary") if isinstance(result.parsed_stdout, dict) else {},
-                    "status": result.parsed_stdout.get("status") if isinstance(result.parsed_stdout, dict) else "",
-                    "ok": result.ok,
+                    "task_id": task_record["task_id"],
+                    "task_artifact_path": task_record["artifact_path"],
+                    "status": "running",
+                    "ok": False,
                 },
                 plan_payload=plan_payload,
-                extra_details={"execute_artifact_path": execute_artifact_path},
+                extra_details={
+                    "task_id": task_record["task_id"],
+                    "task_artifact_path": task_record["artifact_path"],
+                },
             )
             st.session_state[f"create_live_operation_log_{plan_path}"] = operation_log
+            st.session_state[f"create_live_execute_task_{plan_path}"] = task_record
             st.cache_data.clear()
+            st.success(f"真实执行任务已启动：{task_record['task_id']}。可在任务中心查看进度、stdout（标准输出）、stderr（标准错误）和结果。")
+        task_record = st.session_state.get(f"create_live_execute_task_{plan_path}")
+        if isinstance(task_record, dict) and task_record:
+            latest_task = _load_frontend_task_record(runs_dir, str(task_record.get("task_id") or "")) or task_record
+            if str(latest_task.get("status") or "").startswith("running"):
+                components.html(
+                    "<script>setTimeout(() => window.parent.location.reload(), 3000)</script>",
+                    height=0,
+                    width=0,
+                )
+            st.subheader("当前真实执行任务")
+            _show_progress_snapshot(read_create_live_progress(runs_dir), title="当前执行进度")
+            execute_payload, report_payload = _execution_payloads_from_task(project_root, latest_task)
+            progress_payload = read_create_live_progress(runs_dir)
+            _show_create_execution_summary_card(
+                task=latest_task,
+                progress=progress_payload,
+                execute_payload=execute_payload,
+                report_payload=report_payload,
+                expanded=True,
+            )
+            _show_background_task_detail(project_root, runs_dir, latest_task)
         stored = st.session_state.get(f"create_live_execute_result_{plan_path}")
         if isinstance(stored, dict) and stored:
             status = str(stored.get("status") or "")
@@ -1143,8 +1767,10 @@ def _show_create_execution_steps(project_root: Path, plan_path: str, timeout_sec
 def _dashboard(runs_dir: str) -> None:
     st.header("首页")
     st.caption("只读展示最近本地产物，不调用平台接口。")
+    scheduler_payload = _latest(runs_dir, "scheduler_status")
+    if scheduler_payload:
+        _show_scheduler_status_panel(scheduler_payload, compact=True)
     workflows = [
-        ("定时任务日报", "scheduler_status"),
         ("投放巡检", "delivery_patrol"),
         ("投放巡检建议", "delivery_patrol_suggestions"),
         ("创建执行", "create_live_execute_once"),
@@ -1155,13 +1781,39 @@ def _dashboard(runs_dir: str) -> None:
         _show_summary(title, _latest(runs_dir, workflow))
 
 
+def _scheduler_status_page(runs_dir: str) -> None:
+    st.header("定时任务")
+    st.caption("只读展示 scheduler_status（定时任务状态）最近结果；这里不触发任何真实业务执行。")
+    payload = _latest(runs_dir, "scheduler_status")
+    if not payload:
+        st.info("还没有定时任务状态结果。")
+        return
+    _show_scheduler_status_panel(payload, compact=False)
+    with st.expander("查看 scheduler_status JSON", expanded=False):
+        st.json(payload)
+
+
 def _delivery_patrol(project_root: Path, runs_dir: str, timeout_seconds: int) -> None:
     st.header("投放巡检")
     st.caption("运行固定只读巡检脚本，结果写入 data/runs（运行结果目录）。")
     if st.button("运行只读巡检脚本", type="primary"):
-        result = run_fixed_script(build_delivery_patrol_command(readonly=True), cwd=project_root, timeout_seconds=timeout_seconds)
+        command = build_delivery_patrol_command(readonly=True)
+        result = run_fixed_script(command, cwd=project_root, timeout_seconds=timeout_seconds)
+        operation_log = _record_simple_ui_operation(
+            runs_dir=runs_dir,
+            operation_type="delivery_patrol_run",
+            status="completed" if result.ok else "failed",
+            request={"command": command, "readonly": True},
+            result={
+                "return_code": result.return_code,
+                "artifact_path": str(result.parsed_stdout.get("artifact_path") or "") if isinstance(result.parsed_stdout, dict) else "",
+                "status": result.parsed_stdout.get("status") if isinstance(result.parsed_stdout, dict) else "",
+                "ok": result.ok,
+            },
+        )
         st.cache_data.clear()
         _show_script_result(result)
+        st.caption(f"前端操作日志：{operation_log.get('artifact_path')}")
     patrol = _latest(runs_dir, "delivery_patrol")
     _show_summary("最近巡检结果", patrol)
     message = str(patrol.get("message") or "")
@@ -1209,8 +1861,19 @@ def _create(project_root: Path, config: dict[str, Any], timeout_seconds: int) ->
     if mode_detail:
         st.caption(f"当前基础模板文件：{template_catalog_path}")
         _show_mode_detail(mode_detail, template_catalog=template_catalog, product_config=product_config)
-        _mode_draft_editor(mode_detail, drafts_dir=drafts_dir, mode_dir=mode_dir)
-        _base_template_editor(mode_detail, template_catalog=template_catalog, template_dir=template_dir)
+        _mode_draft_editor(
+            mode_detail,
+            drafts_dir=drafts_dir,
+            mode_dir=mode_dir,
+            template_catalog=template_catalog,
+            runs_dir=str(config.get("runs_dir") or "data/runs"),
+        )
+        _base_template_editor(
+            mode_detail,
+            template_catalog=template_catalog,
+            template_dir=template_dir,
+            runs_dir=str(config.get("runs_dir") or "data/runs"),
+        )
     accounts = st.text_area("账户 ID，多个账户用逗号或换行分隔", height=100, key="create_accounts")
     account_count = len(split_account_ids(accounts))
     if account_count:
@@ -1250,6 +1913,7 @@ def _create(project_root: Path, config: dict[str, Any], timeout_seconds: int) ->
         artifact_path = result.parsed_stdout.get("artifact_path") if result.parsed_stdout else ""
         if artifact_path:
             plan_payload = _load_json_path(project_root, str(artifact_path))
+            plan_review = build_create_plan_review(plan_payload) if plan_payload else {}
             operation_log = _record_create_ui_operation(
                 runs_dir=str(config.get("runs_dir") or "data/runs"),
                 operation_type="create_plan_generate",
@@ -1273,6 +1937,14 @@ def _create(project_root: Path, config: dict[str, Any], timeout_seconds: int) ->
                     "ok": result.ok,
                 },
                 plan_payload=plan_payload,
+                extra_details={
+                    "review": {
+                        "can_execute": bool(plan_review.get("can_execute")),
+                        "summary": plan_review.get("summary") if isinstance(plan_review.get("summary"), dict) else {},
+                        "blocking_reasons": plan_review.get("blocking_reasons") if isinstance(plan_review.get("blocking_reasons"), list) else [],
+                        "warnings": plan_review.get("warnings") if isinstance(plan_review.get("warnings"), list) else [],
+                    }
+                },
             )
             st.session_state["create_plan_artifact_path"] = str(artifact_path)
             st.session_state["create_plan_summary"] = _create_plan_summary(
@@ -1316,14 +1988,14 @@ def _create(project_root: Path, config: dict[str, Any], timeout_seconds: int) ->
         if not isinstance(summary, dict) or not summary:
             summary = _create_plan_summary(project_root, plan_path)
         _show_create_plan_summary(summary)
-        _show_create_plan_review(project_root, plan_path)
-        planned_material_count = int(summary.get("planned_material_count") or 0)
-        source_material_count = int(summary.get("source_material_count") or 0)
-        violation_count = int(summary.get("violation_count") or 0)
-        if planned_material_count <= 0 or source_material_count <= 0 or violation_count > 0:
-            st.error("创建计划没有可用素材，不能进入真实执行。请切换到素材不限/测新模板，或先补齐该产品素材消耗汇总。")
-            return
-        _show_create_execution_steps(project_root, plan_path, timeout_seconds, str(config.get("runs_dir") or "data/runs"))
+        review = _show_create_plan_review(project_root, plan_path)
+        _show_create_execution_steps(
+            project_root,
+            plan_path,
+            timeout_seconds,
+            str(config.get("runs_dir") or "data/runs"),
+            plan_review=review,
+        )
 
 
 def _product_management(config: dict[str, Any]) -> None:
@@ -1555,7 +2227,7 @@ def _product_management(config: dict[str, Any]) -> None:
                 st.json(allowed_config)
 
 
-def _project_management(project_root: Path, timeout_seconds: int) -> None:
+def _project_management(project_root: Path, timeout_seconds: int, runs_dir: str) -> None:
     st.header("项目管理配置")
     st.caption("按实时数据生成项目管理 JSON；账户备注也归入项目管理固定链路。真实执行仍需单独确认后调用固定执行脚本。")
     st.subheader("项目更新")
@@ -1619,8 +2291,30 @@ def _project_management(project_root: Path, timeout_seconds: int) -> None:
             roi_goal=roi_goal,
         )
         result = run_fixed_script(command, cwd=project_root, timeout_seconds=timeout_seconds)
+        operation_log = _record_simple_ui_operation(
+            runs_dir=runs_dir,
+            operation_type="project_management_config_generate",
+            status="completed" if result.ok else "failed",
+            request={
+                "command": command,
+                "advertiser_ids": split_account_ids(advertiser_ids),
+                "action_type": action_type,
+                "spend_window": spend_window,
+                "metric_field": metric_field,
+                "metric_op": metric_op,
+                "metric_value": metric_value,
+            },
+            result={
+                "return_code": result.return_code,
+                "artifact_path": str(result.parsed_stdout.get("artifact_path") or result.parsed_stdout.get("project_update_path") or "") if isinstance(result.parsed_stdout, dict) else "",
+                "status": result.parsed_stdout.get("status") if isinstance(result.parsed_stdout, dict) else "",
+                "ok": result.ok,
+            },
+            details={"accounts": [{"advertiser_id": item} for item in split_account_ids(advertiser_ids)]},
+        )
         st.cache_data.clear()
         _show_script_result(result)
+        st.caption(f"前端操作日志：{operation_log.get('artifact_path')}")
         project_update_path = result.parsed_stdout.get("project_update_path") if result.parsed_stdout else ""
         if project_update_path:
             _run_confirmed_execution(
@@ -1629,6 +2323,9 @@ def _project_management(project_root: Path, timeout_seconds: int) -> None:
                 project_root=project_root,
                 timeout_seconds=timeout_seconds,
                 state_key=f"project_update_{project_update_path}",
+                runs_dir=runs_dir,
+                operation_type="project_management_execute",
+                request={"project_update_path": str(project_update_path), "action_type": action_type},
             )
 
     st.divider()
@@ -1650,8 +2347,26 @@ def _project_management(project_root: Path, timeout_seconds: int) -> None:
             output_path=remark_output_path,
         )
         result = run_fixed_script(command, cwd=project_root, timeout_seconds=timeout_seconds)
+        operation_log = _record_simple_ui_operation(
+            runs_dir=runs_dir,
+            operation_type="account_remark_config_generate",
+            status="completed" if result.ok else "failed",
+            request={
+                "command": command,
+                "accounts": split_account_ids(remark_accounts),
+                "remark": remark_value,
+            },
+            result={
+                "return_code": result.return_code,
+                "artifact_path": str(result.parsed_stdout.get("artifact_path") or "") if isinstance(result.parsed_stdout, dict) else "",
+                "status": result.parsed_stdout.get("status") if isinstance(result.parsed_stdout, dict) else "",
+                "ok": result.ok,
+            },
+            details={"accounts": [{"advertiser_id": item} for item in split_account_ids(remark_accounts)]},
+        )
         st.cache_data.clear()
         _show_script_result(result)
+        st.caption(f"前端操作日志：{operation_log.get('artifact_path')}")
         account_remark_path = result.parsed_stdout.get("artifact_path") if result.parsed_stdout else ""
         if account_remark_path:
             st.session_state["account_remark_update_path"] = str(account_remark_path)
@@ -1676,6 +2391,9 @@ def _project_management(project_root: Path, timeout_seconds: int) -> None:
             project_root=project_root,
             timeout_seconds=timeout_seconds,
             state_key=f"account_remark_{account_remark_update_path}",
+            runs_dir=runs_dir,
+            operation_type="account_remark_execute",
+            request={"account_remark_update_path": account_remark_update_path},
         )
 
 
@@ -1683,9 +2401,23 @@ def _ai_template_drafts(project_root: Path, runs_dir: str, timeout_seconds: int)
     st.header("AI 创建模板草稿")
     st.caption("只生成草稿，不写人工模板，不生成创建计划，不执行真实创建。")
     if st.button("生成 AI 创建模板草稿", type="primary"):
-        result = run_fixed_script(build_ai_template_drafts_command(), cwd=project_root, timeout_seconds=timeout_seconds)
+        command = build_ai_template_drafts_command()
+        result = run_fixed_script(command, cwd=project_root, timeout_seconds=timeout_seconds)
+        operation_log = _record_simple_ui_operation(
+            runs_dir=runs_dir,
+            operation_type="ai_template_drafts_generate",
+            status="completed" if result.ok else "failed",
+            request={"command": command},
+            result={
+                "return_code": result.return_code,
+                "artifact_path": str(result.parsed_stdout.get("artifact_path") or "") if isinstance(result.parsed_stdout, dict) else "",
+                "status": result.parsed_stdout.get("status") if isinstance(result.parsed_stdout, dict) else "",
+                "ok": result.ok,
+            },
+        )
         st.cache_data.clear()
         _show_script_result(result)
+        st.caption(f"前端操作日志：{operation_log.get('artifact_path')}")
     payload = _latest(runs_dir, "ai_create_template_drafts")
     _show_summary("最近 AI 草稿结果", payload)
     drafts = payload.get("drafts") if isinstance(payload.get("drafts"), list) else []
@@ -1693,6 +2425,338 @@ def _ai_template_drafts(project_root: Path, runs_dir: str, timeout_seconds: int)
         name = str(draft.get("draft_name") or draft.get("draft_key") or "draft")
         with st.expander(name):
             st.json(draft)
+
+
+def _task_center(project_root: Path, runs_dir: str) -> None:
+    st.header("任务中心")
+    st.caption("展示前端触发过的固定脚本任务。这里不调用平台接口，只读取本地操作日志和执行结果文件。")
+    _show_progress_snapshot(read_create_live_progress(runs_dir), title="最近真实执行进度")
+    background_rows = load_frontend_task_rows(runs_dir, limit=80)
+    if background_rows:
+        st.subheader("后台任务")
+        running_count = sum(1 for row in background_rows if str(row.get("status") or "").startswith("running"))
+        completed_count = sum(1 for row in background_rows if str(row.get("status") or "") == "completed")
+        failed_count = sum(1 for row in background_rows if str(row.get("status") or "") == "failed")
+        cols = st.columns(4)
+        cols[0].metric("总任务", str(len(background_rows)))
+        cols[1].metric("执行中", str(running_count))
+        cols[2].metric("已完成", str(completed_count))
+        cols[3].metric("失败", str(failed_count))
+        if running_count:
+            components.html(
+                "<script>setTimeout(() => window.parent.location.reload(), 3000)</script>",
+                height=0,
+                width=0,
+            )
+        st.dataframe(
+            [
+                {
+                    "任务ID": row.get("task_id"),
+                    "操作": row.get("operation_type"),
+                    "状态": _format_status(row.get("status")),
+                    "退出码": row.get("return_code"),
+                    "执行结果": row.get("execute_artifact_path"),
+                    "汇报结果": row.get("report_artifact_path"),
+                    "更新时间": row.get("updated_at"),
+                }
+                for row in background_rows
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+        labels = [
+            f"{row.get('updated_at') or row.get('created_at') or '-'} | {row.get('operation_type') or '-'} | {row.get('status') or '-'} | {row.get('task_id')}"
+            for row in background_rows
+        ]
+        selected_label = st.selectbox("查看后台任务详情", labels)
+        selected_row = background_rows[labels.index(selected_label)]
+        _show_background_task_detail(project_root, runs_dir, selected_row)
+
+    rows = load_recent_task_runs(runs_dir, limit=80)
+    if not rows:
+        if not background_rows:
+            st.info("还没有前端任务记录。生成创建计划、检查配置或真实执行后会出现在这里。")
+        return
+    st.subheader("最近任务")
+    table_rows = [
+        {
+            "任务ID": row.get("task_id"),
+            "操作": row.get("operation_type"),
+            "状态": _format_status(row.get("status")),
+            "结果状态": _format_status(row.get("result_status")),
+            "审查": _format_status(row.get("review_status")),
+            "阻断": row.get("review_blocking_reason_count"),
+            "风险": row.get("review_warning_count"),
+            "产品": row.get("product") or "-",
+            "账户数": row.get("account_count"),
+            "素材分配": row.get("material_assignment_count"),
+            "时间": row.get("created_at"),
+        }
+        for row in rows
+    ]
+    st.dataframe(table_rows, use_container_width=True, hide_index=True)
+    labels = [
+        f"{row.get('created_at') or '-'} | {row.get('operation_type') or '-'} | {row.get('product') or '-'} | {row.get('task_id')}"
+        for row in rows
+    ]
+    selected_label = st.selectbox("查看任务详情", labels)
+    selected_index = labels.index(selected_label)
+    selected_task_id = str(rows[selected_index].get("task_id") or "")
+    detail = load_task_detail(runs_dir, selected_task_id)
+    task = detail.get("task") if isinstance(detail.get("task"), dict) else {}
+    artifact = detail.get("artifact") if isinstance(detail.get("artifact"), dict) else {}
+    progress = detail.get("progress") if isinstance(detail.get("progress"), dict) else {}
+
+    with st.container(border=True):
+        st.subheader("任务详情")
+        cols = st.columns(5)
+        cols[0].metric("任务ID", str(task.get("task_id") or "-"))
+        cols[1].metric("操作", str(task.get("operation_type") or "-"))
+        cols[2].metric("状态", _format_status(task.get("status")))
+        cols[3].metric("产品", str(task.get("product") or "-"))
+        cols[4].metric("操作人", str(task.get("actor") or "-"))
+        for label, path_value in [
+            ("操作日志文件", task.get("artifact_path")),
+            ("执行结果文件", task.get("execute_artifact_path")),
+            ("汇报结果文件", task.get("report_artifact_path")),
+        ]:
+            text = str(path_value or "").strip()
+            if text:
+                st.caption(f"{label}：{text}")
+        if progress:
+            _show_progress_snapshot(progress, title="该类任务最近执行进度")
+        execute_payload = _load_json_path(project_root, str(task.get("execute_artifact_path") or ""))
+        report_payload = _load_json_path(project_root, str(task.get("report_artifact_path") or ""))
+        if report_payload:
+            _show_create_execute_report(report_payload)
+        elif execute_payload:
+            status = str(execute_payload.get("status") or "")
+            if bool(execute_payload.get("ok")):
+                st.success(f"执行结果：{_format_status(status)}")
+            else:
+                st.error(f"执行结果：{_format_status(status)}")
+            failure = execute_payload.get("failure") if isinstance(execute_payload.get("failure"), dict) else {}
+            if failure:
+                st.table(
+                    [
+                        {
+                            "操作": failure.get("operation"),
+                            "序号": failure.get("index"),
+                            "错误码": failure.get("code"),
+                            "原因": failure.get("message"),
+                        }
+                    ]
+                )
+        with st.expander("查看任务操作日志 JSON", expanded=False):
+            st.json(artifact)
+        if execute_payload:
+            with st.expander("查看执行结果 JSON", expanded=False):
+                st.json(execute_payload)
+
+
+def _show_background_task_detail(project_root: Path, runs_dir: str, row: dict[str, Any]) -> None:
+    with st.container(border=True):
+        st.subheader("后台任务详情")
+        cols = st.columns(5)
+        cols[0].metric("任务ID（任务 ID）", str(row.get("task_id") or "-"))
+        cols[1].metric("操作", str(row.get("operation_type") or "-"))
+        cols[2].metric("状态", _format_status(row.get("status")))
+        cols[3].metric("退出码", str(row.get("return_code") if row.get("return_code") is not None else "-"))
+        cols[4].metric("更新时间", str(row.get("updated_at") or "-"))
+        command = row.get("command") if isinstance(row.get("command"), list) else []
+        if command:
+            with st.expander("查看固定执行命令", expanded=False):
+                st.code(_format_shell_command(command, cwd=project_root), language="bash")
+        for label, path_value in [
+            ("任务 artifact（执行结果文件）", row.get("artifact_path")),
+            ("执行结果 artifact（执行结果文件）", row.get("execute_artifact_path")),
+            ("汇报 artifact（执行结果文件）", row.get("report_artifact_path")),
+        ]:
+            text = str(path_value or "").strip()
+            if text:
+                st.caption(f"{label}：{text}")
+        stdout = _read_text_path(Path(runs_dir), str(row.get("stdout_path") or ""))
+        stderr = _read_text_path(Path(runs_dir), str(row.get("stderr_path") or ""))
+        execute_payload, report_payload = _execution_payloads_from_task(project_root, row)
+        progress_payload = read_create_live_progress(runs_dir) if str(row.get("operation_type") or "") == "create_live_execute" else {}
+        _show_create_execution_summary_card(
+            task=row,
+            progress=progress_payload,
+            execute_payload=execute_payload,
+            report_payload=report_payload,
+            expanded=False,
+        )
+        if stdout:
+            with st.expander("查看 stdout（标准输出）", expanded=False):
+                st.code(stdout, language="text")
+        if stderr:
+            with st.expander("查看 stderr（标准错误）", expanded=False):
+                st.code(stderr, language="text")
+        result = row.get("result") if isinstance(row.get("result"), dict) else {}
+        post_results = row.get("post_results") if isinstance(row.get("post_results"), list) else []
+        if result:
+            with st.expander("查看任务结果 JSON", expanded=False):
+                st.json(result)
+        if post_results:
+            with st.expander("查看后续命令结果 JSON", expanded=False):
+                st.json(post_results)
+            for index, post_result in enumerate(post_results, start=1):
+                if not isinstance(post_result, dict):
+                    continue
+                post_stdout = _read_text_path(Path(runs_dir), str(post_result.get("stdout_path") or ""))
+                post_stderr = _read_text_path(Path(runs_dir), str(post_result.get("stderr_path") or ""))
+                if post_stdout:
+                    with st.expander(f"查看后续命令 {index} stdout（标准输出）", expanded=False):
+                        st.code(post_stdout, language="text")
+                if post_stderr:
+                    with st.expander(f"查看后续命令 {index} stderr（标准错误）", expanded=False):
+                        st.code(post_stderr, language="text")
+
+
+def _operation_logs(runs_dir: str) -> None:
+    st.header("操作日志")
+    st.caption("前端触发的创建、巡检、项目管理、真实执行都会在这里留痕。这里不调用平台接口，只读取本地日志和执行结果。")
+    rows = load_operation_logs(runs_dir, limit=500)
+    if not rows:
+        st.info("还没有前端操作日志。")
+        return
+
+    products = sorted({str(row.get("product") or row.get("product_key") or "").strip() for row in rows if row.get("product") or row.get("product_key")})
+    operations = sorted({str(row.get("operation_type") or "").strip() for row in rows if row.get("operation_type")})
+    statuses = sorted({str(row.get("status") or "").strip() for row in rows if row.get("status")})
+    cols = st.columns(3)
+    product_filter = cols[0].selectbox("产品", ["全部产品", *products])
+    operation_filter = cols[1].selectbox("操作类型", ["全部操作", *operations])
+    status_filter = cols[2].selectbox("状态", ["全部状态", *statuses])
+    filtered = filter_operation_logs(
+        rows,
+        product="" if product_filter == "全部产品" else product_filter,
+        operation_type="" if operation_filter == "全部操作" else operation_filter,
+        status="" if status_filter == "全部状态" else status_filter,
+    )
+    st.caption(f"当前显示 {len(filtered)} / {len(rows)} 条。")
+    table_rows = [
+        {
+            "时间": row.get("created_at"),
+            "操作": row.get("operation_type"),
+            "状态": _format_status(row.get("status")),
+            "审查": _format_status(row.get("review_status")),
+            "产品": row.get("product") or row.get("product_key") or "-",
+            "账户数": row.get("account_count"),
+            "素材分配": row.get("material_assignment_count"),
+            "阻断": row.get("review_blocking_reason_count"),
+            "风险": row.get("review_warning_count"),
+            "任务": _format_status(row.get("task_status")),
+            "退出码": row.get("return_code"),
+            "飞书": _format_status(row.get("feishu_status")),
+            "任务ID": row.get("task_id"),
+        }
+        for row in filtered
+    ]
+    st.dataframe(table_rows, use_container_width=True, hide_index=True)
+
+    labels = [
+        f"{row.get('created_at') or '-'} | {row.get('operation_type') or '-'} | {row.get('product') or row.get('product_key') or '-'} | {row.get('task_id')}"
+        for row in filtered
+    ]
+    if not labels:
+        st.info("没有符合筛选条件的操作日志。")
+        return
+    selected_label = st.selectbox("查看操作详情", labels)
+    selected_task_id = str(filtered[labels.index(selected_label)].get("task_id") or "")
+    _show_operation_log_detail(runs_dir, selected_task_id)
+
+
+def _show_operation_log_detail(runs_dir: str, task_id: str) -> None:
+    detail = load_operation_log_detail(runs_dir, task_id)
+    row = detail.get("row") if isinstance(detail.get("row"), dict) else {}
+    artifact = detail.get("artifact") if isinstance(detail.get("artifact"), dict) else {}
+    task = detail.get("task") if isinstance(detail.get("task"), dict) else {}
+    create_review = detail.get("create_review") if isinstance(detail.get("create_review"), dict) else {}
+    execute_payload = detail.get("execute_payload") if isinstance(detail.get("execute_payload"), dict) else {}
+    report_payload = detail.get("report_payload") if isinstance(detail.get("report_payload"), dict) else {}
+    failure = detail.get("failure") if isinstance(detail.get("failure"), dict) else {}
+    feishu = detail.get("feishu") if isinstance(detail.get("feishu"), dict) else {}
+
+    with st.container(border=True):
+        st.subheader("操作详情")
+        cols = st.columns(6)
+        cols[0].metric("任务ID（任务 ID）", str(row.get("task_id") or "-"))
+        cols[1].metric("操作", str(row.get("operation_type") or "-"))
+        cols[2].metric("状态", _format_status(row.get("status")))
+        cols[3].metric("产品", str(row.get("product") or row.get("product_key") or "-"))
+        cols[4].metric("审查", _format_status(row.get("review_status")))
+        cols[5].metric("飞书", _format_status(feishu.get("status") or row.get("feishu_status")))
+        for label, path_value in [
+            ("操作日志 artifact（执行结果文件）", row.get("artifact_path")),
+            ("执行结果 artifact（执行结果文件）", row.get("execute_artifact_path")),
+            ("汇报 artifact（执行结果文件）", row.get("report_artifact_path")),
+        ]:
+            text = str(path_value or "").strip()
+            if text:
+                st.caption(f"{label}：{text}")
+        message = str(feishu.get("message") or "").strip()
+        if message:
+            st.info(message)
+        _show_create_execution_summary_card(
+            task=task,
+            progress=read_create_live_progress(runs_dir) if str(row.get("operation_type") or "") == "create_live_execute" else {},
+            execute_payload=execute_payload,
+            report_payload=report_payload,
+            expanded=False,
+        )
+        stdout = _read_text_path(Path(runs_dir), str(row.get("stdout_path") or ""))
+        stderr = _read_text_path(Path(runs_dir), str(row.get("stderr_path") or ""))
+        if stdout:
+            with st.expander("查看 stdout（标准输出）", expanded=False):
+                st.code(stdout, language="text")
+        if stderr:
+            with st.expander("查看 stderr（标准错误）", expanded=False):
+                st.code(stderr, language="text")
+        if failure:
+            st.error("执行失败明细")
+            st.table(
+                [
+                    {
+                        "操作": failure.get("operation"),
+                        "序号": failure.get("index"),
+                        "错误码": failure.get("code"),
+                        "原因": failure.get("message"),
+                    }
+                ]
+            )
+        if report_payload:
+            _show_create_execute_report(report_payload)
+        elif execute_payload:
+            status = str(execute_payload.get("status") or "")
+            if bool(execute_payload.get("ok")):
+                st.success(f"执行结果：{_format_status(status)}")
+            else:
+                st.error(f"执行结果：{_format_status(status)}")
+        _show_operation_create_review(create_review)
+        with st.expander("查看操作日志 JSON", expanded=False):
+            st.json(artifact)
+        if execute_payload:
+            with st.expander("查看真实执行结果 JSON", expanded=False):
+                st.json(execute_payload)
+        if report_payload:
+            with st.expander("查看飞书汇报结果 JSON", expanded=False):
+                st.json(report_payload)
+
+
+def _show_operation_create_review(create_review: dict[str, Any]) -> None:
+    preview = build_create_plan_preview_from_review(create_review)
+    if not preview:
+        return
+
+    with st.expander("查看创建计划审查与选材明细", expanded=False):
+        task_id = str((create_review.get("review") or {}).get("task_id") or id(create_review))
+        _show_create_plan_preview_panel(
+            preview,
+            key_prefix=f"operation_create_review_{task_id}",
+            title="创建计划审查与选材明细",
+            use_expanders=False,
+        )
 
 
 def _results(runs_dir: str) -> None:
@@ -1714,7 +2778,10 @@ def _results(runs_dir: str) -> None:
         list(workflow_labels),
     )]
     payload = _latest(runs_dir, workflow)
-    _show_summary("最近结果", payload)
+    if workflow == "scheduler_status":
+        _show_scheduler_status_panel(payload, compact=False)
+    else:
+        _show_summary("最近结果", payload)
     with st.expander("查看完整结果 JSON", expanded=False):
         st.json(payload)
 
@@ -1745,6 +2812,9 @@ def main() -> None:
     tabs = st.tabs(
         [
             "首页",
+            "任务中心",
+            "操作日志",
+            "定时任务",
             "投放巡检",
             "产品管理",
             "创建",
@@ -1756,16 +2826,22 @@ def main() -> None:
     with tabs[0]:
         _dashboard(runs_dir)
     with tabs[1]:
-        _delivery_patrol(project_root, runs_dir, timeout_seconds)
+        _task_center(project_root, runs_dir)
     with tabs[2]:
-        _product_management(config)
+        _operation_logs(runs_dir)
     with tabs[3]:
-        _create(project_root, config, timeout_seconds)
+        _scheduler_status_page(runs_dir)
     with tabs[4]:
-        _project_management(project_root, timeout_seconds)
+        _delivery_patrol(project_root, runs_dir, timeout_seconds)
     with tabs[5]:
-        _ai_template_drafts(project_root, runs_dir, timeout_seconds)
+        _product_management(config)
     with tabs[6]:
+        _create(project_root, config, timeout_seconds)
+    with tabs[7]:
+        _project_management(project_root, timeout_seconds, runs_dir)
+    with tabs[8]:
+        _ai_template_drafts(project_root, runs_dir, timeout_seconds)
+    with tabs[9]:
         _results(runs_dir)
 
 
