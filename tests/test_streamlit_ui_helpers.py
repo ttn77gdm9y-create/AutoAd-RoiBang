@@ -17,6 +17,12 @@ from roibang_v2.ui.script_runner import build_delivery_patrol_command
 from roibang_v2.ui.script_runner import build_project_filter_command
 from roibang_v2.ui.script_runner import build_project_update_execute_command
 from roibang_v2.ui.script_runner import build_product_config_publish_command
+from roibang_v2.ui.execution_review import build_account_remark_execution_review
+from roibang_v2.ui.execution_review import build_payload_chinese_rows
+from roibang_v2.ui.execution_review import build_payload_chinese_summary
+from roibang_v2.ui.execution_review import build_project_update_execution_review
+from roibang_v2.ui.execution_review import remember_execution_path
+from roibang_v2.ui.execution_review import resolve_optional_execution_path
 from roibang_v2.ui.streamlit_shell import list_create_modes
 from roibang_v2.ui.streamlit_shell import list_products
 from roibang_v2.ui.streamlit_shell import build_allowed_create_accounts_config
@@ -578,6 +584,115 @@ def test_build_account_remark_execute_command_requires_explicit_execute_flag():
     assert "--yes" not in dry_command
     assert "--execute" in execute_command
     assert "--yes" in execute_command
+
+
+def test_execution_path_persists_across_streamlit_reruns_and_defaults_do_not_auto_show(tmp_path: Path):
+    state = {}
+
+    assert remember_execution_path(state, "project_update_execute_path", "configs/project-updates/delete.local.json") == "configs/project-updates/delete.local.json"
+    assert remember_execution_path(state, "project_update_execute_path", "") == "configs/project-updates/delete.local.json"
+    assert resolve_optional_execution_path(state, "project_update_execute_path", "configs/project-updates/other.local.json", project_root=tmp_path) == "configs/project-updates/delete.local.json"
+
+    default_remark_path = "configs/account-updates/ui-account-remark-update.local.json"
+    assert resolve_optional_execution_path({}, "account_remark_update_path", default_remark_path, project_root=tmp_path) == ""
+
+    existing = tmp_path / default_remark_path
+    existing.parent.mkdir(parents=True)
+    existing.write_text("{}", encoding="utf-8")
+    assert resolve_optional_execution_path({}, "account_remark_update_path", default_remark_path, project_root=tmp_path) == default_remark_path
+
+
+def test_project_update_execution_review_summarizes_delete_actions_in_plain_chinese():
+    review = build_project_update_execution_review(
+        {
+            "project_update_id": "delete-low-spend",
+            "actions": [
+                {
+                    "action_type": "delete_project",
+                    "advertiser_id": "adv-1",
+                    "project_id": "project-1",
+                    "project_name": "测试项目",
+                    "stat_cost": 12.3,
+                }
+            ],
+        }
+    )
+
+    assert review["summary"]["动作"] == "删除项目"
+    assert review["summary"]["项目数"] == 1
+    assert review["rows"] == [
+        {
+            "动作": "删除项目",
+            "账户 ID": "adv-1",
+            "项目 ID": "project-1",
+            "项目名称": "测试项目",
+            "消耗": 12.3,
+            "目标值": "",
+        }
+    ]
+
+
+def test_account_remark_execution_review_summarizes_updates_in_plain_chinese():
+    review = build_account_remark_execution_review(
+        {
+            "account_remark_update": {
+                "remark": "点点英雄-微小-郭靖",
+                "advertiser_ids": ["adv-1", "adv-2"],
+            }
+        }
+    )
+
+    assert review["summary"] == {"动作": "修改账户备注", "账户数": 2, "目标备注": "点点英雄-微小-郭靖"}
+    assert review["rows"][0] == {"动作": "修改账户备注", "账户 ID": "adv-1", "目标备注": "点点英雄-微小-郭靖"}
+
+
+def test_payload_chinese_summary_explains_generic_execution_json():
+    payload = {
+        "ok": True,
+        "workflow": "project_update_execute",
+        "status": "completed",
+        "execution_enabled": True,
+        "external_api_calls": 3,
+        "artifact_path": "data/runs/project_update_execute/a.json",
+        "summary": {"action_count": 2, "updated_project_count": 2},
+    }
+
+    summary = build_payload_chinese_summary(payload)
+
+    assert summary["结果"] == "成功"
+    assert summary["流程"] == "project_update_execute"
+    assert summary["状态"] == "completed"
+    assert summary["真实执行"] == "是"
+    assert summary["接口调用"] == 3
+    assert summary["动作数"] == 2
+    assert summary["项目数"] == 2
+    assert summary["结果文件"] == "data/runs/project_update_execute/a.json"
+
+
+def test_payload_chinese_rows_explains_actions_before_raw_json():
+    rows = build_payload_chinese_rows(
+        {
+            "actions": [
+                {
+                    "action_type": "delete_project",
+                    "advertiser_id": "adv-1",
+                    "project_id": "project-1",
+                    "project_name": "测试项目",
+                }
+            ]
+        }
+    )
+
+    assert rows == [
+        {
+            "动作": "删除项目",
+            "账户 ID": "adv-1",
+            "项目 ID": "project-1",
+            "项目名称": "测试项目",
+            "消耗": "",
+            "目标值": "",
+        }
+    ]
 
 
 def test_build_ai_template_drafts_command_is_readonly():

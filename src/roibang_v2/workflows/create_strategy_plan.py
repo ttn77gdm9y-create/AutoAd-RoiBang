@@ -560,8 +560,6 @@ def _next_candidate(
 def _max_accounts_per_material(request: dict[str, Any], dedupe_scope: str) -> int:
     if dedupe_scope != "max_account_overlap":
         return 0
-    if _scale_top_material_reuse_enabled(request):
-        return len(_target_accounts(request))
     requirements = _material_requirements(request)
     ratio = _float_value(requirements.get("max_cross_account_overlap_ratio"), 0.3)
     account_count = len(_target_accounts(request))

@@ -1,0 +1,228 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #f4f6f8;
+  color: #172026;
+  font-family:
+    Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+    sans-serif;
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.app-sider {
+  background: #172026 !important;
+}
+
+.app-brand {
+  color: #ffffff !important;
+  height: 56px;
+  margin: 0 !important;
+  padding: 18px 20px 10px;
+}
+
+.app-content {
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.page {
+  max-width: 1440px;
+  margin: 0 auto;
+}
+
+.page-toolbar,
+.summary-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.summary-panel {
+  display: grid;
+  gap: 16px;
+  width: 100%;
+}
+
+.summary-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.summary-progress {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid #d8dee6;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.table-progress {
+  display: grid;
+  min-width: 180px;
+  gap: 2px;
+}
+
+.metric-grid {
+  margin-top: 16px;
+  margin-bottom: 16px;
+}
+
+.page-alert {
+  margin-bottom: 16px;
+}
+
+.filter-bar,
+.import-panel {
+  margin-bottom: 16px;
+  padding: 16px;
+  border: 1px solid #d8dee6;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.import-panel {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(320px, 1fr);
+  gap: 16px;
+}
+
+.import-column {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.bulk-edit-panel {
+  grid-template-columns: 1fr;
+}
+
+.bulk-edit-grid {
+  display: grid;
+  grid-template-columns: 88px minmax(220px, 1fr) 88px minmax(220px, 1fr) 88px minmax(220px, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.status-select {
+  min-width: 140px;
+}
+
+.operation-select {
+  min-width: 220px;
+}
+
+.metric-tile {
+  min-height: 112px;
+  padding: 18px;
+  border: 1px solid #d8dee6;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.full-width,
+.confirm-panel {
+  width: 100%;
+}
+
+.workflow-steps {
+  max-width: 760px;
+}
+
+.workflow-actions {
+  margin-top: 4px;
+}
+
+.workflow-task-card {
+  border-color: #d8dee6;
+}
+
+.workflow-task-links {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #f4f6f8;
+}
+
+.resume-plan-panel {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid #d8dee6;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.advanced-fields {
+  margin-bottom: 16px;
+  background: #ffffff;
+}
+
+.advanced-fields .ant-collapse-header {
+  color: #51606d !important;
+}
+
+.workflow-select {
+  min-width: 280px;
+}
+
+.dashboard-filter-select {
+  min-width: 180px;
+}
+
+.summary-row-clickable {
+  cursor: pointer;
+}
+
+.summary-row-clickable:focus-visible > td {
+  outline: 2px solid #1d6f62;
+  outline-offset: -2px;
+}
+
+.raw-json,
+.log-panel {
+  min-height: 240px;
+  max-height: 68vh;
+  overflow: auto;
+  margin: 0;
+  padding: 16px;
+  border: 1px solid #d8dee6;
+  border-radius: 8px;
+  background: #0f1419;
+  color: #eef3f7;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 720px) {
+  .app-content {
+    padding: 16px;
+  }
+
+  .page-toolbar,
+  .summary-header,
+  .import-panel {
+    flex-direction: column;
+  }
+
+  .import-panel {
+    display: flex;
+  }
+
+  .bulk-edit-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .workflow-select {
+    width: 100%;
+  }
+}

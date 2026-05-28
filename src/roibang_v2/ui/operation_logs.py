@@ -44,6 +44,15 @@ def operation_log_row_from_artifact(payload: dict[str, Any], artifact_path: str 
     path = Path(artifact_path)
     summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
     result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+    details = payload.get("details") if isinstance(payload.get("details"), dict) else {}
+    project_actions = details.get("project_actions") if isinstance(details.get("project_actions"), list) else []
+    project_action_types = sorted(
+        {
+            _text(row.get("action_type"))
+            for row in project_actions
+            if isinstance(row, dict) and _text(row.get("action_type"))
+        }
+    )
     return {
         "task_id": _legacy_task_id(path, payload),
         "operation_type": _text(payload.get("operation_type") or summary.get("operation_type")),
@@ -62,6 +71,12 @@ def operation_log_row_from_artifact(payload: dict[str, Any], artifact_path: str 
         "result_status": _text(result.get("status")),
         "execute_artifact_path": _text(result.get("execute_artifact_path")),
         "report_artifact_path": _text(result.get("report_artifact_path")),
+        "mode_key": _text(details.get("mode_key")),
+        "display_name": _text(details.get("display_name")),
+        "template_key": _text(details.get("template_key")),
+        "project_template_name": _text(details.get("project_template_name")),
+        "template_catalog_path": _text(details.get("template_catalog_path")),
+        "project_action_types": project_action_types,
         "artifact_path": str(path),
     }
 
@@ -236,6 +251,8 @@ def _material_rows_from_operation_details(details: dict[str, Any]) -> list[dict[
     for key, row in rows.items():
         row["covered_account_count"] = len(accounts[key])
         row["covered_unit_count"] = len(units[key])
+        row["covered_accounts"] = sorted(accounts[key])
+        row["covered_units"] = sorted(units[key])
     return sorted(rows.values(), key=lambda row: (-int(row.get("usage_count") or 0), _text(row.get("material_id"))))
 
 

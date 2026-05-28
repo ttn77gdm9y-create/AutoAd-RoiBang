@@ -25,6 +25,13 @@ MANAGEMENT_ACTION_OPERATIONS = {
     "roi_coeff_update": ("update_project_roi_goal", PROJECT_ROI_GOAL_UPDATE_ENDPOINT),
     "delete_project": ("delete_project", PROJECT_DELETE_ENDPOINT),
 }
+MANAGEMENT_OPERATION_LABELS = {
+    "update_project_status": "更新项目状态",
+    "update_project_budget": "调整项目预算",
+    "update_project_cpa_bid": "调整项目出价",
+    "update_project_roi_goal": "调整项目 ROI 系数",
+    "delete_project": "删除项目",
+}
 
 
 def _text(value: Any) -> str:
@@ -52,8 +59,100 @@ def _raise_for_api_error(response: dict[str, Any]) -> None:
     raise RuntimeError(f"OpenAPI response code={code}: {message}")
 
 
+def _response_data(response: dict[str, Any]) -> dict[str, Any]:
+    data = response.get("data")
+    return data if isinstance(data, dict) else {}
+
+
+def _management_response_errors(response: dict[str, Any]) -> list[dict[str, Any]]:
+    data = _response_data(response)
+    raw_errors = data.get("errors") or data.get("error_list") or data.get("failed_list") or []
+    if not isinstance(raw_errors, list):
+        return []
+    errors: list[dict[str, Any]] = []
+    for item in raw_errors:
+        if isinstance(item, dict):
+            error = dict(item)
+            project_id = _text(error.get("project_id") or error.get("projectId") or error.get("id"))
+            if project_id:
+                error["project_id"] = project_id
+            message = _text(error.get("error_message") or error.get("message") or error.get("msg") or error.get("reason"))
+            if message:
+                error["error_message"] = message
+            errors.append(error)
+        elif _text(item):
+            errors.append({"error_message": _text(item)})
+    return errors
+
+
+def _response_project_ids(response: dict[str, Any]) -> list[str]:
+    data = _response_data(response)
+    for key in ["project_ids", "ids"]:
+        values = data.get(key)
+        if isinstance(values, list):
+            return [_text(value) for value in values if _text(value)]
+    return []
+
+
+def _management_requested_project_ids(rows: list[dict[str, Any]]) -> list[str]:
+    return [_text(row.get("project_id")) for row in rows if _text(row.get("project_id"))]
+
+
+def _management_success_project_ids(
+    response: dict[str, Any],
+    rows: list[dict[str, Any]],
+    errors: list[dict[str, Any]],
+) -> list[str]:
+    requested_ids = _management_requested_project_ids(rows)
+    failed_ids = {_text(error.get("project_id")) for error in errors if _text(error.get("project_id"))}
+    reported_ids = _response_project_ids(response)
+    if reported_ids:
+        return [project_id for project_id in reported_ids if project_id not in failed_ids]
+    return [project_id for project_id in requested_ids if project_id not in failed_ids]
+
+
+def _verify_deleted_project_ids(
+    advertiser_id: str,
+    project_ids: list[str],
+    *,
+    transport: Transport,
+) -> tuple[list[str], list[dict[str, Any]], int]:
+    if not project_ids:
+        return [], [], 0
+    rows_by_project, call_count = _lookup_project_rows(advertiser_id, project_ids, transport=transport)
+    still_existing_ids = set(rows_by_project)
+    verified_deleted_ids = [project_id for project_id in project_ids if project_id not in still_existing_ids]
+    errors = [
+        {
+            "project_id": project_id,
+            "project_name": _text(rows_by_project.get(project_id, {}).get("project_name")),
+            "error_message": "删除接口返回成功，但复核时项目仍存在",
+        }
+        for project_id in project_ids
+        if project_id in still_existing_ids
+    ]
+    return verified_deleted_ids, errors, call_count
+
+
+def _management_error_reason(operation: str, advertiser_id: str, error: dict[str, Any]) -> str:
+    label = MANAGEMENT_OPERATION_LABELS.get(operation, operation or "项目管理动作")
+    project_id = _text(error.get("project_id")) or "未知项目"
+    message = _text(error.get("error_message") or error.get("message") or error.get("msg")) or "接口返回项目级失败"
+    return f"{label}失败：账户 {advertiser_id}，项目 {project_id}，原因：{message}"
+
+
+def _management_result_error_reasons(results: list[dict[str, Any]]) -> list[str]:
+    reasons: list[str] = []
+    for result in results:
+        operation = _text(result.get("operation"))
+        advertiser_id = _text(result.get("advertiser_id"))
+        for error in _rows(result.get("error_list")):
+            reasons.append(_management_error_reason(operation, advertiser_id, error))
+    return reasons
+
+
 def _response_rows(response: dict[str, Any]) -> list[dict[str, Any]]:
-    data = response.get("data") if isinstance(response.get("data"), dict) else {}
+    data = _response_data(response)
     for key in ["list", "rows", "data"]:
         value = data.get(key)
         if isinstance(value, list):
@@ -554,6 +653,19 @@ def _management_payload_row(action: dict[str, Any]) -> dict[str, Any]:
     raise ValueError(f"unsupported project management action_type: {action_type}")
 
 
+def _validate_management_actions(actions: list[dict[str, Any]]) -> list[str]:
+    reasons: list[str] = []
+    for action in actions:
+        action_type = _text(action.get("action_type"))
+        if action_type not in MANAGEMENT_ACTION_OPERATIONS:
+            continue
+        advertiser_id = _text(action.get("advertiser_id"))
+        project_id = _text(action.get("project_id"))
+        if not advertiser_id or not project_id:
+            reasons.append(f"{action_type} requires advertiser_id and project_id: {advertiser_id}/{project_id}")
+    return reasons
+
+
 def _execute_management_updates(
     project_update: dict[str, Any],
     *,
@@ -568,15 +680,15 @@ def _execute_management_updates(
     )
     if blocking_reasons:
         return [], lookup_call_count, 0, blocking_reasons
+    validation_reasons = _validate_management_actions(actions)
+    if validation_reasons:
+        return [], lookup_call_count, 0, validation_reasons
     grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for action in actions:
         action_type = _text(action.get("action_type"))
         if action_type not in MANAGEMENT_ACTION_OPERATIONS:
             continue
         advertiser_id = _text(action.get("advertiser_id"))
-        project_id = _text(action.get("project_id"))
-        if not advertiser_id or not project_id:
-            continue
         grouped.setdefault((advertiser_id, action_type), []).append(_management_payload_row(action))
     for (advertiser_id, action_type), rows in grouped.items():
         operation, _endpoint = MANAGEMENT_ACTION_OPERATIONS[action_type]
@@ -584,13 +696,34 @@ def _execute_management_updates(
             response = transport(_management_update_request(action_type, advertiser_id, chunk))
             update_call_count += 1
             _raise_for_api_error(response)
-            updated_project_count += len(chunk)
+            response_errors = _management_response_errors(response)
+            requested_project_ids = _management_requested_project_ids(chunk)
+            success_project_ids = _management_success_project_ids(response, chunk, response_errors)
+            if action_type == "delete_project" and success_project_ids:
+                success_project_ids, verify_errors, verify_call_count = _verify_deleted_project_ids(
+                    advertiser_id,
+                    success_project_ids,
+                    transport=transport,
+                )
+                update_call_count += verify_call_count
+                response_errors.extend(verify_errors)
+            failed_project_count = len(response_errors)
+            success_project_count = len(success_project_ids)
+            updated_project_count += success_project_count
+            status = "completed"
+            if failed_project_count:
+                status = "partial_failed" if success_project_count else "failed"
             results.append(
                 {
                     "operation": operation,
                     "advertiser_id": advertiser_id,
-                    "project_count": len(chunk),
-                    "status": "completed",
+                    "project_count": success_project_count,
+                    "requested_project_count": len(requested_project_ids),
+                    "failed_project_count": failed_project_count,
+                    "project_ids": success_project_ids,
+                    "requested_project_ids": requested_project_ids,
+                    "error_list": response_errors,
+                    "status": status,
                 }
             )
     return results, lookup_call_count + update_call_count, updated_project_count, []
@@ -689,6 +822,7 @@ def run_project_update_execute_request(
                 "project_update_id": _text(project_update.get("project_update_id")),
                 "action_count": len(_rows(project_update.get("actions"))),
                 "updated_project_count": len(entries),
+                "failed_project_count": 0,
                 "lookup_call_count": lookup_call_count + management_update_call_count,
                 "update_call_count": update_call_count,
             },
@@ -698,6 +832,11 @@ def run_project_update_execute_request(
         payload["artifact_path"] = str(write_run_artifact(runs_dir, "project_update_execute", payload))
         return payload
     results.extend(management_results)
+    failed_project_count = sum(int(result.get("failed_project_count") or 0) for result in management_results)
+    succeeded_project_count = len(entries) + management_updated_project_count
+    execution_ok = failed_project_count == 0
+    status = "completed" if execution_ok else ("partial_failed" if succeeded_project_count else "failed")
+    execution_reasons = [] if execution_ok else _management_result_error_reasons(management_results)
     restore_queue_path = _append_restore_queue(
         runs_dir=runs_dir,
         cfg=cfg,
@@ -706,10 +845,10 @@ def run_project_update_execute_request(
         entries=entries,
     )
     payload = {
-        "ok": True,
+        "ok": execution_ok,
         "workflow": "project_update_execute",
         "phase": "control_execute",
-        "status": "completed",
+        "status": status,
         "execution_enabled": True,
         "external_api_calls": lookup_call_count + update_call_count + management_update_call_count,
         "project_update_path": project_update_path,
@@ -719,12 +858,13 @@ def run_project_update_execute_request(
         "summary": {
             "project_update_id": _text(project_update.get("project_update_id")),
             "action_count": len(_rows(project_update.get("actions"))),
-            "updated_project_count": len(entries) + management_updated_project_count,
+            "updated_project_count": succeeded_project_count,
+            "failed_project_count": failed_project_count,
             "lookup_call_count": lookup_call_count,
             "update_call_count": update_call_count + management_update_call_count,
             "restore_queue_item_count": len([entry for entry in entries if entry.get("action_type") == "schedule_hollow" and _text(entry.get("restore_at"))]),
         },
-        "blocking_reasons": [],
+        "blocking_reasons": execution_reasons,
         "results": results,
     }
     payload["artifact_path"] = str(write_run_artifact(runs_dir, "project_update_execute", payload))

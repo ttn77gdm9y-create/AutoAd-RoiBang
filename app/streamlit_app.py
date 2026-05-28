@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import json
 import shlex
 import sys
@@ -32,6 +33,12 @@ from roibang_v2.ui.create_plan_preview import filter_preview_units
 from roibang_v2.ui.create_plan_review import build_create_plan_review
 from roibang_v2.ui.create_template_health import build_create_mode_health
 from roibang_v2.ui.create_template_health import build_create_template_health
+from roibang_v2.ui.execution_review import build_account_remark_execution_review
+from roibang_v2.ui.execution_review import build_payload_chinese_rows
+from roibang_v2.ui.execution_review import build_payload_chinese_summary
+from roibang_v2.ui.execution_review import build_project_update_execution_review
+from roibang_v2.ui.execution_review import remember_execution_path
+from roibang_v2.ui.execution_review import resolve_optional_execution_path
 from roibang_v2.ui.operation_logs import filter_operation_logs
 from roibang_v2.ui.operation_logs import load_operation_log_detail
 from roibang_v2.ui.operation_logs import load_operation_logs
@@ -110,8 +117,33 @@ def _show_summary(title: str, payload: dict[str, Any]) -> None:
             st.caption(f"结果文件：{artifact_path}")
         details = summary.get("summary") or {}
         if details:
-            with st.expander("查看执行摘要 JSON", expanded=False):
-                st.json(details)
+            _show_json_with_summary("查看执行摘要 JSON", details, expanded=False)
+
+
+def _show_json_with_summary(label: str, payload: Any, *, expanded: bool = False) -> None:
+    summary = build_payload_chinese_summary(payload)
+    rows = build_payload_chinese_rows(payload)
+    if summary:
+        st.markdown("**中文摘要**")
+        st.dataframe([summary], use_container_width=True, hide_index=True)
+    if rows:
+        st.markdown("**明细摘要**")
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+    counter_key = "_raw_json_toggle_counter"
+    st.session_state[counter_key] = int(st.session_state.get(counter_key, 0)) + 1
+    key_source = json.dumps(
+        {
+            "label": label,
+            "payload": payload,
+            "render_index": st.session_state[counter_key],
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+    )
+    key = "show_raw_json_" + hashlib.sha1(key_source.encode("utf-8")).hexdigest()[:16]
+    if st.checkbox(f"显示原始 JSON：{label}", value=expanded, key=key):
+        st.json(payload)
 
 
 def _show_scheduler_status_panel(payload: dict[str, Any], *, compact: bool = False) -> None:
@@ -429,8 +461,7 @@ def _show_mode_detail(
             with st.expander("查看模板风险提示", expanded=False):
                 for item in warnings:
                     st.warning(str(item))
-        with st.expander("查看模板健康检查 JSON", expanded=False):
-            st.json(health)
+        _show_json_with_summary("查看模板健康检查 JSON", health, expanded=False)
 
         cols = st.columns(5)
         cols[0].metric("日预算", str(defaults.get("daily_budget", "-")))
@@ -498,17 +529,17 @@ def _show_mode_detail(
                     st.caption(f"仅展示前 20 条，完整文案池共 {len(title_pool)} 条。")
             else:
                 st.caption("当前基础模板未配置文案池。")
-        with st.expander("查看 CTA（行动按钮）和产品卖点", expanded=False):
-            st.json(
-                {
-                    "cta_pool": cta_pool,
-                    "product_selling_points": selling_points,
-                    "aweme_ids": aweme_ids,
-                }
-            )
+        _show_json_with_summary(
+            "查看 CTA（行动按钮）和产品卖点 JSON",
+            {
+                "cta_pool": cta_pool,
+                "product_selling_points": selling_points,
+                "aweme_ids": aweme_ids,
+            },
+            expanded=False,
+        )
         st.caption(f"命名后缀：{mode.get('template_name_suffix') or '-'}")
-        with st.expander("查看模板原始 JSON", expanded=False):
-            st.json(mode)
+        _show_json_with_summary("查看模板原始 JSON", mode, expanded=False)
 
 
 def _show_create_mode_health(health: dict[str, Any], *, expanded_json: bool = False) -> None:
@@ -530,8 +561,7 @@ def _show_create_mode_health(health: dict[str, Any], *, expanded_json: bool = Fa
         with st.expander("查看创建模式风险提示", expanded=False):
             for item in warnings:
                 st.warning(str(item))
-    with st.expander("查看创建模式健康检查 JSON", expanded=expanded_json):
-        st.json(health)
+    _show_json_with_summary("查看创建模式健康检查 JSON", health, expanded=expanded_json)
 
 
 def _mode_draft_editor(
@@ -778,7 +808,7 @@ def _mode_draft_editor(
                     st.caption("这只是草稿；正式模板仍需后续转正脚本处理。")
                 st.caption(f"前端操作日志：{operation_log.get('artifact_path')}")
                 _show_create_mode_health(health)
-                st.json(draft)
+                _show_json_with_summary("查看保存后的创建模板 JSON", draft, expanded=False)
 
 
 def _lines_to_list(value: str) -> list[str]:
@@ -895,8 +925,7 @@ def _base_template_editor(
             blocking_reasons = health.get("blocking_reasons") if isinstance(health.get("blocking_reasons"), list) else []
             if blocking_reasons:
                 st.error("保存已阻断：" + "；".join(str(item) for item in blocking_reasons))
-                with st.expander("查看模板健康检查 JSON", expanded=False):
-                    st.json(health)
+                _show_json_with_summary("查看模板健康检查 JSON", health, expanded=False)
                 return
             try:
                 output = save_product_create_template_catalog(template_dir, catalog)
@@ -938,9 +967,8 @@ def _base_template_editor(
                 cols[1].metric("CTA（行动按钮）", str(len(updated_template["cta_pool"])))
                 cols[2].metric("卖点", str(len(updated_template["product_selling_points"])))
                 cols[3].metric("健康检查", _format_status(health.get("status")))
-                with st.expander("查看模板健康检查 JSON", expanded=False):
-                    st.json(health)
-                st.json(updated_template)
+                _show_json_with_summary("查看模板健康检查 JSON", health, expanded=False)
+                _show_json_with_summary("查看保存后的基础模板 JSON", updated_template, expanded=False)
 
 
 def _show_script_result(result) -> None:
@@ -950,7 +978,7 @@ def _show_script_result(result) -> None:
     else:
         st.error(f"脚本失败，退出码={result.return_code}")
     if result.parsed_stdout:
-        st.json(result.parsed_stdout)
+        _show_json_with_summary("查看脚本原始 JSON", result.parsed_stdout, expanded=False)
     elif result.stdout.strip():
         st.code(result.stdout, language="text")
     if result.stderr.strip():
@@ -972,12 +1000,22 @@ def _run_confirmed_execution(
     runs_dir: str = "",
     operation_type: str = "",
     request: dict[str, Any] | None = None,
+    review: dict[str, Any] | None = None,
 ) -> None:
     with st.container(border=True):
         st.markdown(f"**{title}**")
-        st.warning("这个按钮会调用固定脚本执行真实业务动作。执行前必须确认 JSON 内容正确。")
+        st.warning("这个按钮会调用固定脚本执行真实业务动作。执行前必须核对下面的中文摘要。")
+        if isinstance(review, dict) and review:
+            summary = review.get("summary") if isinstance(review.get("summary"), dict) else {}
+            rows = review.get("rows") if isinstance(review.get("rows"), list) else []
+            if summary:
+                cols = st.columns(min(max(len(summary), 1), 4))
+                for index, (label, value) in enumerate(summary.items()):
+                    cols[index % len(cols)].metric(str(label), str(value))
+            if rows:
+                st.dataframe(rows, use_container_width=True, hide_index=True)
         st.code(_format_shell_command(command, cwd=project_root), language="bash")
-        confirmed = st.checkbox("我已确认 JSON 内容正确，允许执行固定脚本", key=f"{state_key}_confirm")
+        confirmed = st.checkbox("我已核对上方摘要，允许执行固定脚本", key=f"{state_key}_confirm")
         if st.button("确认执行", type="primary", disabled=not confirmed, key=f"{state_key}_execute"):
             result = run_fixed_script(command, cwd=project_root, timeout_seconds=timeout_seconds)
             st.session_state[f"{state_key}_result"] = result.parsed_stdout
@@ -1002,8 +1040,7 @@ def _run_confirmed_execution(
                 st.caption(f"前端操作日志：{operation_log.get('artifact_path')}")
         stored = st.session_state.get(f"{state_key}_result")
         if isinstance(stored, dict) and stored:
-            with st.expander("查看最近执行结果 JSON", expanded=False):
-                st.json(stored)
+            _show_json_with_summary("查看最近执行结果 JSON", stored, expanded=False)
         operation_log = st.session_state.get(f"{state_key}_operation_log")
         if isinstance(operation_log, dict) and operation_log:
             st.caption(f"前端操作日志：{operation_log.get('artifact_path')}")
@@ -1305,8 +1342,7 @@ def _show_create_plan_preview_panel(
             hide_index=True,
         )
         if use_expanders:
-            with st.expander("查看单元级完整分配 JSON", expanded=False):
-                st.json(unit_rows)
+            _show_json_with_summary("查看单元级完整分配 JSON", {"units": unit_rows}, expanded=False)
         else:
             st.caption("完整单元分配 JSON 可在操作日志 JSON 中查看。")
 
@@ -1397,8 +1433,7 @@ def _show_create_execute_report(report: dict[str, Any]) -> None:
         artifact_path = str(report.get("artifact_path") or "")
         if artifact_path:
             st.caption(f"汇报结果文件：{artifact_path}")
-        with st.expander("查看汇报 JSON", expanded=False):
-            st.json(report)
+        _show_json_with_summary("查看汇报 JSON", report, expanded=False)
 
 
 def _show_create_execution_summary_card(
@@ -1613,8 +1648,7 @@ def _show_create_execution_steps(
                 st.error("真实执行配置未通过。")
                 if reasons:
                     st.write("阻断原因：" + "；".join(str(item) for item in reasons))
-            with st.expander("查看检查结果 JSON", expanded=False):
-                st.json(result_payload)
+            _show_json_with_summary("查看检查结果 JSON", result_payload, expanded=False)
         operation_log = st.session_state.get(f"create_live_config_check_operation_log_{plan_path}")
         if isinstance(operation_log, dict) and operation_log:
             st.caption(f"配置检查操作日志：{operation_log.get('artifact_path')}")
@@ -1741,8 +1775,7 @@ def _show_create_execution_steps(
             artifact_path = str(stored.get("artifact_path") or "")
             if artifact_path:
                 st.caption(f"执行结果文件：{artifact_path}")
-            with st.expander("查看真实执行结果 JSON", expanded=False):
-                st.json(stored)
+            _show_json_with_summary("查看真实执行结果 JSON", stored, expanded=False)
         raw_result = st.session_state.get(f"create_live_execute_raw_{plan_path}")
         if isinstance(raw_result, dict) and raw_result and not bool((stored or {}).get("ok") if isinstance(stored, dict) else False):
             with st.expander("查看真实执行原始输出", expanded=False):
@@ -1757,8 +1790,7 @@ def _show_create_execution_steps(
         operation_log = st.session_state.get(f"create_live_operation_log_{plan_path}")
         if isinstance(operation_log, dict) and operation_log:
             st.caption(f"前端操作日志：{operation_log.get('artifact_path')}")
-            with st.expander("查看前端操作日志 JSON", expanded=False):
-                st.json(operation_log)
+            _show_json_with_summary("查看前端操作日志 JSON", operation_log, expanded=False)
         with st.expander("查看备用终端命令", expanded=False):
             st.caption("仅用于前端执行异常时排查；正常情况下不需要复制命令。")
             st.code(_format_shell_command(progress_command, cwd=project_root), language="bash")
@@ -1789,8 +1821,7 @@ def _scheduler_status_page(runs_dir: str) -> None:
         st.info("还没有定时任务状态结果。")
         return
     _show_scheduler_status_panel(payload, compact=False)
-    with st.expander("查看 scheduler_status JSON", expanded=False):
-        st.json(payload)
+    _show_json_with_summary("查看 scheduler_status JSON", payload, expanded=False)
 
 
 def _delivery_patrol(project_root: Path, runs_dir: str, timeout_seconds: int) -> None:
@@ -1822,8 +1853,7 @@ def _delivery_patrol(project_root: Path, runs_dir: str, timeout_seconds: int) ->
     suggestions = patrol.get("delivery_patrol_suggestions")
     if isinstance(suggestions, dict):
         st.subheader("同频建议摘要")
-        with st.expander("查看建议摘要 JSON", expanded=False):
-            st.json(suggestions.get("summary") or suggestions)
+        _show_json_with_summary("查看建议摘要 JSON", suggestions.get("summary") or suggestions, expanded=False)
 
 
 def _create(project_root: Path, config: dict[str, Any], timeout_seconds: int) -> None:
@@ -1955,8 +1985,7 @@ def _create(project_root: Path, config: dict[str, Any], timeout_seconds: int) ->
             st.session_state["create_plan_operation_log"] = operation_log
             st.session_state.pop("create_config_check_result", None)
             st.caption(f"前端操作日志：{operation_log.get('artifact_path')}")
-            with st.expander("查看生成结果 JSON", expanded=False):
-                st.json(result.parsed_stdout)
+            _show_json_with_summary("查看生成结果 JSON", result.parsed_stdout, expanded=False)
         else:
             operation_log = _record_create_ui_operation(
                 runs_dir=str(config.get("runs_dir") or "data/runs"),
@@ -2184,7 +2213,7 @@ def _product_management(config: dict[str, Any]) -> None:
                     draft_path=str(output.relative_to(PROJECT_ROOT)) if output.is_relative_to(PROJECT_ROOT) else str(output)
                 )
                 st.code(_format_shell_command(publish_command, cwd=PROJECT_ROOT), language="bash")
-            st.json(draft)
+            _show_json_with_summary("查看产品草稿 JSON", draft, expanded=False)
 
     with st.expander("生成账户准允许名单", expanded=False):
         st.caption("用于新产品真实创建前限定可操作账户。只写本地 JSON，不调用平台接口。")
@@ -2224,7 +2253,7 @@ def _product_management(config: dict[str, Any]) -> None:
                 st.error(f"保存失败：{exc}")
             else:
                 st.success(f"账户准允许名单已保存：{output}")
-                st.json(allowed_config)
+                _show_json_with_summary("查看账户准允许名单 JSON", allowed_config, expanded=False)
 
 
 def _project_management(project_root: Path, timeout_seconds: int, runs_dir: str) -> None:
@@ -2317,16 +2346,27 @@ def _project_management(project_root: Path, timeout_seconds: int, runs_dir: str)
         st.caption(f"前端操作日志：{operation_log.get('artifact_path')}")
         project_update_path = result.parsed_stdout.get("project_update_path") if result.parsed_stdout else ""
         if project_update_path:
-            _run_confirmed_execution(
-                title="项目管理真实执行",
-                command=build_project_update_execute_command(project_update_path=str(project_update_path), execute=True),
-                project_root=project_root,
-                timeout_seconds=timeout_seconds,
-                state_key=f"project_update_{project_update_path}",
-                runs_dir=runs_dir,
-                operation_type="project_management_execute",
-                request={"project_update_path": str(project_update_path), "action_type": action_type},
-            )
+            remember_execution_path(st.session_state, "project_update_execute_path", str(project_update_path))
+
+    project_update_execute_path = resolve_optional_execution_path(
+        st.session_state,
+        "project_update_execute_path",
+        output_path,
+        project_root=project_root,
+    )
+    if project_update_execute_path:
+        project_update_payload = _load_json_path(project_root, project_update_execute_path)
+        _run_confirmed_execution(
+            title="项目管理真实执行",
+            command=build_project_update_execute_command(project_update_path=project_update_execute_path, execute=True),
+            project_root=project_root,
+            timeout_seconds=timeout_seconds,
+            state_key=f"project_update_{project_update_execute_path}",
+            runs_dir=runs_dir,
+            operation_type="project_management_execute",
+            request={"project_update_path": project_update_execute_path},
+            review=build_project_update_execution_review(project_update_payload),
+        )
 
     st.divider()
     st.subheader("账户备注修改")
@@ -2369,9 +2409,14 @@ def _project_management(project_root: Path, timeout_seconds: int, runs_dir: str)
         st.caption(f"前端操作日志：{operation_log.get('artifact_path')}")
         account_remark_path = result.parsed_stdout.get("artifact_path") if result.parsed_stdout else ""
         if account_remark_path:
-            st.session_state["account_remark_update_path"] = str(account_remark_path)
+            remember_execution_path(st.session_state, "account_remark_update_path", str(account_remark_path))
 
-    account_remark_update_path = str(st.session_state.get("account_remark_update_path") or remark_output_path or "")
+    account_remark_update_path = resolve_optional_execution_path(
+        st.session_state,
+        "account_remark_update_path",
+        remark_output_path,
+        project_root=project_root,
+    )
     if account_remark_update_path:
         check_command = build_account_remark_execute_command(
             account_remark_update_path=account_remark_update_path,
@@ -2394,6 +2439,7 @@ def _project_management(project_root: Path, timeout_seconds: int, runs_dir: str)
             runs_dir=runs_dir,
             operation_type="account_remark_execute",
             request={"account_remark_update_path": account_remark_update_path},
+            review=build_account_remark_execution_review(_load_json_path(project_root, account_remark_update_path)),
         )
 
 
@@ -2424,7 +2470,7 @@ def _ai_template_drafts(project_root: Path, runs_dir: str, timeout_seconds: int)
     for draft in drafts:
         name = str(draft.get("draft_name") or draft.get("draft_key") or "draft")
         with st.expander(name):
-            st.json(draft)
+            _show_json_with_summary("查看 AI 草稿 JSON", draft, expanded=False)
 
 
 def _task_center(project_root: Path, runs_dir: str) -> None:
@@ -2547,11 +2593,9 @@ def _task_center(project_root: Path, runs_dir: str) -> None:
                         }
                     ]
                 )
-        with st.expander("查看任务操作日志 JSON", expanded=False):
-            st.json(artifact)
+        _show_json_with_summary("查看任务操作日志 JSON", artifact, expanded=False)
         if execute_payload:
-            with st.expander("查看执行结果 JSON", expanded=False):
-                st.json(execute_payload)
+            _show_json_with_summary("查看执行结果 JSON", execute_payload, expanded=False)
 
 
 def _show_background_task_detail(project_root: Path, runs_dir: str, row: dict[str, Any]) -> None:
@@ -2595,11 +2639,9 @@ def _show_background_task_detail(project_root: Path, runs_dir: str, row: dict[st
         result = row.get("result") if isinstance(row.get("result"), dict) else {}
         post_results = row.get("post_results") if isinstance(row.get("post_results"), list) else []
         if result:
-            with st.expander("查看任务结果 JSON", expanded=False):
-                st.json(result)
+            _show_json_with_summary("查看任务结果 JSON", result, expanded=False)
         if post_results:
-            with st.expander("查看后续命令结果 JSON", expanded=False):
-                st.json(post_results)
+            _show_json_with_summary("查看后续命令结果 JSON", {"post_results": post_results}, expanded=False)
             for index, post_result in enumerate(post_results, start=1):
                 if not isinstance(post_result, dict):
                     continue
@@ -2734,14 +2776,11 @@ def _show_operation_log_detail(runs_dir: str, task_id: str) -> None:
             else:
                 st.error(f"执行结果：{_format_status(status)}")
         _show_operation_create_review(create_review)
-        with st.expander("查看操作日志 JSON", expanded=False):
-            st.json(artifact)
+        _show_json_with_summary("查看操作日志 JSON", artifact, expanded=False)
         if execute_payload:
-            with st.expander("查看真实执行结果 JSON", expanded=False):
-                st.json(execute_payload)
+            _show_json_with_summary("查看真实执行结果 JSON", execute_payload, expanded=False)
         if report_payload:
-            with st.expander("查看飞书汇报结果 JSON", expanded=False):
-                st.json(report_payload)
+            _show_json_with_summary("查看飞书汇报结果 JSON", report_payload, expanded=False)
 
 
 def _show_operation_create_review(create_review: dict[str, Any]) -> None:
@@ -2782,8 +2821,7 @@ def _results(runs_dir: str) -> None:
         _show_scheduler_status_panel(payload, compact=False)
     else:
         _show_summary("最近结果", payload)
-    with st.expander("查看完整结果 JSON", expanded=False):
-        st.json(payload)
+    _show_json_with_summary("查看完整结果 JSON", payload, expanded=False)
 
 
 def main() -> None:

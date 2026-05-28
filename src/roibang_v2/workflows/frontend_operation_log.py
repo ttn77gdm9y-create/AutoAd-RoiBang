@@ -153,6 +153,12 @@ def create_operation_details_from_plan(plan_payload: dict[str, Any]) -> dict[str
         "product": _text(request.get("product")),
         "product_key": _text(request.get("product_key")),
         "mode_key": _text(plan_payload.get("mode_key")),
+        "display_name": _text((plan_payload.get("summary") or {}).get("display_name") if isinstance(plan_payload.get("summary"), dict) else ""),
+        "template_catalog_path": _text(
+            (plan_payload.get("summary") or {}).get("template_catalog_path") if isinstance(plan_payload.get("summary"), dict) else ""
+        ),
+        "template_key": _text(request.get("template_key")),
+        "project_template_name": _text(request.get("project_template_name")),
         "plan_id": _text((plan_payload.get("summary") or {}).get("plan_id") if isinstance(plan_payload.get("summary"), dict) else ""),
         "target_date": _text(request.get("target_date")),
         "source_advertiser_id": _text(request.get("source_advertiser_id")),

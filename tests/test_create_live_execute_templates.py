@@ -52,6 +52,17 @@ def test_live_create_policy_template_is_minimal_direct_execute_contract():
     assert "token" not in json.dumps(policy).replace("token_env", "")
 
 
+def test_live_create_policy_template_retries_transient_oceanengine_codes():
+    policy = _load_json(LIVE_POLICY_TEMPLATE)
+    transport = policy["create_live_execute_once"]["create_http_transport"]
+    retry_by_operation = transport["retry_api_codes_by_operation"]
+
+    for operation in ("create_project", "bind_material", "lookup_target_material", "create_unit"):
+        assert 51010 in retry_by_operation[operation]
+
+    assert transport["max_retries"] >= 2
+
+
 def test_live_create_templates_are_not_scheduler_defaults():
     scheduler = SCHEDULER_TEMPLATE.read_text(encoding="utf-8")
 

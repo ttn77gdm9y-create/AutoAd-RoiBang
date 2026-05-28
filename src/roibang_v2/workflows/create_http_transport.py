@@ -35,6 +35,15 @@ CREATE_ENDPOINT_ALLOWLIST = {
     "lookup_disabled_projects": "/open_api/v3.0/project/list/",
     "lookup_project_report": "/open_api/v3.0/report/custom/get/",
     "delete_project": "/open_api/v3.0/project/delete/",
+    "handsel_site": "/open_api/2/tools/site/handsel/",
+    "read_site": "/open_api/2/tools/site/read/",
+    "update_site": "/open_api/2/tools/site/update/",
+    "publish_site": "/open_api/2/tools/site/update_status/",
+    "update_site_status": "/open_api/2/tools/site/update_status/",
+    "create_site_template": "/open_api/2/tools/site_template/create/",
+    "get_site_template": "/open_api/2/tools/site_template/get/",
+    "create_site_from_template": "/open_api/2/tools/site_template/site/create/",
+    "list_wechat_game": "/open_api/v3.0/tools/wechat_game/list/",
 }
 
 
@@ -168,6 +177,9 @@ def _request_method(operation: str) -> str:
             "lookup_project_schedule",
             "lookup_disabled_projects",
             "lookup_project_report",
+            "read_site",
+            "get_site_template",
+            "list_wechat_game",
         }
         else "POST"
     )

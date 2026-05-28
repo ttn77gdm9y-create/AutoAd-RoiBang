@@ -102,6 +102,149 @@ def test_create_http_transport_posts_allowed_endpoint_and_redacts_audit(monkeypa
     assert "secret-token" not in json.dumps(audit, ensure_ascii=False)
 
 
+def test_create_http_transport_posts_site_handsel_to_configured_host(monkeypatch, tmp_path):
+    monkeypatch.setenv("ROIBANG_TEST_ACCESS_TOKEN", "secret-token")
+    calls = []
+
+    def fake_opener(url, body, headers, timeout_seconds, method):
+        calls.append({"url": url, "body": body, "headers": headers, "method": method})
+        return HttpResponse(200, {"code": 0, "data": {"success_list": []}})
+
+    transport = build_create_http_transport(
+        {
+            "enabled": True,
+            "allow_mutation": True,
+            "run_id": "run-001",
+            "token_env": "ROIBANG_TEST_ACCESS_TOKEN",
+            "base_url": "https://ad.oceanengine.com",
+        },
+        response_dir=tmp_path,
+        opener=fake_opener,
+    )
+
+    transport(
+        {
+            "operation": "handsel_site",
+            "endpoint": "/open_api/2/tools/site/handsel/",
+            "payload": {
+                "advertiser_id": "source-1",
+                "site_ids": ["site-1"],
+                "target_advertiser_ids": ["target-1"],
+            },
+        }
+    )
+
+    assert calls == [
+        {
+            "url": "https://ad.oceanengine.com/open_api/2/tools/site/handsel/",
+            "body": {
+                "advertiser_id": "source-1",
+                "site_ids": ["site-1"],
+                "target_advertiser_ids": ["target-1"],
+            },
+            "headers": {"Access-Token": "secret-token", "Content-Type": "application/json"},
+            "method": "POST",
+        }
+    ]
+
+
+def test_create_http_transport_posts_site_status_update(monkeypatch, tmp_path):
+    monkeypatch.setenv("ROIBANG_TEST_ACCESS_TOKEN", "secret-token")
+    calls = []
+
+    def fake_opener(url, body, headers, timeout_seconds, method):
+        calls.append({"url": url, "body": body, "method": method})
+        return HttpResponse(200, {"code": 0, "data": {"success": ["9001"], "fail": []}})
+
+    transport = build_create_http_transport(
+        {
+            "enabled": True,
+            "allow_mutation": True,
+            "run_id": "run-001",
+            "token_env": "ROIBANG_TEST_ACCESS_TOKEN",
+            "base_url": "https://ad.oceanengine.com",
+        },
+        response_dir=tmp_path,
+        opener=fake_opener,
+    )
+
+    transport(
+        {
+            "operation": "update_site_status",
+            "endpoint": "/open_api/2/tools/site/update_status/",
+            "payload": {"advertiser_id": 2001, "site_ids": [9001], "status": "delete"},
+        }
+    )
+
+    assert calls == [
+        {
+            "url": "https://ad.oceanengine.com/open_api/2/tools/site/update_status/",
+            "body": {"advertiser_id": 2001, "site_ids": [9001], "status": "delete"},
+            "method": "POST",
+        }
+    ]
+
+
+def test_create_http_transport_posts_site_template_and_gets_template(monkeypatch, tmp_path):
+    monkeypatch.setenv("ROIBANG_TEST_ACCESS_TOKEN", "secret-token")
+    calls = []
+
+    def fake_opener(url, body, headers, timeout_seconds, method):
+        calls.append({"url": url, "body": body, "method": method})
+        return HttpResponse(200, {"code": 0, "data": {}})
+
+    transport = build_create_http_transport(
+        {
+            "enabled": True,
+            "allow_mutation": True,
+            "run_id": "run-001",
+            "token_env": "ROIBANG_TEST_ACCESS_TOKEN",
+            "base_url": "https://ad.oceanengine.com",
+        },
+        response_dir=tmp_path,
+        opener=fake_opener,
+    )
+
+    transport(
+        {
+            "operation": "create_site_template",
+            "endpoint": "/open_api/2/tools/site_template/create/",
+            "payload": {"advertiser_id": "source-1", "site_id": "site-1", "template_name": "tpl"},
+        }
+    )
+    transport(
+        {
+            "operation": "get_site_template",
+            "endpoint": "/open_api/2/tools/site_template/get/",
+            "payload": {
+                "advertiser_id": "source-1",
+                "filter": {"template_ids": ["tpl-1"]},
+                "page": 1,
+                "page_size": 20,
+            },
+        }
+    )
+
+    assert calls[0] == {
+        "url": "https://ad.oceanengine.com/open_api/2/tools/site_template/create/",
+        "body": {"advertiser_id": "source-1", "site_id": "site-1", "template_name": "tpl"},
+        "method": "POST",
+    }
+    assert calls[1] == {
+        "url": (
+            "https://ad.oceanengine.com/open_api/2/tools/site_template/get/?"
+            "advertiser_id=source-1&filter=%7B%22template_ids%22%3A%5B%22tpl-1%22%5D%7D&page=1&page_size=20"
+        ),
+        "body": {
+            "advertiser_id": "source-1",
+            "filter": {"template_ids": ["tpl-1"]},
+            "page": 1,
+            "page_size": 20,
+        },
+        "method": "GET",
+    }
+
+
 def test_create_http_transport_token_store_reads_oauth_credentials_from_file(tmp_path):
     store = tmp_path / "tokens.json"
     credentials = tmp_path / "credentials.json"

@@ -42,3 +42,7 @@ configs/*.local.json
 policies/*.local.json
 
 scripts/tmp_*.py
+
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo

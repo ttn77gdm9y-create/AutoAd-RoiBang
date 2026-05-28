@@ -306,15 +306,195 @@ def test_project_update_execute_can_delete_projects(tmp_path: Path):
     )
 
     assert result["ok"] is True
-    assert result["external_api_calls"] == 1
+    assert result["external_api_calls"] == 2
     assert calls == [
         {
             "operation": "delete_project",
             "method": "POST",
             "endpoint": PROJECT_DELETE_ENDPOINT,
             "payload": {"advertiser_id": "adv-1", "project_ids": ["p-delete"]},
+        },
+        {
+            "operation": "lookup_project_schedule",
+            "method": "GET",
+            "endpoint": "/open_api/v3.0/project/list/",
+            "payload": {
+                "advertiser_id": "adv-1",
+                "filtering": {"ids": ["p-delete"]},
+                "page": 1,
+                "page_size": 1,
+            },
+        },
+    ]
+
+
+def test_project_update_execute_reports_delete_project_item_errors(tmp_path: Path):
+    calls: list[dict] = []
+
+    def transport(request: dict) -> dict:
+        calls.append(request)
+        return {
+            "code": 0,
+            "message": "OK",
+            "data": {
+                "project_ids": ["p-ok"],
+                "errors": [
+                    {
+                        "project_id": "p-missing",
+                        "error_message": "项目不存在或者项目已被删除",
+                    }
+                ],
+            },
+        }
+
+    result = run_project_update_execute_request(
+        {
+            "project_update": {
+                "project_update_id": "project-management-001",
+                "actions": [
+                    {
+                        "action_type": "delete_project",
+                        "advertiser_id": "adv-1",
+                        "entity_type": "project",
+                        "project_id": "p-ok",
+                    },
+                    {
+                        "action_type": "delete_project",
+                        "advertiser_id": "adv-1",
+                        "entity_type": "project",
+                        "project_id": "p-missing",
+                    },
+                ],
+            },
+            "execute_enabled": True,
+            "approved": True,
+        },
+        runs_dir=tmp_path / "runs",
+        transport=transport,
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "partial_failed"
+    assert result["external_api_calls"] == 2
+    assert result["summary"]["updated_project_count"] == 1
+    assert result["summary"]["failed_project_count"] == 1
+    assert "p-missing" in result["blocking_reasons"][0]
+    assert result["results"] == [
+        {
+            "operation": "delete_project",
+            "advertiser_id": "adv-1",
+            "project_count": 1,
+            "requested_project_count": 2,
+            "failed_project_count": 1,
+            "project_ids": ["p-ok"],
+            "requested_project_ids": ["p-ok", "p-missing"],
+            "error_list": [
+                {
+                    "project_id": "p-missing",
+                    "error_message": "项目不存在或者项目已被删除",
+                }
+            ],
+            "status": "partial_failed",
         }
     ]
+    assert [call["operation"] for call in calls] == ["delete_project", "lookup_project_schedule"]
+    assert calls[0]["payload"]["project_ids"] == ["p-ok", "p-missing"]
+
+
+def test_project_update_execute_verifies_deleted_projects_are_gone(tmp_path: Path):
+    calls: list[dict] = []
+
+    def transport(request: dict) -> dict:
+        calls.append(request)
+        if request["operation"] == "delete_project":
+            return {
+                "code": 0,
+                "message": "OK",
+                "data": {"project_ids": ["p-deleted", "p-still-active"], "errors": []},
+            }
+        if request["operation"] == "lookup_project_schedule":
+            return {
+                "code": 0,
+                "message": "OK",
+                "data": {"list": [{"project_id": "p-still-active", "project_name": "7R-未删除"}]},
+            }
+        return {"code": 0, "message": "OK", "data": {}}
+
+    result = run_project_update_execute_request(
+        {
+            "project_update": {
+                "project_update_id": "project-management-001",
+                "actions": [
+                    {
+                        "action_type": "delete_project",
+                        "advertiser_id": "adv-1",
+                        "entity_type": "project",
+                        "project_id": "p-deleted",
+                    },
+                    {
+                        "action_type": "delete_project",
+                        "advertiser_id": "adv-1",
+                        "entity_type": "project",
+                        "project_id": "p-still-active",
+                    },
+                ],
+            },
+            "execute_enabled": True,
+            "approved": True,
+        },
+        runs_dir=tmp_path / "runs",
+        transport=transport,
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "partial_failed"
+    assert result["external_api_calls"] == 2
+    assert result["summary"]["updated_project_count"] == 1
+    assert result["summary"]["failed_project_count"] == 1
+    assert result["results"][0]["project_ids"] == ["p-deleted"]
+    assert result["results"][0]["failed_project_count"] == 1
+    assert result["results"][0]["error_list"] == [
+        {
+            "project_id": "p-still-active",
+            "project_name": "7R-未删除",
+            "error_message": "删除接口返回成功，但复核时项目仍存在",
+        }
+    ]
+    assert [call["operation"] for call in calls] == ["delete_project", "lookup_project_schedule"]
+
+
+def test_project_update_execute_blocks_management_action_missing_project_id(tmp_path: Path):
+    calls: list[dict] = []
+
+    def transport(request: dict) -> dict:
+        calls.append(request)
+        return {"code": 0, "message": "OK", "data": {}}
+
+    result = run_project_update_execute_request(
+        {
+            "project_update": {
+                "project_update_id": "project-management-001",
+                "actions": [
+                    {
+                        "action_type": "delete_project",
+                        "advertiser_id": "adv-1",
+                        "entity_type": "project",
+                        "project_name": "7R-测试",
+                    }
+                ],
+            },
+            "execute_enabled": True,
+            "approved": True,
+        },
+        runs_dir=tmp_path / "runs",
+        transport=transport,
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "failed_before_update"
+    assert result["external_api_calls"] == 0
+    assert result["blocking_reasons"] == ["delete_project requires advertiser_id and project_id: adv-1/"]
+    assert calls == []
 
 
 def test_project_update_execute_resolves_ratio_budget_and_bid_updates(tmp_path: Path):
@@ -445,7 +625,7 @@ def test_project_update_execute_can_run_management_action_without_preflight(tmp_
 
     assert result["ok"] is True
     assert result["preflight_artifact_path"] == ""
-    assert [call["operation"] for call in calls] == ["delete_project"]
+    assert [call["operation"] for call in calls] == ["delete_project", "lookup_project_schedule"]
 
 
 def test_project_update_execute_splits_management_actions_into_ten_item_batches(tmp_path: Path):

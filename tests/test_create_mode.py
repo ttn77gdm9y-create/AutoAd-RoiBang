@@ -114,7 +114,10 @@ def test_create_mode_builds_scale_create_request_from_mode_config():
     assert request["field_defaults"]["cpa_bid"] == 103
     assert request["field_defaults"]["roi_goal"] == 0.419
     assert request["material_requirements"]["materials_per_unit"] == 5
-    assert request["material_requirements"]["max_cross_account_overlap_ratio"] == 0.3
+    assert request["material_requirements"]["dedupe_scope"] == "max_account_overlap"
+    assert request["material_requirements"]["max_cross_account_overlap_ratio"] == 0.5
+    assert request["material_requirements"]["cross_account_reuse_mode"] == "scale_top_materials"
+    assert request["material_requirements"]["allow_reuse_across_accounts"] is True
     assert request["material_selection"]["source_scope"] == "source_material_account"
     assert request["material_selection"]["lookback_days"] == 30
     assert request["material_selection"]["min_stat_cost"] == 1000
@@ -617,7 +620,7 @@ def test_bundled_create_modes_cover_7r_and_pay_scale_and_test_new():
         assert request["material_requirements"]["dedupe_scope"] == "max_account_overlap"
         assert request["material_requirements"]["allow_reuse_across_accounts"] is True
         if mode_key.endswith("_scale") or mode_key.endswith("_recent_scale"):
-            assert request["material_requirements"]["max_cross_account_overlap_ratio"] == 1.0
+            assert request["material_requirements"]["max_cross_account_overlap_ratio"] == 0.5
             assert request["material_requirements"]["cross_account_reuse_mode"] == "scale_top_materials"
         assert request["field_defaults"]["action_track_url"].startswith("https://backend.gravity-engine.com/")
         assert request["product_key"] == "yzt-wechat-mini-game"
@@ -1289,7 +1292,7 @@ def test_run_create_mode_cli_prints_json_summary(tmp_path: Path, capsys):
                     "units_per_project": 1,
                 },
                 "material_requirements": {"material_type": "video", "materials_per_unit": 5, "dedupe_scope": "allow_reuse"},
-                "material_selection": {"lookback_days": 30, "selection_type": "high_spend"},
+                "material_selection": {"lookback_days": 30, "selection_type": "high_spend", "min_stat_cost": 0},
                 "initial_status": {"project_operation": "ENABLE", "unit_operation": "ENABLE"},
             },
             ensure_ascii=False,

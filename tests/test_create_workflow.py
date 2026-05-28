@@ -2,6 +2,7 @@ import importlib.util
 import json
 import re
 import sqlite3
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -283,6 +284,39 @@ def test_create_strategy_plan_allocates_candidate_materials_without_duplicates(t
     assert [item["material_id"] for item in units[1]["materials"]] == ["m-low", "m-extra"]
     assert plan["actions"] == []
     assert plan["live_api_payloads"] == []
+
+def test_create_strategy_plan_scale_top_materials_honors_overlap_ratio(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_create_db(db_path)
+    request = _create_request()["create_request"]
+    request["target_accounts"] = [
+        {"advertiser_id": f"target-{index}", "project_count": 1, "units_per_project": 1, "daily_budget": 300}
+        for index in range(1, 5)
+    ]
+    request["material_requirements"] = {
+        "material_type": "video",
+        "materials_per_unit": 1,
+        "dedupe_scope": "max_account_overlap",
+        "max_cross_account_overlap_ratio": 0.5,
+        "cross_account_reuse_mode": "scale_top_materials",
+        "allow_reuse_across_accounts": True,
+    }
+    request["material_selection"] = {
+        "selection_type": "high_spend",
+        "sort_by": "stat_cost_desc",
+    }
+
+    plan = build_create_strategy_plan(request=request, db_path=db_path, policy={})
+
+    material_ids = [
+        unit["materials"][0]["material_id"]
+        for project in plan["strategy"]["projects"]
+        for unit in project["units"]
+    ]
+    material_counts = Counter(material_ids)
+    assert plan["ok"] is True
+    assert max(material_counts.values()) == 2
+    assert len(material_counts) == 2
 
 def test_create_strategy_plan_fails_closed_when_request_deduped_materials_are_insufficient(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"

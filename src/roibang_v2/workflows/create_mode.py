@@ -353,6 +353,14 @@ def _material_requirements(mode_config: dict[str, Any]) -> dict[str, Any]:
     requirements.setdefault("material_type", "video")
     requirements.setdefault("materials_per_unit", 1)
     requirements.setdefault("dedupe_scope", "request")
+    mode_key = _text(mode_config.get("mode_key"))
+    display_name = _text(mode_config.get("display_name"))
+    if mode_key.endswith(("_scale", "_recent_scale")) or "放量" in display_name:
+        requirements["dedupe_scope"] = "max_account_overlap"
+        requirements["max_cross_account_overlap_ratio"] = 0.5
+        requirements["cross_account_reuse_mode"] = "scale_top_materials"
+        requirements["allow_reuse_across_accounts"] = True
+        requirements["on_insufficient"] = "allow_reuse"
     if requirements.get("allow_reuse_across_accounts") is None:
         requirements["allow_reuse_across_accounts"] = str(requirements.get("on_insufficient") or "") == "allow_reuse"
     return requirements

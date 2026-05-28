@@ -1,5 +1,6 @@
 import json
 import subprocess
+import time
 from pathlib import Path
 
 from roibang_v2.ui.background_tasks import build_runner_command
@@ -204,3 +205,52 @@ def test_run_frontend_task_treats_ok_false_as_failed_and_skips_report(tmp_path: 
     assert loaded["status"] == "failed"
     assert loaded["post_results"] == []
     assert not report_marker.exists()
+
+
+def test_run_frontend_task_streams_stdout_while_running(tmp_path: Path):
+    runs_dir = tmp_path / "runs"
+    script = tmp_path / "slow.py"
+    script.write_text(
+        "\n".join(
+            [
+                "import json, time",
+                "print('[create_live_execute_once] operation=create_project done=1/5 status=running calls=1', flush=True)",
+                "time.sleep(1)",
+                "print(json.dumps({'ok': True, 'artifact_path': 'execute.json'}), flush=True)",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    record = build_task_record(
+        runs_dir=runs_dir,
+        operation_type="create_live_execute",
+        command=["python3", str(script)],
+        cwd=str(tmp_path),
+        request={},
+    )
+    task_path = write_task_record(runs_dir, record)
+    stdout_path = runs_dir / record["stdout_path"]
+
+    process = subprocess.Popen(
+        ["python3", "scripts/run_frontend_task.py", "--task", str(task_path)],
+        cwd=Path.cwd(),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        deadline = time.monotonic() + 0.8
+        streamed = ""
+        while time.monotonic() < deadline:
+            if stdout_path.exists():
+                streamed = stdout_path.read_text(encoding="utf-8")
+                if "done=1/5" in streamed:
+                    break
+            time.sleep(0.05)
+
+        assert "done=1/5" in streamed
+        assert load_task_record(task_path)["status"] == "running"
+    finally:
+        stdout, stderr = process.communicate(timeout=5)
+
+    assert process.returncode == 0, stdout + stderr
