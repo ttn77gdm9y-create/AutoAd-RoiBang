@@ -248,6 +248,7 @@ def build_project_filter_command(
     metric_field: str,
     metric_op: str,
     metric_value: str,
+    metric_filters: list[dict[str, Any]] | None = None,
     output_path: str,
     opt_status: str = "",
     budget: str = "",
@@ -265,11 +266,20 @@ def build_project_filter_command(
         action_type.strip(),
         "--spend-window",
         spend_window.strip(),
-        "--metric-filter",
-        f"{metric_field.strip()}:{metric_op.strip()}:{metric_value.strip()}",
         "--output",
         output_path.strip(),
     ]
+    filters = metric_filters or []
+    if filters:
+        for item in filters:
+            command.extend(
+                [
+                    "--metric-filter",
+                    f"{str(item.get('field') or '').strip()}:{str(item.get('op') or '').strip()}:{str(item.get('value') or '').strip()}",
+                ]
+            )
+    else:
+        command.extend(["--metric-filter", f"{metric_field.strip()}:{metric_op.strip()}:{metric_value.strip()}"])
     for account in _split_accounts(advertiser_ids or advertiser_id):
         command.extend(["--advertiser-id", account])
     if name_contains.strip():

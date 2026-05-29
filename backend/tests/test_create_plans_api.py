@@ -202,7 +202,34 @@ def test_create_plan_preview_blocks_missing_accounts(tmp_path):
     payload = response.json()
     assert payload["summary"]["status"] == "blocked"
     assert payload["summary"]["execution_enabled"] is False
-    assert "至少填写一个账户 ID" in payload["summary"]["blocking_reasons"]
+    assert "必须明确填写本次账户 ID" in payload["summary"]["blocking_reasons"]
+    assert payload["table"]["rows"] == []
+
+
+def test_create_plan_preview_blocks_missing_required_user_choices(tmp_path):
+    client = TestClient(create_app(project_root=tmp_path))
+
+    response = client.post(
+        "/api/create-plans/preview",
+        json={
+            **_create_plan_request(),
+            "mode": "",
+            "owner": "",
+            "template_catalog": "",
+            "advertiser_ids": "",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["status"] == "blocked"
+    assert payload["summary"]["execution_enabled"] is False
+    assert payload["summary"]["blocking_reasons"] == [
+        "必须明确选择固定创建模式",
+        "必须明确填写负责人",
+        "必须明确选择固定模板 JSON",
+        "必须明确填写本次账户 ID",
+    ]
     assert payload["table"]["rows"] == []
 
 
@@ -221,7 +248,7 @@ def test_create_plan_preview_blocks_roi_coefficient_for_non_7r_mode(tmp_path):
     assert "非 7R 创建模式不允许填写 ROI 系数" in payload["summary"]["blocking_reasons"][0]
 
 
-def test_create_plan_preview_uses_product_active_accounts_when_accounts_empty(tmp_path):
+def test_create_plan_preview_blocks_empty_accounts_even_when_product_has_active_accounts(tmp_path):
     accounts_path = tmp_path / "configs" / "accounts" / "product-accounts.local.json"
     accounts_path.parent.mkdir(parents=True)
     accounts_path.write_text(
@@ -261,13 +288,10 @@ def test_create_plan_preview_uses_product_active_accounts_when_accounts_empty(tm
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["summary"]["status"] == "planned"
-    assert {"label": "账户数", "value": 2} in payload["summary"]["items"]
-    assert {"label": "账户来源", "value": "产品账户库 active 账户"} in payload["summary"]["items"]
-    assert "未手动填写账户 ID，已自动使用产品账户库中的 active 账户。" in payload["summary"]["warnings"]
-    assert [row["账户 ID"] for row in payload["table"]["rows"]] == ["1001", "1003"]
-    assert payload["raw"]["resolved_accounts"] == ["1001", "1003"]
-    assert payload["raw"]["account_source"] == "product_active_accounts"
+    assert payload["summary"]["status"] == "blocked"
+    assert payload["summary"]["execution_enabled"] is False
+    assert "必须明确填写本次账户 ID" in payload["summary"]["blocking_reasons"]
+    assert payload["table"]["rows"] == []
 
 
 def test_create_plan_detail_material_section_shows_assigned_accounts(tmp_path):
@@ -335,7 +359,7 @@ def test_create_plan_generate_starts_frontend_task(tmp_path, monkeypatch):
 
     operation_rows = client.get("/api/operations", params={"operation_type": "create_plan_generate"}).json()["table"]["rows"]
     assert len(operation_rows) == 1
-    assert operation_rows[0]["任务 ID"] == task["task_id"]
+    assert operation_rows[0]["关联任务"] == task["task_id"]
     assert operation_rows[0]["操作"] == "创建计划生成"
     assert operation_rows[0]["状态"] == "排队中"
     assert operation_rows[0]["产品 Key"] == "diandian-hero"
@@ -415,7 +439,7 @@ def test_create_plan_execute_preview_reads_plan_summary(tmp_path):
 
     response = client.post(
         "/api/create-plans/plan-1/execute/preview",
-        json={"plan_path": plan_path},
+        json={"plan_path": plan_path, "plan_source": "current_generated"},
     )
 
     assert response.status_code == 200
@@ -423,7 +447,11 @@ def test_create_plan_execute_preview_reads_plan_summary(tmp_path):
     assert payload["summary"]["title"] == "创建计划执行预览"
     assert payload["summary"]["status"] == "ready"
     assert payload["summary"]["execution_enabled"] is True
+    assert {"label": "计划来源", "value": "本页刚生成的新计划"} in payload["summary"]["items"]
     assert {"label": "计划 ID", "value": "plan-1"} in payload["summary"]["items"]
+    assert {"label": "固定模式", "value": "wx_pay_male_random_materials"} in payload["summary"]["items"]
+    assert {"label": "素材复用规则", "value": "随机素材"} in payload["summary"]["items"]
+    assert {"label": "候选素材数", "value": 3} in payload["summary"]["items"]
     assert {"label": "账户数", "value": 1} in payload["summary"]["items"]
     assert payload["table"]["columns"] == ["账户 ID", "账户名", "项目", "单元", "素材数", "文案数", "CTA 数", "卖点数"]
     assert payload["table"]["rows"][0] == {
@@ -509,7 +537,7 @@ def test_create_plan_execute_starts_allowlisted_task(tmp_path, monkeypatch):
     operation_payload = client.get("/api/operations", params={"operation_type": "create_live_execute"}).json()
     operation_rows = operation_payload["table"]["rows"]
     assert len(operation_rows) == 1
-    assert operation_rows[0]["任务 ID"] == task["task_id"]
+    assert operation_rows[0]["关联任务"] == task["task_id"]
     assert operation_rows[0]["操作"] == "创建真实执行"
     assert operation_rows[0]["状态"] == "排队中"
     assert operation_rows[0]["产品"] == "点点英雄"

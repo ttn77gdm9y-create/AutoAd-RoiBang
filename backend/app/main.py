@@ -12,6 +12,7 @@ from backend.app.api import create_plans
 from backend.app.api import dashboard
 from backend.app.api import health
 from backend.app.api import operations
+from backend.app.api import product_automation
 from backend.app.api import project_management
 from backend.app.api import sites
 from backend.app.api import tasks
@@ -47,6 +48,7 @@ def create_app(project_root: str | Path | None = None) -> FastAPI:
     app.include_router(accounts.router, prefix="/api")
     app.include_router(dashboard.router, prefix="/api")
     app.include_router(operations.router, prefix="/api")
+    app.include_router(product_automation.router, prefix="/api")
     app.include_router(create_plans.router, prefix="/api")
     app.include_router(project_management.router, prefix="/api")
     app.include_router(account_remarks.router, prefix="/api")

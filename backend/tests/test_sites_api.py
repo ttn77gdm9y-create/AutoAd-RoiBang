@@ -17,10 +17,31 @@ def _site_template_request() -> dict:
         "game_path": "?turbo_promoted_object_id=abc",
         "target_advertiser_ids": "2001\n2002",
         "site_name_prefix": "点点英雄本地落地页",
+        "edit_existing": False,
+        "publish": True,
     }
 
 
+def _write_accounts(root) -> None:
+    accounts_path = root / "configs" / "accounts" / "product-accounts.local.json"
+    accounts_path.parent.mkdir(parents=True)
+    accounts_path.write_text(
+        json.dumps(
+            {
+                "accounts": [
+                    {"advertiser_id": "2000", "advertiser_name": "源账户", "status": "active"},
+                    {"advertiser_id": "2001", "advertiser_name": "目标账户一", "status": "active"},
+                    {"advertiser_id": "2002", "advertiser_name": "目标账户二", "status": "active"},
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_site_status_preview_returns_chinese_summary(tmp_path):
+    _write_accounts(tmp_path)
     client = TestClient(create_app(project_root=tmp_path))
 
     response = client.post("/api/sites/status/preview", json=_site_status_request())
@@ -32,10 +53,22 @@ def test_site_status_preview_returns_chinese_summary(tmp_path):
     assert payload["summary"]["execution_enabled"] is True
     assert {"label": "账户数", "value": 1} in payload["summary"]["items"]
     assert {"label": "落地页数", "value": 2} in payload["summary"]["items"]
-    assert payload["table"]["columns"] == ["账户 ID", "落地页 ID", "目标状态"]
-    assert payload["table"]["rows"][0] == {"账户 ID": "2001", "落地页 ID": "9001", "目标状态": "删除"}
+    assert payload["table"]["columns"] == ["账户 ID", "账户名", "落地页 ID", "目标状态"]
+    assert payload["table"]["rows"][0] == {"账户 ID": "2001", "账户名": "目标账户一", "落地页 ID": "9001", "目标状态": "删除"}
     assert payload["raw"]["execute_command"][1] == "scripts/run_site_status_update.py"
     assert "--execute" in payload["raw"]["execute_command"]
+
+
+def test_site_status_preview_blocks_missing_target_status(tmp_path):
+    client = TestClient(create_app(project_root=tmp_path))
+
+    response = client.post("/api/sites/status/preview", json={"advertiser_id": "2001", "site_ids": "9001", "status": ""})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["status"] == "blocked"
+    assert payload["summary"]["execution_enabled"] is False
+    assert payload["summary"]["blocking_reasons"] == ["必须明确选择目标状态"]
 
 
 def test_site_status_preview_blocks_missing_site_pairs(tmp_path):
@@ -98,13 +131,14 @@ def test_site_status_execute_starts_allowlisted_task(tmp_path, monkeypatch):
 
     operations = client.get("/api/operations", params={"operation_type": "site_status_update"}).json()
     assert operations["table"]["rows"][0]["任务 ID"] == task["task_id"]
-    assert operations["table"]["rows"][0]["操作"] == "site_status_update"
-    assert operations["table"]["rows"][0]["状态"] == "queued"
+    assert operations["table"]["rows"][0]["操作"] == "落地页状态更新"
+    assert operations["table"]["rows"][0]["状态"] == "排队中"
     assert operations["table"]["rows"][0]["账户数"] == 1
     assert operations["raw"]["rows"][0]["result_status"] == "queued"
 
 
 def test_site_handsel_results_returns_latest_chinese_summary(tmp_path):
+    _write_accounts(tmp_path)
     artifact_dir = tmp_path / "data" / "runs" / "site_handsel"
     artifact_dir.mkdir(parents=True)
     (artifact_dir / "20260527T160000Z.json").write_text(
@@ -136,10 +170,12 @@ def test_site_handsel_results_returns_latest_chinese_summary(tmp_path):
     assert response.status_code == 200
     payload = response.json()
     assert payload["summary"]["title"] == "落地页转赠结果"
+    assert {"label": "源账户", "value": "源账户（2000）"} in payload["summary"]["items"]
     assert {"label": "成功数", "value": 2} in payload["summary"]["items"]
-    assert payload["table"]["columns"] == ["目标账户 ID", "新落地页 ID", "原落地页 ID", "结果"]
+    assert payload["table"]["columns"] == ["目标账户 ID", "账户名", "新落地页 ID", "原落地页 ID", "结果"]
     assert payload["table"]["rows"][0] == {
         "目标账户 ID": "2001",
+        "账户名": "目标账户一",
         "新落地页 ID": "9001",
         "原落地页 ID": "8000",
         "结果": "成功",
@@ -147,6 +183,7 @@ def test_site_handsel_results_returns_latest_chinese_summary(tmp_path):
 
 
 def test_site_template_foundation_preview_returns_chinese_summary(tmp_path):
+    _write_accounts(tmp_path)
     client = TestClient(create_app(project_root=tmp_path))
 
     response = client.post("/api/sites/template-foundation/preview", json=_site_template_request())
@@ -156,10 +193,12 @@ def test_site_template_foundation_preview_returns_chinese_summary(tmp_path):
     assert payload["summary"]["title"] == "模板建站预览"
     assert payload["summary"]["status"] == "ready"
     assert payload["summary"]["execution_enabled"] is True
+    assert {"label": "源账户", "value": "源账户（2000）"} in payload["summary"]["items"]
     assert {"label": "目标账户数", "value": 2} in payload["summary"]["items"]
-    assert payload["table"]["columns"] == ["账户 ID", "现有落地页 ID", "动作", "小游戏路径", "发布"]
+    assert payload["table"]["columns"] == ["账户 ID", "账户名", "现有落地页 ID", "动作", "小游戏路径", "发布"]
     assert payload["table"]["rows"][0] == {
         "账户 ID": "2001",
+        "账户名": "目标账户一",
         "现有落地页 ID": "",
         "动作": "新建落地页",
         "小游戏路径": "?turbo_promoted_object_id=abc",
@@ -167,6 +206,21 @@ def test_site_template_foundation_preview_returns_chinese_summary(tmp_path):
     }
     assert payload["raw"]["execute_command"][1] == "scripts/run_site_template_foundation.py"
     assert "--execute" in payload["raw"]["execute_command"]
+
+
+def test_site_template_foundation_preview_blocks_missing_explicit_mode_and_publish(tmp_path):
+    request = dict(_site_template_request())
+    request.pop("edit_existing")
+    request.pop("publish")
+    client = TestClient(create_app(project_root=tmp_path))
+
+    response = client.post("/api/sites/template-foundation/preview", json=request)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["status"] == "blocked"
+    assert payload["summary"]["execution_enabled"] is False
+    assert payload["summary"]["blocking_reasons"] == ["必须明确选择目标类型", "必须明确选择执行后是否发布"]
 
 
 def test_site_template_foundation_execute_starts_allowlisted_task_and_logs(tmp_path, monkeypatch):
@@ -200,6 +254,6 @@ def test_site_template_foundation_execute_starts_allowlisted_task_and_logs(tmp_p
 
     operations = client.get("/api/operations", params={"operation_type": "site_template_foundation"}).json()
     assert operations["table"]["rows"][0]["任务 ID"] == task["task_id"]
-    assert operations["table"]["rows"][0]["操作"] == "site_template_foundation"
-    assert operations["table"]["rows"][0]["状态"] == "queued"
+    assert operations["table"]["rows"][0]["操作"] == "模板建站"
+    assert operations["table"]["rows"][0]["状态"] == "排队中"
     assert operations["table"]["rows"][0]["账户数"] == 2

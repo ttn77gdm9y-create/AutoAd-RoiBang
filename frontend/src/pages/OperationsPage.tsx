@@ -110,7 +110,7 @@ export function OperationsPage() {
           detailsCollapsed={false}
           showArtifactPath={false}
           showRawJson={false}
-          onRowClick={(row) => selectTaskId(String(row["任务 ID"] ?? ""))}
+          onRowClick={(row) => selectTaskId(String(row["关联任务"] ?? row["任务 ID"] ?? ""))}
         />
         {selectedTaskId ? (
           <Alert

@@ -20,7 +20,7 @@ type ActionResponse = ChineseResult & {
 export function ExecutionPage() {
   const queryClient = useQueryClient();
   const [action, setAction] = useState("dry_run_probe");
-  const [probeMessage, setProbeMessage] = useState("dry-run-ok");
+  const [probeMessage, setProbeMessage] = useState("probe-ok");
   const [previewResult, setPreviewResult] = useState<ChineseResult | undefined>();
   const [executeResult, setExecuteResult] = useState<ActionResponse | undefined>();
   const activeTaskId = executeResult?.task?.task_id ?? "";
@@ -49,21 +49,21 @@ export function ExecutionPage() {
     onSuccess: async (result) => {
       setExecuteResult(result);
       await queryClient.invalidateQueries({ queryKey: ["tasks"] });
-      antdMessage.success("固定脚本任务已提交，本页会显示进度");
+      antdMessage.success("链路探针任务已提交，本页会显示进度");
     },
   });
 
   return (
     <main className="page">
       <Space direction="vertical" size="large" className="full-width">
-        <Typography.Title level={2}>固定脚本执行台</Typography.Title>
-        <WorkflowSteps current={currentStep} items={["选择脚本", "检查", "确认执行", "结果"]} />
+        <Typography.Title level={2}>链路探针</Typography.Title>
+        <WorkflowSteps current={currentStep} items={["选择探针", "检查", "确认运行", "结果"]} />
         <Alert
           type="warning"
           showIcon
-          message="这是高级工具，只能调用后端白名单脚本。先检查脚本动作，确认影响范围后再执行。"
+          message="这是高级工具，只验证本地白名单任务、确认、任务记录和中文结果展示链路，不是业务执行入口。"
         />
-        <Card size="small" title="执行配置">
+        <Card size="small" title="探针配置">
           <Space direction="vertical" className="full-width">
             {catalog.error ? <Alert type="error" showIcon message={(catalog.error as Error).message} /> : null}
             <Select
@@ -77,23 +77,23 @@ export function ExecutionPage() {
               value={probeMessage}
               onChange={(event) => setProbeMessage(event.target.value)}
               addonBefore="探针消息"
-              placeholder="dry-run-ok"
+              placeholder="probe-ok"
             />
             <Button icon={<FileSearchOutlined />} onClick={() => preview.mutate()} loading={preview.isPending}>
-              检查脚本动作
+              检查探针动作
             </Button>
           </Space>
         </Card>
         {preview.error ? <Alert type="error" showIcon message={(preview.error as Error).message} /> : null}
         <SummaryPanel result={previewResult} loading={preview.isPending} detailsCollapsed showArtifactPath={false} showRawJson={false} />
         {previewResult?.summary.execution_enabled ? (
-          <Card size="small" title="真实执行确认">
-            <ConfirmExecutePanel buttonText="确认并执行脚本" disabled={execute.isPending} onConfirm={() => execute.mutate()} />
+          <Card size="small" title="运行确认">
+            <ConfirmExecutePanel buttonText="确认并运行探针" disabled={execute.isPending} onConfirm={() => execute.mutate()} />
           </Card>
         ) : null}
         {execute.error ? <Alert type="error" showIcon message={(execute.error as Error).message} /> : null}
         <InlineTaskStatus
-          title="当前脚本任务"
+          title="当前探针任务"
           taskId={activeTaskId}
           workflow={action}
           result={executeResult}

@@ -12,25 +12,41 @@ from roibang_v2.ui.script_runner import build_account_remark_config_command
 from roibang_v2.ui.script_runner import build_account_remark_execute_command
 from roibang_v2.workflows.frontend_operation_log import record_frontend_operation
 
+from backend.app.services.account_names import account_name_for
+from backend.app.services.account_names import load_account_name_map
+
 
 def build_account_remark_config_preview(request: dict[str, Any], *, project_root: str | Path) -> dict[str, Any]:
-    update_id = _text(request.get("update_id")) or "ui-account-remark"
+    update_id = _text(request.get("update_id"))
     remark = _text(request.get("remark"))
     advertiser_ids = _split_account_ids(request.get("advertiser_ids"))
-    output_path = _text(request.get("output_path")) or f"configs/account-updates/{update_id}.local.json"
+    output_path = _text(request.get("output_path"))
 
-    if not remark:
-        return _blocked_config_preview(update_id, remark, output_path, "必须填写目标备注", request)
-    if not advertiser_ids:
-        return _blocked_config_preview(update_id, remark, output_path, "至少填写一个账户 ID", request)
+    validation_reasons = _config_validation_reasons(
+        update_id=update_id,
+        remark=remark,
+        advertiser_ids=advertiser_ids,
+        output_path=output_path,
+    )
+    if validation_reasons:
+        return _blocked_config_preview(update_id, remark, output_path, validation_reasons, request)
 
+    account_names = load_account_name_map(Path(project_root) / "configs")
     command = build_account_remark_config_command(
         update_id=update_id,
         remark=remark,
         accounts="\n".join(advertiser_ids),
         output_path=output_path,
     )
-    rows = [{"账户 ID": advertiser_id, "目标备注": remark, "输出 JSON": output_path} for advertiser_id in advertiser_ids]
+    rows = [
+        {
+            "账户 ID": advertiser_id,
+            "账户名": account_name_for(account_names, advertiser_id),
+            "目标备注": remark,
+            "输出 JSON": output_path,
+        }
+        for advertiser_id in advertiser_ids
+    ]
     return {
         "summary": {
             "title": "账户备注配置预览",
@@ -46,7 +62,7 @@ def build_account_remark_config_preview(request: dict[str, Any], *, project_root
             "warnings": ["这里只生成账户备注 JSON 预览，不执行真实备注修改。"],
             "blocking_reasons": [],
         },
-        "table": {"columns": ["账户 ID", "目标备注", "输出 JSON"], "rows": rows},
+        "table": {"columns": ["账户 ID", "账户名", "目标备注", "输出 JSON"], "rows": rows},
         "artifact_path": "",
         "raw": {"project_root": str(project_root), "request": request, "command": command},
     }
@@ -115,11 +131,15 @@ def build_account_remark_execute_preview(request: dict[str, Any], *, project_roo
     if not advertiser_ids:
         return _blocked_execute_preview("账户备注 JSON 中没有 advertiser_ids，不能执行", request, account_remark_update_path)
 
+    account_names = load_account_name_map(Path(project_root) / "configs")
     execute_command = build_account_remark_execute_command(
         account_remark_update_path=account_remark_update_path,
         execute=True,
     )
-    rows = [{"账户 ID": advertiser_id, "目标备注": remark} for advertiser_id in advertiser_ids]
+    rows = [
+        {"账户 ID": advertiser_id, "账户名": account_name_for(account_names, advertiser_id), "目标备注": remark}
+        for advertiser_id in advertiser_ids
+    ]
     return {
         "summary": {
             "title": "账户备注执行预览",
@@ -127,6 +147,7 @@ def build_account_remark_execute_preview(request: dict[str, Any], *, project_roo
             "risk_level": "medium",
             "execution_enabled": True,
             "items": [
+                {"label": "配置来源", "value": _config_source_label(request.get("config_source"))},
                 {"label": "配置 ID", "value": _text(cfg.get("update_id"))},
                 {"label": "目标备注", "value": remark},
                 {"label": "账户数", "value": len(advertiser_ids)},
@@ -135,7 +156,7 @@ def build_account_remark_execute_preview(request: dict[str, Any], *, project_roo
             "warnings": ["这是账户备注真实修改入口；执行前必须核对中文摘要和账户明细，并输入“确认执行”。"],
             "blocking_reasons": [],
         },
-        "table": {"columns": ["账户 ID", "目标备注"], "rows": rows},
+        "table": {"columns": ["账户 ID", "账户名", "目标备注"], "rows": rows},
         "artifact_path": account_remark_update_path,
         "raw": {"request": request, "account_remark_update": payload, "execute_command": execute_command},
     }
@@ -189,7 +210,7 @@ def _record_config_operation(
     preview: dict[str, Any],
 ) -> dict[str, Any]:
     advertiser_ids = _split_account_ids(request.get("advertiser_ids"))
-    update_id = _text(request.get("update_id")) or "ui-account-remark"
+    update_id = _text(request.get("update_id"))
     remark = _text(request.get("remark"))
     return record_frontend_operation(
         runs_dir=runs_dir,
@@ -277,9 +298,10 @@ def _blocked_config_preview(
     update_id: str,
     remark: str,
     output_path: str,
-    reason: str,
+    reason: str | list[str],
     request: dict[str, Any],
 ) -> dict[str, Any]:
+    reasons = reason if isinstance(reason, list) else [reason]
     return {
         "summary": {
             "title": "账户备注配置预览",
@@ -292,9 +314,9 @@ def _blocked_config_preview(
                 {"label": "输出 JSON", "value": output_path},
             ],
             "warnings": [],
-            "blocking_reasons": [reason],
+            "blocking_reasons": reasons,
         },
-        "table": {"columns": ["账户 ID", "目标备注", "输出 JSON"], "rows": []},
+        "table": {"columns": ["账户 ID", "账户名", "目标备注", "输出 JSON"], "rows": []},
         "artifact_path": "",
         "raw": {"request": request},
     }
@@ -329,6 +351,25 @@ def _unwrap_account_remark_update(payload: dict[str, Any]) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else dict(payload)
 
 
+def _config_validation_reasons(
+    *,
+    update_id: str,
+    remark: str,
+    advertiser_ids: list[str],
+    output_path: str,
+) -> list[str]:
+    reasons: list[str] = []
+    if not update_id:
+        reasons.append("必须明确填写配置 ID")
+    if not remark:
+        reasons.append("必须明确填写目标备注")
+    if not advertiser_ids:
+        reasons.append("必须明确填写本次账户 ID")
+    if not output_path:
+        reasons.append("必须明确填写账户备注 JSON 输出路径")
+    return reasons
+
+
 def _split_account_ids(value: Any) -> list[str]:
     if isinstance(value, list):
         raw_items = value
@@ -339,3 +380,12 @@ def _split_account_ids(value: Any) -> list[str]:
 
 def _text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _config_source_label(value: Any) -> str:
+    source = _text(value)
+    if source == "current_generated":
+        return "本页刚生成的新配置"
+    if source == "manual":
+        return "手动指定的历史配置"
+    return "账户备注配置"

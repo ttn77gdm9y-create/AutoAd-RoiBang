@@ -42,7 +42,7 @@ def test_operation_logs_endpoint_returns_chinese_summary(tmp_path):
     assert payload["summary"]["title"] == "操作日志"
     assert {"label": "日志数", "value": 1} in payload["summary"]["items"]
     assert payload["table"]["columns"] == [
-        "任务 ID",
+        "关联任务",
         "操作",
         "业务内容",
         "状态",
@@ -52,13 +52,12 @@ def test_operation_logs_endpoint_returns_chinese_summary(tmp_path):
         "产品 Key",
         "创建时间",
         "账户数",
-        "退出码",
-        "结果文件",
-        "报告文件",
+        "结果摘要",
     ]
     assert payload["table"]["rows"][0]["操作"] == "项目管理配置生成"
     assert payload["table"]["rows"][0]["业务内容"] == "未指定动作"
     assert payload["table"]["rows"][0]["状态"] == "已完成"
+    assert "项目管理配置生成：已完成，未指定动作，账户 3" == payload["table"]["rows"][0]["结果摘要"]
     assert payload["table"]["rows"][0]["产品"] == "点点英雄"
     assert payload["raw"]["rows"][0]["task_id"] == "ui-test-1"
 
@@ -117,9 +116,11 @@ def test_operation_logs_endpoint_exposes_task_and_review_fields(tmp_path):
     assert row["状态"] == "已完成"
     assert row["任务状态"] == "已完成"
     assert row["触发人"] == "local-ui"
-    assert row["退出码"] == 0
-    assert row["结果文件"] == "site_status_update/result.json"
-    assert row["报告文件"] == "create_live_execute_report/report.json"
+    assert row["关联任务"] == "task-1"
+    assert row["结果摘要"] == "落地页状态更新：已完成，账户 1"
+    assert "退出码" not in row
+    assert "结果文件" not in row
+    assert "报告文件" not in row
 
 
 def test_operation_logs_endpoint_filters_by_operation_and_status(tmp_path):

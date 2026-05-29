@@ -127,10 +127,23 @@ def load_product_configs(products_dir: str | Path, *, product_key: str = "") -> 
     return rows
 
 
-def _allowed_accounts(path_text: str) -> list[dict[str, str]]:
+def _resolve_product_path(path_text: str, product: dict[str, Any] | None) -> Path:
+    path = Path(path_text)
+    if path.is_absolute() or product is None:
+        return path
+    config_path_text = _text(product.get("_config_path"))
+    if not config_path_text:
+        return path
+    config_path = Path(config_path_text)
+    if path.parts and path.parts[0] == "configs" and config_path.parent.name == "products" and config_path.parent.parent.name == "configs":
+        return config_path.parent.parent.parent / path
+    return config_path.parent / path
+
+
+def _allowed_accounts(path_text: str, *, product: dict[str, Any] | None = None) -> list[dict[str, str]]:
     if not _text(path_text):
         return []
-    path = Path(path_text)
+    path = _resolve_product_path(path_text, product)
     if not path.exists():
         return []
     payload = load_json(path)
@@ -326,7 +339,7 @@ def build_product_job_request(product: dict[str, Any], job: str, *, target_date:
         target_scope = _text(preload_cfg.get("target_scope") or "allowed_accounts")
         target_accounts: dict[str, Any]
         if target_scope == "allowed_accounts":
-            target_accounts = {"accounts": _allowed_accounts(_text(product.get("allowed_target_accounts_path")))}
+            target_accounts = {"accounts": _allowed_accounts(_text(product.get("allowed_target_accounts_path")), product=product)}
         else:
             target_accounts = {
                 "source": "delivery_patrol_artifact",

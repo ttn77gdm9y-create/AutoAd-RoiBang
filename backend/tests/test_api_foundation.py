@@ -81,6 +81,13 @@ def test_settings_readiness_endpoint_returns_replacement_acceptance_checklist(tm
         "状态": "ready",
         "说明": "首页、账户库、创建计划、项目管理、落地页、账户备注、任务、操作日志和结果中心均由 React 路由承载。",
     }
+    readiness_text = json.dumps(payload["table"]["rows"], ensure_ascii=False)
+    assert "任务中心展示业务进度和高级日志" in readiness_text
+    assert "操作日志展示业务内容和结果摘要" in readiness_text
+    assert "stdout" not in readiness_text
+    assert "stderr" not in readiness_text
+    assert "结果 artifact" not in readiness_text
+    assert "结果文件和报告文件" not in readiness_text
     assert payload["raw"]["streamlit_status"] == "legacy_retained"
 
 
@@ -228,6 +235,97 @@ def test_latest_workflow_endpoint_summarizes_create_mode_plan(tmp_path):
         "单元": "单元A",
         "素材数": 2,
     }
+
+
+def test_latest_workflow_endpoint_summarizes_account_remark_and_template_results(tmp_path):
+    remark_dir = tmp_path / "data" / "runs" / "account_remark_update"
+    template_dir = tmp_path / "data" / "runs" / "site_template_foundation"
+    account_dir = tmp_path / "configs" / "accounts"
+    remark_dir.mkdir(parents=True)
+    template_dir.mkdir(parents=True)
+    account_dir.mkdir(parents=True)
+    (account_dir / "product-accounts.local.json").write_text(
+        json.dumps(
+            {
+                "accounts": [
+                    {"advertiser_id": "1001", "advertiser_name": "黑旗账户一", "status": "active"},
+                    {"advertiser_id": "2001", "advertiser_name": "目标账户一", "status": "active"},
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (remark_dir / "20260528T010000Z.json").write_text(
+        json.dumps(
+            {
+                "workflow": "account_remark_update",
+                "status": "executed",
+                "summary": {
+                    "update_id": "remark-1",
+                    "remark": "黑旗游戏",
+                    "account_count": 1,
+                    "success_count": 1,
+                    "failed_count": 0,
+                },
+                "readable_reference": {
+                    "accounts": [{"advertiser_id": "1001", "target_remark": "黑旗游戏"}]
+                },
+                "results": [{"advertiser_id": "1001", "ok": True}],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (template_dir / "20260528T010000Z.json").write_text(
+        json.dumps(
+            {
+                "workflow": "site_template_foundation",
+                "status": "completed",
+                "summary": {
+                    "source_advertiser_id": "2000",
+                    "source_site_id": "8000",
+                    "target_count": 1,
+                    "game_path": "?turbo_promoted_object_id=abc",
+                    "publish": True,
+                    "edit_existing": False,
+                    "success_count": 1,
+                    "error_count": 0,
+                },
+                "success_list": [
+                    {
+                        "advertiser_id": "2001",
+                        "site_id": "9001",
+                        "game_path": "?turbo_promoted_object_id=abc",
+                        "published": True,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    client = TestClient(create_app(project_root=tmp_path))
+
+    remark_response = client.get("/api/workflows/latest", params={"workflow": "account_remark_update"})
+    template_response = client.get("/api/workflows/latest", params={"workflow": "site_template_foundation"})
+
+    assert remark_response.status_code == 200
+    assert template_response.status_code == 200
+    remark_payload = remark_response.json()
+    template_payload = template_response.json()
+    assert {"label": "目标备注", "value": "黑旗游戏"} in remark_payload["summary"]["items"]
+    assert remark_payload["table"]["columns"] == ["账户 ID", "账户名", "目标备注", "结果"]
+    assert remark_payload["table"]["rows"][0] == {
+        "账户 ID": "1001",
+        "账户名": "黑旗账户一",
+        "目标备注": "黑旗游戏",
+        "结果": "成功",
+    }
+    assert {"label": "小游戏路径", "value": "?turbo_promoted_object_id=abc"} in template_payload["summary"]["items"]
+    assert template_payload["table"]["columns"] == ["账户 ID", "账户名", "新落地页 ID", "动作", "小游戏路径", "发布", "结果"]
+    assert template_payload["table"]["rows"][0]["账户名"] == "目标账户一"
+    assert template_payload["table"]["rows"][0]["结果"] == "成功"
 
 
 def test_workflow_catalog_endpoint_returns_chinese_labels(tmp_path):
@@ -383,8 +481,10 @@ def test_task_detail_endpoint_returns_chinese_summary_before_raw_task(tmp_path):
     assert {"label": "任务 ID", "value": "frontend-1"} in payload["summary"]["items"]
     assert {"label": "任务内容", "value": "连通性检查"} in payload["summary"]["items"]
     assert not any(item["label"] == "标准输出长度" for item in payload["summary"]["items"])
-    assert payload["table"]["columns"] == ["任务 ID", "任务内容", "当前状态", "业务结果", "退出码", "结果文件"]
+    assert not any(item["label"] == "退出码" for item in payload["summary"]["items"])
+    assert payload["table"]["columns"] == ["任务 ID", "任务内容", "业务内容", "当前状态", "业务结果", "结果摘要"]
     assert payload["table"]["rows"][0]["任务内容"] == "连通性检查"
+    assert "结果文件" not in payload["table"]["rows"][0]
     assert payload["raw"]["task"]["task_id"] == "frontend-1"
 
 

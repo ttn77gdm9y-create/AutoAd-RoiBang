@@ -10,9 +10,9 @@ from roibang_v2.ui.background_tasks import write_task_record
 
 ACTION_CATALOG = {
     "dry_run_probe": {
-        "name": "固定脚本链路探针",
+        "name": "链路探针",
         "risk_level": "low",
-        "description": "只验证预览、确认、任务中心和结果读取链路，不触发真实业务动作。",
+        "description": "只验证本地白名单任务、确认、任务记录和中文结果展示链路，不触发真实业务动作。",
     }
 }
 
@@ -29,7 +29,7 @@ def list_action_catalog() -> dict[str, Any]:
     ]
     return {
         "summary": {
-            "title": "固定脚本动作目录",
+            "title": "链路探针动作目录",
             "status": "loaded",
             "risk_level": "low",
             "execution_enabled": False,
@@ -50,7 +50,7 @@ def build_action_task(action: str, request: dict[str, Any], *, project_root: str
         return {
             "ok": False,
             "summary": {
-                "title": "固定脚本执行预览",
+                "title": "链路探针预览",
                 "status": "blocked",
                 "risk_level": "high",
                 "execution_enabled": False,
@@ -77,7 +77,7 @@ def build_action_task(action: str, request: dict[str, Any], *, project_root: str
     return {
         "ok": True,
         "summary": {
-            "title": "固定脚本 dry-run 预览",
+            "title": "链路探针预览",
             "status": "planned",
             "risk_level": "low",
             "execution_enabled": True,

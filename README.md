@@ -175,9 +175,29 @@ PYTHONPATH=src python3 scripts/run_ai_create_template_drafts.py \
 
 后续如果要使用 AI 草稿，必须新增一个单独的 `promote（转正）` 脚本，由人工明确选择某个草稿后，才允许显式转换成新的人工模板；AI 草稿不会自动覆盖现有模板。
 
-## Streamlit 网页面板 v0.1
+## FastAPI + React 主入口
 
-`Streamlit（Python 网页面板）` 是本地薄面板，只负责统一入口，不承载业务逻辑。
+FastAPI + React 是当前主入口，用来替换 Streamlit 的日常操作面板。
+
+入口：
+
+- 前端：`http://127.0.0.1:5180/`
+- 后端：`http://127.0.0.1:8007/api`
+
+React/FastAPI 只负责交互层、本地编排、中文摘要、任务状态和 artifact 展示，不直接拼平台业务接口。真实业务动作必须由固定脚本读取 JSON 配置后执行。
+
+日常业务优先在发起页面内闭环：
+
+- 创建计划页：生成新计划、执行预览、输入确认、真实执行、进度、结果复盘。
+- 项目管理页：筛选、生成动作配置、执行预览、输入确认、真实执行、结果复盘。
+- 账户备注页：生成备注配置、执行预览、输入确认、真实执行、结果复盘。
+- 落地页管理页：状态更新、模板建站、转赠结果查看和执行结果复盘。
+
+任务中心、操作日志、结果中心是历史追溯和高级排查入口，主视图展示业务内容和中文结果摘要；原始 JSON 和终端日志只作为技术细节查看。
+
+## Streamlit 旧版网页面板
+
+`Streamlit（Python 网页面板）` 是旧版保留入口。React/FastAPI 验收完成前暂不删除，但不作为主入口继续增强。
 
 启动前检查：
 
@@ -217,7 +237,7 @@ v0.1 页面包含：
 - `AI Drafts（AI 草稿）`：调用 `run_ai_create_template_drafts.py（AI 创建模板草稿脚本）`，展示草稿和证据。
 - `Results（结果）`：读取本地 `data/runs（运行结果目录）` 最近产物。
 
-面板边界：
+旧版面板边界：
 
 - 不直接调用巨量 API（接口）。
 - 不直接执行真实创建。
@@ -434,9 +454,9 @@ PYTHONPATH=src python3 scripts/run_account_remark_update.py \
 - 请求体固定使用 `accountId（账户 ID）` 和 `remark（账户备注）`。
 - 工作台登录态放在 `data/secrets/oceanengine-workbench-session.local.json`，不提交。
 - 账户备注修改属于项目管理链路，但不会走项目 OpenAPI（开放接口），而是走工作台接口；执行结果仍写 JSON。
-- Streamlit（网页面板）可以在生成 JSON 后勾选确认并点击执行；页面仍然只是调用固定脚本，不直接拼接口。
+- React 账户备注页可以生成备注 JSON、执行预览、输入 `确认执行` 并启动固定脚本；页面仍然只是调用固定脚本，不直接拼接口。
 
-新产品账户准允许名单可以在 Streamlit（网页面板）`产品管理` 页生成，格式如下：
+新产品账户准允许名单继续以 JSON 配置为准，React/FastAPI 只负责导入、预览、写入和展示中文摘要，格式如下：
 
 ```json
 {
@@ -452,7 +472,7 @@ PYTHONPATH=src python3 scripts/run_account_remark_update.py \
 }
 ```
 
-代码更新后重启 Streamlit（网页面板）：
+旧版 Streamlit 入口如需回退调试，可手动重启：
 
 ```bash
 PYTHONPATH=src python3 scripts/restart_streamlit_ui.py --port 8502

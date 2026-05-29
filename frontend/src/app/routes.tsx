@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import {
+  AppstoreOutlined,
   BarChartOutlined,
   ClusterOutlined,
   DatabaseOutlined,
@@ -19,6 +20,7 @@ import { CreatePlansPage } from "../pages/CreatePlansPage";
 import { DashboardPage } from "../pages/DashboardPage";
 import { ExecutionPage } from "../pages/ExecutionPage";
 import { OperationsPage } from "../pages/OperationsPage";
+import { ProductAutomationPage } from "../pages/ProductAutomationPage";
 import { ProjectManagementPage } from "../pages/ProjectManagementPage";
 import { ResultsPage } from "../pages/ResultsPage";
 import { SitesPage } from "../pages/SitesPage";
@@ -35,6 +37,7 @@ export const routeItems = [
   { key: "/tasks", label: "任务中心", group: "系统记录", icon: <ClusterOutlined />, element: <TasksPage /> },
   { key: "/operations", label: "操作日志", group: "系统记录", icon: <HistoryOutlined />, element: <OperationsPage /> },
   { key: "/results", label: "结果中心", group: "系统记录", icon: <ProfileOutlined />, element: <ResultsPage /> },
-  { key: "/execute", label: "固定脚本执行台", group: "高级工具", icon: <PlayCircleOutlined />, element: <ExecutionPage /> },
+  { key: "/execute", label: "链路探针", group: "高级工具", icon: <PlayCircleOutlined />, element: <ExecutionPage /> },
+  { key: "/product-automation", label: "产品自动化配置", group: "高级工具", icon: <AppstoreOutlined />, element: <ProductAutomationPage /> },
   { key: "/settings", label: "系统设置", group: "高级工具", icon: <SettingOutlined />, element: <SystemSettingsPage /> },
 ] satisfies Array<{ key: string; label: string; group: "核心业务" | "系统记录" | "高级工具"; icon: ReactNode; element: ReactNode }>;

@@ -46,6 +46,14 @@ def operation_log_row_from_artifact(payload: dict[str, Any], artifact_path: str 
     result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
     details = payload.get("details") if isinstance(payload.get("details"), dict) else {}
     project_actions = details.get("project_actions") if isinstance(details.get("project_actions"), list) else []
+    account_remark = details.get("account_remark") if isinstance(details.get("account_remark"), dict) else {}
+    site_status = details.get("site_status") if isinstance(details.get("site_status"), dict) else {}
+    site_template_foundation = (
+        details.get("site_template_foundation")
+        if isinstance(details.get("site_template_foundation"), dict)
+        else {}
+    )
+    sites = details.get("sites") if isinstance(details.get("sites"), list) else []
     project_action_types = sorted(
         {
             _text(row.get("action_type"))
@@ -77,6 +85,14 @@ def operation_log_row_from_artifact(payload: dict[str, Any], artifact_path: str 
         "project_template_name": _text(details.get("project_template_name")),
         "template_catalog_path": _text(details.get("template_catalog_path")),
         "project_action_types": project_action_types,
+        "account_remark": _text(account_remark.get("remark")),
+        "site_status": _text(site_status.get("status")),
+        "site_status_label": _text(site_status.get("status_label")),
+        "site_count": len(sites),
+        "site_template_game_path": _text(site_template_foundation.get("game_path")),
+        "site_template_publish": site_template_foundation.get("publish"),
+        "site_template_edit_existing": site_template_foundation.get("edit_existing"),
+        "site_template_target_count": len(sites),
         "artifact_path": str(path),
     }
 

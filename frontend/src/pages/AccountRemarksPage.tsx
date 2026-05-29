@@ -1,7 +1,7 @@
 import { FileSearchOutlined } from "@ant-design/icons";
 import { Alert, Button, Card, Col, Collapse, Form, Input, Row, Space, Typography, message as antdMessage } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { apiGet, apiPost } from "../api/client";
 import { ConfirmExecutePanel } from "../components/ConfirmExecutePanel";
@@ -25,28 +25,71 @@ type TaskResponse = ChineseResult & {
 };
 
 const defaultRequest: AccountRemarkRequest = {
-  update_id: "ui-account-remark",
+  update_id: "",
   remark: "",
   advertiser_ids: "",
-  output_path: "configs/account-updates/ui-account-remark.local.json",
+  output_path: "",
 };
+
+function accountRemarkPathFromTask(detail?: TaskDetailResponse): string {
+  const result = detail?.raw?.result;
+  if (result && typeof result === "object" && "account_remark_update_path" in result) {
+    return String((result as { account_remark_update_path?: unknown }).account_remark_update_path ?? "").trim();
+  }
+  if (result && typeof result === "object" && "artifact_path" in result) {
+    return String((result as { artifact_path?: unknown }).artifact_path ?? "").trim();
+  }
+  return "";
+}
 
 export function AccountRemarksPage() {
   const queryClient = useQueryClient();
   const [request, setRequest] = useState<AccountRemarkRequest>(defaultRequest);
+  const [configPath, setConfigPath] = useState("");
+  const [configSource, setConfigSource] = useState<"" | "current_generated" | "manual">("");
   const [previewResult, setPreviewResult] = useState<ChineseResult | undefined>();
   const [generateResult, setGenerateResult] = useState<TaskResponse | undefined>();
   const [executePreviewResult, setExecutePreviewResult] = useState<ChineseResult | undefined>();
   const [executeResult, setExecuteResult] = useState<TaskResponse | undefined>();
-  const executeRequest = { account_remark_update_path: request.output_path || defaultRequest.output_path };
-  const activeTaskId = executeResult?.task?.task_id ?? generateResult?.task?.task_id ?? "";
+  const executeRequest = { account_remark_update_path: configPath, config_source: configSource };
+  const generateTaskId = generateResult?.task?.task_id ?? "";
+  const executeTaskId = executeResult?.task?.task_id ?? "";
+  const activeTaskId = executeTaskId || generateTaskId;
   const currentStep = executeResult ? 3 : executePreviewResult ? 2 : previewResult || generateResult ? 1 : 0;
-  const activeTaskDetail = useQuery({
-    queryKey: ["tasks", activeTaskId],
-    queryFn: () => apiGet<TaskDetailResponse>(`/tasks/${activeTaskId}`),
-    enabled: Boolean(activeTaskId),
+  const generateTaskDetail = useQuery({
+    queryKey: ["tasks", generateTaskId],
+    queryFn: () => apiGet<TaskDetailResponse>(`/tasks/${generateTaskId}`),
+    enabled: Boolean(generateTaskId),
     refetchInterval: 3000,
   });
+  const executeTaskDetail = useQuery({
+    queryKey: ["tasks", executeTaskId],
+    queryFn: () => apiGet<TaskDetailResponse>(`/tasks/${executeTaskId}`),
+    enabled: Boolean(executeTaskId),
+    refetchInterval: 3000,
+  });
+  const canGenerate = previewResult?.summary.status === "planned";
+  const canReadConfig = Boolean(configPath.trim());
+  const canExecuteCurrentConfig = configSource === "current_generated";
+
+  useEffect(() => {
+    const generatedConfigPath = accountRemarkPathFromTask(generateTaskDetail.data);
+    if (generatedConfigPath && generatedConfigPath !== configPath) {
+      setConfigPath(generatedConfigPath);
+      setConfigSource("current_generated");
+      setExecutePreviewResult(undefined);
+      setExecuteResult(undefined);
+    }
+  }, [generateTaskDetail.data, configPath]);
+
+  useEffect(() => {
+    setPreviewResult(undefined);
+    setGenerateResult(undefined);
+    setExecutePreviewResult(undefined);
+    setExecuteResult(undefined);
+    setConfigPath("");
+    setConfigSource("");
+  }, [request]);
 
   const preview = useMutation({
     mutationFn: () => apiPost<ChineseResult>("/account-remarks/config/preview", request),
@@ -55,6 +98,8 @@ export function AccountRemarksPage() {
       setGenerateResult(undefined);
       setExecutePreviewResult(undefined);
       setExecuteResult(undefined);
+      setConfigPath("");
+      setConfigSource("");
     },
   });
   const generate = useMutation({
@@ -63,7 +108,10 @@ export function AccountRemarksPage() {
       setGenerateResult(result);
       setExecutePreviewResult(undefined);
       setExecuteResult(undefined);
+      setConfigPath(request.output_path);
+      setConfigSource("current_generated");
       await queryClient.invalidateQueries({ queryKey: ["tasks"] });
+      antdMessage.success("账户备注配置正在生成，本页会显示进度");
     },
   });
   const executePreview = useMutation({
@@ -147,8 +195,8 @@ export function AccountRemarksPage() {
                   <Button icon={<FileSearchOutlined />} type="primary" onClick={() => preview.mutate()} loading={preview.isPending}>
                     检查备注修改
                   </Button>
-                  <Button disabled={!previewResult} onClick={() => generate.mutate()} loading={generate.isPending}>
-                    生成备注配置
+                  <Button disabled={!canGenerate} onClick={() => generate.mutate()} loading={generate.isPending}>
+                    生成本次备注配置
                   </Button>
                 </Space>
               </Col>
@@ -164,14 +212,49 @@ export function AccountRemarksPage() {
             <Alert
               type="info"
               showIcon
-              message="这里不会重新选择账户；执行对象以第一步生成的备注配置为准。"
+              message="这里不会重新选择账户；主路径只执行本页刚生成的新配置，避免误拿历史 JSON 写备注。"
+            />
+            {configSource === "current_generated" ? (
+              <Alert type="success" showIcon message="当前配置来源：本页刚生成的新配置" description={configPath} />
+            ) : configSource === "manual" ? (
+              <Alert
+                type="warning"
+                showIcon
+                message="当前配置来源：手动指定的历史配置"
+                description="手动指定配置只用于高级核对；本页不会直接执行历史配置。要真实写入备注，请回到第一步重新生成本次备注配置。"
+              />
+            ) : (
+              <Alert type="info" showIcon message="当前还没有可执行配置；请先在第一步生成本次备注配置。" />
+            )}
+            <Collapse
+              className="advanced-fields"
+              items={[
+                {
+                  key: "manual-config",
+                  label: "高级信息：手动查看历史账户备注 JSON",
+                  children: (
+                    <Input
+                      value={configPath}
+                      onChange={(event) => {
+                        const nextPath = event.target.value;
+                        setConfigPath(nextPath);
+                        setConfigSource(nextPath.trim() ? "manual" : "");
+                        setExecutePreviewResult(undefined);
+                        setExecuteResult(undefined);
+                      }}
+                      placeholder="例如 configs/account-updates/xxx.local.json；历史配置只用于核对"
+                    />
+                  ),
+                },
+              ]}
             />
             <Button
               icon={<FileSearchOutlined />}
+              disabled={!canReadConfig}
               onClick={() => executePreview.mutate()}
               loading={executePreview.isPending}
             >
-              检查写入明细
+              {canExecuteCurrentConfig ? "核对本次写入明细" : "查看手动配置明细"}
             </Button>
             {executePreview.error ? <Alert type="error" showIcon message={(executePreview.error as Error).message} /> : null}
             <SummaryPanel
@@ -181,11 +264,17 @@ export function AccountRemarksPage() {
               showArtifactPath={false}
               showRawJson={false}
               footer={
-                executePreviewResult?.summary.execution_enabled ? (
+                executePreviewResult?.summary.execution_enabled && canExecuteCurrentConfig ? (
                   <ConfirmExecutePanel
                     buttonText="确认并写入备注"
                     disabled={execute.isPending}
                     onConfirm={() => execute.mutate()}
+                  />
+                ) : executePreviewResult?.summary.execution_enabled && configSource === "manual" ? (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    message="手动指定的历史配置不能在本页直接执行；请重新生成本次备注配置后再确认执行。"
                   />
                 ) : null
               }
@@ -199,8 +288,8 @@ export function AccountRemarksPage() {
           taskId={activeTaskId}
           workflow="account_remark_update"
           result={executeResult ?? generateResult}
-          detail={activeTaskDetail.data}
-          loading={activeTaskDetail.isFetching || generate.isPending || execute.isPending}
+          detail={executeTaskDetail.data ?? generateTaskDetail.data}
+          loading={executeTaskDetail.isFetching || generateTaskDetail.isFetching || generate.isPending || execute.isPending}
         />
       </Space>
     </main>

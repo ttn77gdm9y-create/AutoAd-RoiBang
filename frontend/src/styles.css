@@ -142,6 +142,23 @@ body {
   margin-top: 4px;
 }
 
+.allowed-account-tools {
+  margin-top: 8px;
+}
+
+.allowed-account-help {
+  display: block;
+  margin-top: 6px;
+  line-height: 1.45;
+}
+
+.job-help {
+  display: block;
+  margin-left: 24px;
+  margin-top: 2px;
+  line-height: 1.45;
+}
+
 .workflow-task-card {
   border-color: #d8dee6;
 }

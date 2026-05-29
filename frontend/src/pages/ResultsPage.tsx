@@ -37,6 +37,7 @@ export function ResultsPage() {
     queryFn: () => apiGet<ChineseResult>(`/workflows/latest?workflow=${encodeURIComponent(workflow)}`),
     retry: false,
   });
+  const workflowDescription = selectedWorkflowDescription(catalog.data, workflow);
 
   return (
     <main className="page">
@@ -55,6 +56,7 @@ export function ResultsPage() {
           type="info"
           showIcon
           message="这里是历史结果备查。正常执行结果会优先显示在发起页面，这里用于按业务类型回看最近一次结果。"
+          description={workflowDescription}
         />
         {catalog.error ? <Alert type="error" showIcon message={(catalog.error as Error).message} /> : null}
         {query.error ? <Alert type="warning" showIcon message={(query.error as Error).message} /> : null}
@@ -73,4 +75,12 @@ function buildWorkflowOptions(catalog?: ChineseResult) {
     label: String(row["名称"] ?? row["结果类型"] ?? ""),
     value: String(row["结果类型"] ?? ""),
   }));
+}
+
+function selectedWorkflowDescription(catalog: ChineseResult | undefined, workflow: string) {
+  const row = (catalog?.table.rows ?? []).find((item) => String(item["结果类型"] ?? "") === workflow);
+  if (row?.["说明"]) {
+    return String(row["说明"]);
+  }
+  return workflows.find((item) => item.value === workflow)?.label ?? "";
 }

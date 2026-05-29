@@ -36,11 +36,20 @@ def build_json_summary(
             items.append({"label": "产品 Key", "value": product_key})
     if summary.get("plan_id"):
         items.append({"label": "计划 ID", "value": summary["plan_id"]})
+    if summary.get("remark"):
+        items.append({"label": "目标备注", "value": summary["remark"]})
+    if summary.get("game_path"):
+        items.append({"label": "小游戏路径", "value": summary["game_path"]})
+    if "publish" in summary:
+        items.append({"label": "发布", "value": "是" if bool(summary.get("publish")) else "否"})
 
     mapping = [
         ("目标数", "target_site_count"),
+        ("目标账户数", "target_count"),
         ("成功数", "success_count"),
         ("失败数", "failure_count"),
+        ("失败数", "failed_count"),
+        ("失败数", "error_count"),
         ("账户数", "account_count"),
         ("项目数", "project_count"),
         ("项目数", "planned_project_count"),
@@ -59,12 +68,28 @@ def build_json_summary(
     columns: list[str] = []
     project_execute_rows = _project_execute_rows(payload, account_names)
     project_config_rows = _project_config_rows(payload, account_names)
+    account_remark_rows = _account_remark_rows(payload, account_names)
+    site_template_rows = _site_template_rows(payload, account_names)
+    site_handsel_rows = _site_handsel_rows(payload, account_names)
+    site_status_rows = _site_status_rows(payload, account_names)
     if project_execute_rows:
         columns = ["账户 ID", "账户名", "动作", "项目 ID", "项目名", "项目数", "状态"]
         rows = project_execute_rows
     elif project_config_rows:
         columns = ["账户 ID", "账户名", "项目 ID", "项目名", "消耗", "筛选原因"]
         rows = project_config_rows
+    elif account_remark_rows:
+        columns = ["账户 ID", "账户名", "目标备注", "结果"]
+        rows = account_remark_rows
+    elif site_template_rows:
+        columns = ["账户 ID", "账户名", "新落地页 ID", "动作", "小游戏路径", "发布", "结果"]
+        rows = site_template_rows
+    elif site_handsel_rows:
+        columns = ["目标账户 ID", "账户名", "新落地页 ID", "原落地页 ID", "结果"]
+        rows = site_handsel_rows
+    elif site_status_rows:
+        columns = ["账户 ID", "账户名", "落地页 ID", "状态", "结果"]
+        rows = site_status_rows
     elif create_rows:
         columns = ["账户 ID", "账户名", "项目", "单元", "素材数"]
         rows = create_rows
@@ -99,6 +124,155 @@ def build_json_summary(
         "artifact_path": artifact_path or str(payload.get("artifact_path") or ""),
         "raw": payload,
     }
+
+
+def _account_remark_rows(payload: dict[str, Any], account_names: dict[str, str]) -> list[dict[str, Any]]:
+    if str(payload.get("workflow") or "") != "account_remark_update":
+        return []
+    summary = _dict(payload.get("summary"))
+    readable_reference = _dict(payload.get("readable_reference"))
+    reference_accounts = _list(readable_reference.get("accounts"))
+    result_by_account = {
+        str(row.get("advertiser_id") or ""): row
+        for row in _list(payload.get("results"))
+        if isinstance(row, dict) and str(row.get("advertiser_id") or "").strip()
+    }
+    rows: list[dict[str, Any]] = []
+    for item in reference_accounts[:200]:
+        account = _dict(item)
+        advertiser_id = str(account.get("advertiser_id") or "").strip()
+        if not advertiser_id:
+            continue
+        result = _dict(result_by_account.get(advertiser_id))
+        rows.append(
+            {
+                "账户 ID": advertiser_id,
+                "账户名": account_name_for(account_names, advertiser_id),
+                "目标备注": str(account.get("target_remark") or summary.get("remark") or ""),
+                "结果": _ok_label(result.get("ok")) if result else "",
+            }
+        )
+    return rows
+
+
+def _site_template_rows(payload: dict[str, Any], account_names: dict[str, str]) -> list[dict[str, Any]]:
+    if str(payload.get("workflow") or "") != "site_template_foundation":
+        return []
+    summary = _dict(payload.get("summary"))
+    rows: list[dict[str, Any]] = []
+    action = "修复现有落地页" if bool(summary.get("edit_existing")) else "新建落地页"
+    publish_label = "是" if bool(summary.get("publish")) else "否"
+    for item in _list(payload.get("success_list"))[:200]:
+        row = _dict(item)
+        advertiser_id = str(row.get("advertiser_id") or "").strip()
+        if not advertiser_id:
+            continue
+        published = row.get("published") if "published" in row else summary.get("publish")
+        rows.append(
+            {
+                "账户 ID": advertiser_id,
+                "账户名": account_name_for(account_names, advertiser_id),
+                "新落地页 ID": str(row.get("site_id") or ""),
+                "动作": action,
+                "小游戏路径": str(row.get("game_path") or summary.get("game_path") or ""),
+                "发布": "是" if bool(published) else "否",
+                "结果": "成功",
+            }
+        )
+    for item in _list(payload.get("error_list"))[:200]:
+        row = _dict(item)
+        advertiser_id = str(row.get("advertiser_id") or "").strip()
+        if not advertiser_id:
+            continue
+        rows.append(
+            {
+                "账户 ID": advertiser_id,
+                "账户名": account_name_for(account_names, advertiser_id),
+                "新落地页 ID": str(row.get("site_id") or ""),
+                "动作": action,
+                "小游戏路径": str(row.get("game_path") or summary.get("game_path") or ""),
+                "发布": publish_label,
+                "结果": str(row.get("error_reason") or "失败"),
+            }
+        )
+    return rows
+
+
+def _site_handsel_rows(payload: dict[str, Any], account_names: dict[str, str]) -> list[dict[str, Any]]:
+    if str(payload.get("workflow") or "") != "site_handsel":
+        return []
+    rows: list[dict[str, Any]] = []
+    for item in _list(payload.get("success_list"))[:200]:
+        row = _dict(item)
+        advertiser_id = str(row.get("target_advertiser_id") or row.get("advertiser_id") or "").strip()
+        if not advertiser_id:
+            continue
+        rows.append(
+            {
+                "目标账户 ID": advertiser_id,
+                "账户名": account_name_for(account_names, advertiser_id),
+                "新落地页 ID": str(row.get("site_id") or ""),
+                "原落地页 ID": str(row.get("origin_site_id") or ""),
+                "结果": "成功",
+            }
+        )
+    for item in _list(payload.get("error_list"))[:200]:
+        row = _dict(item)
+        advertiser_id = str(row.get("target_advertiser_id") or row.get("advertiser_id") or "").strip()
+        if not advertiser_id:
+            continue
+        rows.append(
+            {
+                "目标账户 ID": advertiser_id,
+                "账户名": account_name_for(account_names, advertiser_id),
+                "新落地页 ID": str(row.get("site_id") or ""),
+                "原落地页 ID": str(row.get("origin_site_id") or ""),
+                "结果": str(row.get("error_reason") or "失败"),
+            }
+        )
+    return rows
+
+
+def _site_status_rows(payload: dict[str, Any], account_names: dict[str, str]) -> list[dict[str, Any]]:
+    if str(payload.get("workflow") or "") != "site_status_update":
+        return []
+    rows: list[dict[str, Any]] = []
+    for item in _list(payload.get("success_list"))[:200]:
+        row = _dict(item)
+        advertiser_id = str(row.get("advertiser_id") or "").strip()
+        site_id = str(row.get("site_id") or "").strip()
+        if not advertiser_id or not site_id:
+            continue
+        rows.append(
+            {
+                "账户 ID": advertiser_id,
+                "账户名": account_name_for(account_names, advertiser_id),
+                "落地页 ID": site_id,
+                "状态": status_label(row.get("status")),
+                "结果": "成功",
+            }
+        )
+    for item in _list(payload.get("error_list"))[:200]:
+        row = _dict(item)
+        advertiser_id = str(row.get("advertiser_id") or "").strip()
+        if not advertiser_id:
+            continue
+        rows.append(
+            {
+                "账户 ID": advertiser_id,
+                "账户名": account_name_for(account_names, advertiser_id),
+                "落地页 ID": str(row.get("site_id") or ""),
+                "状态": "",
+                "结果": str(row.get("message") or "失败"),
+            }
+        )
+    return rows
+
+
+def _ok_label(value: Any) -> str:
+    if isinstance(value, bool):
+        return "成功" if value else "失败"
+    return ""
 
 
 def _create_plan_rows(payload: dict[str, Any], account_names: dict[str, str]) -> list[dict[str, Any]]:

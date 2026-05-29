@@ -49,26 +49,34 @@ WINDOW_LABELS = {
 
 
 def build_project_management_config_preview(request: dict[str, Any], *, project_root: str | Path) -> dict[str, Any]:
-    project_update_id = _text(request.get("project_update_id")) or "ui-project-filter"
-    action_type = _text(request.get("action_type")) or "delete_project"
+    project_update_id = _text(request.get("project_update_id"))
+    action_type = _text(request.get("action_type"))
     advertiser_ids = _split_account_ids(request.get("advertiser_ids"))
-    output_path = _text(request.get("output_path")) or f"configs/project-updates/{project_update_id}.local.json"
-
-    if not advertiser_ids:
-        return _blocked_preview(project_update_id, action_type, output_path, "至少填写一个账户 ID", request)
-    if action_type not in ACTION_LABELS:
-        return _blocked_preview(project_update_id, action_type, output_path, f"不支持的项目管理动作：{action_type}", request)
-
-    account_names = load_account_name_map(Path(project_root) / "configs")
+    output_path = _text(request.get("output_path"))
     name_contains = _text(request.get("name_contains"))
-    spend_window = _text(request.get("spend_window")) or "today"
-    metric_field = _text(request.get("metric_field")) or "stat_cost"
-    metric_op = _text(request.get("metric_op")) or "lte"
-    metric_value = _text(request.get("metric_value")) or "100"
+    spend_window = _text(request.get("spend_window"))
     opt_status = _text(request.get("opt_status"))
     budget = _text(request.get("budget"))
     cpa_bid = _text(request.get("cpa_bid"))
     roi_goal = _text(request.get("roi_goal"))
+    metric_filters = _metric_filters_from_request(request)
+    validation_reasons = _config_validation_reasons(
+        project_update_id=project_update_id,
+        action_type=action_type,
+        advertiser_ids=advertiser_ids,
+        spend_window=spend_window,
+        metric_filters=metric_filters,
+        output_path=output_path,
+        opt_status=opt_status,
+        budget=budget,
+        cpa_bid=cpa_bid,
+        roi_goal=roi_goal,
+    )
+    if validation_reasons:
+        return _blocked_preview(project_update_id, action_type, output_path, validation_reasons, request)
+
+    account_names = load_account_name_map(Path(project_root) / "configs")
+    metric_filter_label = _metric_filters_label(metric_filters)
 
     command = build_project_filter_command(
         project_update_id=project_update_id,
@@ -76,9 +84,10 @@ def build_project_management_config_preview(request: dict[str, Any], *, project_
         action_type=action_type,
         name_contains=name_contains,
         spend_window=spend_window,
-        metric_field=metric_field,
-        metric_op=metric_op,
-        metric_value=metric_value,
+        metric_field="",
+        metric_op="",
+        metric_value="",
+        metric_filters=metric_filters,
         output_path=output_path,
         opt_status=opt_status,
         budget=budget,
@@ -92,7 +101,7 @@ def build_project_management_config_preview(request: dict[str, Any], *, project_
             "动作": _action_label(action_type),
             "项目名包含": name_contains,
             "数据窗口": WINDOW_LABELS.get(spend_window, spend_window),
-            "筛选条件": _metric_filter_label(metric_field, metric_op, metric_value),
+            "筛选条件": metric_filter_label,
             "目标值": _target_value(action_type, opt_status=opt_status, budget=budget, cpa_bid=cpa_bid, roi_goal=roi_goal),
             "输出 JSON": output_path,
         }
@@ -108,6 +117,9 @@ def build_project_management_config_preview(request: dict[str, Any], *, project_
                 {"label": "配置 ID", "value": project_update_id},
                 {"label": "动作", "value": _action_label(action_type)},
                 {"label": "账户数", "value": len(advertiser_ids)},
+                {"label": "数据窗口", "value": WINDOW_LABELS.get(spend_window, spend_window)},
+                {"label": "筛选条件", "value": metric_filter_label},
+                {"label": "目标值", "value": _target_value(action_type, opt_status=opt_status, budget=budget, cpa_bid=cpa_bid, roi_goal=roi_goal)},
                 {"label": "输出 JSON", "value": output_path},
             ],
             "warnings": ["这里只生成项目管理 JSON 预览，不执行删除、暂停、预算或出价修改。"],
@@ -122,6 +134,7 @@ def build_project_management_config_preview(request: dict[str, Any], *, project_
             "project_root": str(project_root),
             "request": request,
             "command": command,
+            "metric_filters": metric_filters,
         },
     }
 
@@ -202,6 +215,7 @@ def build_project_management_execute_preview(request: dict[str, Any], *, project
             "risk_level": _max_action_risk(actions),
             "execution_enabled": True,
             "items": [
+                {"label": "配置来源", "value": _config_source_label(request.get("config_source"))},
                 {"label": "配置 ID", "value": _text(project_update.get("project_update_id"))},
                 {"label": "动作类型", "value": "、".join(_action_label(item) for item in sorted(action_types) if item)},
                 {"label": "动作数", "value": len(actions)},
@@ -270,9 +284,10 @@ def _blocked_preview(
     project_update_id: str,
     action_type: str,
     output_path: str,
-    reason: str,
+    reason: str | list[str],
     request: dict[str, Any],
 ) -> dict[str, Any]:
+    reasons = reason if isinstance(reason, list) else [reason]
     return {
         "summary": {
             "title": "项目管理配置预览",
@@ -285,7 +300,7 @@ def _blocked_preview(
                 {"label": "输出 JSON", "value": output_path},
             ],
             "warnings": [],
-            "blocking_reasons": [reason],
+            "blocking_reasons": reasons,
         },
         "table": {"columns": ["账户 ID", "账户名", "动作", "项目名包含", "数据窗口", "筛选条件", "目标值", "输出 JSON"], "rows": []},
         "artifact_path": "",
@@ -442,6 +457,96 @@ def _split_account_ids(value: Any) -> list[str]:
     return [str(item).strip() for item in raw_items if str(item).strip()]
 
 
+def _metric_filters_from_request(request: dict[str, Any]) -> list[dict[str, str]]:
+    rows = request.get("metric_filters")
+    output: list[dict[str, str]] = []
+    if isinstance(rows, list):
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            field = _text(row.get("field"))
+            op = _text(row.get("op"))
+            value = _text(row.get("value"))
+            if field or op or value:
+                output.append({"field": field, "op": op, "value": value})
+    if output:
+        return output
+
+    field = _text(request.get("metric_field"))
+    op = _text(request.get("metric_op"))
+    value = _text(request.get("metric_value"))
+    if field or op or value:
+        return [{"field": field, "op": op, "value": value}]
+    return []
+
+
+def _config_validation_reasons(
+    *,
+    project_update_id: str,
+    action_type: str,
+    advertiser_ids: list[str],
+    spend_window: str,
+    metric_filters: list[dict[str, str]],
+    output_path: str,
+    opt_status: str,
+    budget: str,
+    cpa_bid: str,
+    roi_goal: str,
+) -> list[str]:
+    reasons: list[str] = []
+    if not project_update_id:
+        reasons.append("必须明确填写配置 ID")
+    if not action_type:
+        reasons.append("必须明确选择项目管理动作")
+    elif action_type not in ACTION_LABELS:
+        reasons.append(f"不支持的项目管理动作：{action_type}")
+    if not advertiser_ids:
+        reasons.append("必须明确填写本次账户 ID")
+    if not spend_window:
+        reasons.append("必须明确选择数据窗口")
+    elif spend_window not in WINDOW_LABELS:
+        reasons.append(f"不支持的数据窗口：{spend_window}")
+    if not metric_filters:
+        reasons.append("必须至少填写一个筛选条件")
+    else:
+        reasons.extend(_metric_filter_validation_reasons(metric_filters))
+    if not output_path:
+        reasons.append("必须明确填写项目管理 JSON 输出路径")
+    if action_type == "status_update" and not opt_status:
+        reasons.append("开启/关闭项目必须明确选择目标状态")
+    if action_type == "budget_update" and not budget:
+        reasons.append("调整预算必须明确填写目标预算")
+    if action_type == "bid_update" and not cpa_bid:
+        reasons.append("调整出价必须明确填写目标出价")
+    if action_type == "roi_coeff_update" and not roi_goal:
+        reasons.append("调整 ROI 系数必须明确填写目标 ROI 系数")
+    return reasons
+
+
+def _metric_filter_validation_reasons(metric_filters: list[dict[str, str]]) -> list[str]:
+    reasons: list[str] = []
+    for index, item in enumerate(metric_filters, start=1):
+        field = _text(item.get("field"))
+        op = _text(item.get("op"))
+        value = _text(item.get("value"))
+        if not field:
+            reasons.append(f"第 {index} 个筛选条件必须选择指标")
+        elif field not in METRIC_LABELS:
+            reasons.append(f"第 {index} 个筛选条件不支持指标：{field}")
+        if not op:
+            reasons.append(f"第 {index} 个筛选条件必须选择比较符")
+        elif op not in OP_LABELS:
+            reasons.append(f"第 {index} 个筛选条件不支持比较符：{op}")
+        if not value:
+            reasons.append(f"第 {index} 个筛选条件必须填写筛选值")
+        else:
+            try:
+                float(value)
+            except ValueError:
+                reasons.append(f"第 {index} 个筛选条件筛选值必须是数字")
+    return reasons
+
+
 def _text(value: Any) -> str:
     return str(value or "").strip()
 
@@ -454,6 +559,10 @@ def _metric_filter_label(metric_field: str, metric_op: str, metric_value: str) -
     metric = METRIC_LABELS.get(metric_field, metric_field)
     op = OP_LABELS.get(metric_op, metric_op)
     return f"{metric} {op} {metric_value}"
+
+
+def _metric_filters_label(metric_filters: list[dict[str, str]]) -> str:
+    return " 且 ".join(_metric_filter_label(_text(item.get("field")), _text(item.get("op")), _text(item.get("value"))) for item in metric_filters)
 
 
 def _target_value(action_type: str, *, opt_status: str, budget: str, cpa_bid: str, roi_goal: str) -> str:
@@ -476,3 +585,12 @@ def _risk_level(action_type: str, opt_status: str) -> str:
     if action_type in {"status_update", "budget_update", "bid_update", "roi_coeff_update"}:
         return "medium"
     return "high"
+
+
+def _config_source_label(value: Any) -> str:
+    source = _text(value)
+    if source == "current_generated":
+        return "本页刚生成的新配置"
+    if source == "manual":
+        return "手动指定的历史配置"
+    return "项目管理配置"

@@ -22,9 +22,9 @@ router = APIRouter()
 
 
 class CreatePlanPreviewRequest(BaseModel):
-    mode: str = "wx_pay_male_random_materials"
+    mode: str = ""
     advertiser_ids: str | list[str] = ""
-    owner: str = "郭靖"
+    owner: str = ""
     target_date: str = ""
     product_key: str = ""
     product_name: str = ""
@@ -36,6 +36,7 @@ class CreatePlanPreviewRequest(BaseModel):
 
 class CreatePlanDetailRequest(BaseModel):
     plan_path: str = ""
+    plan_source: str = ""
 
 
 class CreatePlanExecutePreviewRequest(CreatePlanDetailRequest):

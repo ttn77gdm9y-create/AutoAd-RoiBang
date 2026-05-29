@@ -21,7 +21,7 @@ class SiteStatusPreviewRequest(BaseModel):
     advertiser_id: str = ""
     site_ids: str | list[str] = ""
     handsel_artifact: str = ""
-    status: str = "delete"
+    status: str = ""
     extra: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -41,8 +41,8 @@ class SiteTemplateFoundationPreviewRequest(BaseModel):
     target_accounts_path: str = ""
     site_mapping_artifact: str = ""
     site_name_prefix: str = ""
-    edit_existing: bool = False
-    publish: bool = True
+    edit_existing: bool | None = None
+    publish: bool | None = None
     product: str = ""
     product_key: str = ""
     owner: str = ""

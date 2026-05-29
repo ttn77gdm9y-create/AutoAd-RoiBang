@@ -17,14 +17,15 @@ router = APIRouter()
 
 
 class ProjectManagementConfigPreviewRequest(BaseModel):
-    project_update_id: str = "ui-project-filter"
+    project_update_id: str = ""
     advertiser_ids: str | list[str] = ""
-    action_type: str = "delete_project"
+    action_type: str = ""
     name_contains: str = ""
-    spend_window: str = "today"
-    metric_field: str = "stat_cost"
-    metric_op: str = "lte"
-    metric_value: str = "100"
+    spend_window: str = ""
+    metric_field: str = ""
+    metric_op: str = ""
+    metric_value: str = ""
+    metric_filters: list[dict[str, Any]] = Field(default_factory=list)
     output_path: str = ""
     opt_status: str = ""
     budget: str = ""
@@ -34,7 +35,8 @@ class ProjectManagementConfigPreviewRequest(BaseModel):
 
 
 class ProjectManagementExecutePreviewRequest(BaseModel):
-    project_update_path: str = "configs/project-updates/ui-project-filter.local.json"
+    project_update_path: str = ""
+    config_source: str = ""
 
 
 class ProjectManagementExecuteRequest(ProjectManagementExecutePreviewRequest):

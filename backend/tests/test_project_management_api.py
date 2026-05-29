@@ -16,6 +16,9 @@ def _project_management_request() -> dict:
         "metric_field": "stat_cost",
         "metric_op": "lte",
         "metric_value": "100",
+        "metric_filters": [
+            {"field": "stat_cost", "op": "lte", "value": "100"},
+        ],
         "output_path": "configs/project-updates/delete-p2.local.json",
     }
 
@@ -99,8 +102,83 @@ def test_project_management_config_preview_blocks_missing_accounts(tmp_path):
     assert payload["summary"]["title"] == "项目管理配置预览"
     assert payload["summary"]["status"] == "blocked"
     assert payload["summary"]["execution_enabled"] is False
-    assert "至少填写一个账户 ID" in payload["summary"]["blocking_reasons"]
+    assert "必须明确填写本次账户 ID" in payload["summary"]["blocking_reasons"]
     assert payload["table"]["rows"] == []
+
+
+def test_project_management_config_preview_blocks_missing_required_choices(tmp_path):
+    client = TestClient(create_app(project_root=tmp_path))
+
+    response = client.post(
+        "/api/project-management/config/preview",
+        json={
+            "project_update_id": "",
+            "advertiser_ids": "",
+            "action_type": "",
+            "spend_window": "",
+            "metric_filters": [],
+            "output_path": "",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["status"] == "blocked"
+    assert payload["summary"]["execution_enabled"] is False
+    assert payload["summary"]["blocking_reasons"] == [
+        "必须明确填写配置 ID",
+        "必须明确选择项目管理动作",
+        "必须明确填写本次账户 ID",
+        "必须明确选择数据窗口",
+        "必须至少填写一个筛选条件",
+        "必须明确填写项目管理 JSON 输出路径",
+    ]
+
+
+def test_project_management_config_preview_supports_and_metric_filters(tmp_path):
+    client = TestClient(create_app(project_root=tmp_path))
+
+    response = client.post(
+        "/api/project-management/config/preview",
+        json={
+            **_project_management_request(),
+            "metric_field": "",
+            "metric_op": "",
+            "metric_value": "",
+            "metric_filters": [
+                {"field": "stat_cost", "op": "lte", "value": "500"},
+                {"field": "billing_convert_cnt", "op": "eq", "value": "0"},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["status"] == "planned"
+    assert {"label": "筛选条件", "value": "消耗 小于等于 500 且 计费时间转化数 等于 0"} in payload["summary"]["items"]
+    assert payload["table"]["rows"][0]["筛选条件"] == "消耗 小于等于 500 且 计费时间转化数 等于 0"
+    assert payload["raw"]["command"].count("--metric-filter") == 2
+    assert "stat_cost:lte:500" in payload["raw"]["command"]
+    assert "billing_convert_cnt:eq:0" in payload["raw"]["command"]
+
+
+def test_project_management_config_preview_blocks_missing_action_target_value(tmp_path):
+    client = TestClient(create_app(project_root=tmp_path))
+
+    response = client.post(
+        "/api/project-management/config/preview",
+        json={
+            **_project_management_request(),
+            "action_type": "budget_update",
+            "budget": "",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["status"] == "blocked"
+    assert payload["summary"]["execution_enabled"] is False
+    assert payload["summary"]["blocking_reasons"] == ["调整预算必须明确填写目标预算"]
 
 
 def test_project_management_config_generate_starts_frontend_task(tmp_path, monkeypatch):
@@ -142,7 +220,7 @@ def test_project_management_config_generate_starts_frontend_task(tmp_path, monke
     ).json()
     operation_rows = operation_payload["table"]["rows"]
     assert len(operation_rows) == 1
-    assert operation_rows[0]["任务 ID"] == task["task_id"]
+    assert operation_rows[0]["关联任务"] == task["task_id"]
     assert operation_rows[0]["操作"] == "项目管理配置生成"
     assert operation_rows[0]["状态"] == "排队中"
     assert operation_rows[0]["账户数"] == 2
@@ -295,7 +373,7 @@ def test_project_management_execute_starts_allowlisted_task(tmp_path, monkeypatc
     operation_payload = client.get("/api/operations", params={"operation_type": "project_update_execute"}).json()
     operation_rows = operation_payload["table"]["rows"]
     assert len(operation_rows) == 1
-    assert operation_rows[0]["任务 ID"] == task["task_id"]
+    assert operation_rows[0]["关联任务"] == task["task_id"]
     assert operation_rows[0]["操作"] == "项目管理真实执行"
     assert operation_rows[0]["状态"] == "排队中"
     assert operation_rows[0]["账户数"] == 2

@@ -13,6 +13,9 @@ from roibang_v2.workflows.frontend_operation_log import record_frontend_operatio
 from roibang_v2.workflows.site_status_update import build_site_status_update_plan
 from roibang_v2.workflows.site_template_foundation import build_site_template_foundation_plan
 
+from backend.app.services.account_names import account_name_for
+from backend.app.services.account_names import load_account_name_map
+
 STATUS_LABELS = {
     "published": "发布",
     "unpublished": "下线",
@@ -39,15 +42,17 @@ def build_site_handsel_results(
                 "warnings": ["没有找到落地页转赠结果。"],
                 "blocking_reasons": [],
             },
-            "table": {"columns": ["目标账户 ID", "新落地页 ID", "原落地页 ID", "结果"], "rows": []},
+            "table": {"columns": ["目标账户 ID", "账户名", "新落地页 ID", "原落地页 ID", "结果"], "rows": []},
             "artifact_path": "",
             "raw": {},
         }
 
     payload = _read_json(path)
+    account_names = load_account_name_map(Path(project_root) / "configs")
     summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
-    rows = _handsel_result_rows(payload)
+    rows = _handsel_result_rows(payload, account_names)
     error_count = int(summary.get("error_count") or len(payload.get("error_list") or []))
+    source_account_id = _text(summary.get("source_advertiser_id"))
     return {
         "summary": {
             "title": "落地页转赠结果",
@@ -55,7 +60,7 @@ def build_site_handsel_results(
             "risk_level": "high" if error_count else "low",
             "execution_enabled": False,
             "items": [
-                {"label": "源账户", "value": _text(summary.get("source_advertiser_id"))},
+                {"label": "源账户", "value": _format_account(source_account_id, account_names)},
                 {"label": "原落地页", "value": _text(summary.get("site_id"))},
                 {"label": "目标账户数", "value": int(summary.get("target_count") or 0)},
                 {"label": "成功数", "value": int(summary.get("success_count") or 0)},
@@ -64,21 +69,27 @@ def build_site_handsel_results(
             "warnings": [],
             "blocking_reasons": [],
         },
-        "table": {"columns": ["目标账户 ID", "新落地页 ID", "原落地页 ID", "结果"], "rows": rows},
+        "table": {"columns": ["目标账户 ID", "账户名", "新落地页 ID", "原落地页 ID", "结果"], "rows": rows},
         "artifact_path": str(path),
         "raw": payload,
     }
 
 
 def build_site_status_preview(request: dict[str, Any], *, project_root: str | Path) -> dict[str, Any]:
+    validation_reasons = _site_status_validation_reasons(request)
+    if validation_reasons:
+        return _blocked_site_status_validation(request, validation_reasons)
+
     workflow_request = {"site_status_update": _site_status_cfg(request, execute=False)}
     plan = build_site_status_update_plan(workflow_request)
     if plan["status"] == "blocked":
         return _blocked_preview(plan, request)
 
+    account_names = load_account_name_map(Path(project_root) / "configs")
     rows = [
         {
             "账户 ID": _text(row.get("advertiser_id")),
+            "账户名": account_name_for(account_names, row.get("advertiser_id")),
             "落地页 ID": _text(row.get("site_id")),
             "目标状态": _status_label(plan["summary"]["status"]),
         }
@@ -100,7 +111,7 @@ def build_site_status_preview(request: dict[str, Any], *, project_root: str | Pa
             "warnings": ["这是落地页状态真实修改入口；执行前必须核对中文摘要和落地页明细，并输入“确认执行”。"],
             "blocking_reasons": [],
         },
-        "table": {"columns": ["账户 ID", "落地页 ID", "目标状态"], "rows": rows},
+        "table": {"columns": ["账户 ID", "账户名", "落地页 ID", "目标状态"], "rows": rows},
         "artifact_path": "",
         "raw": {"project_root": str(project_root), "request": request, "plan": plan, "execute_command": execute_command},
     }
@@ -148,14 +159,20 @@ def start_site_status_task(request: dict[str, Any], *, project_root: str | Path)
 
 
 def build_site_template_foundation_preview(request: dict[str, Any], *, project_root: str | Path) -> dict[str, Any]:
+    validation_reasons = _site_template_validation_reasons(request)
+    if validation_reasons:
+        return _blocked_site_template_validation(request, validation_reasons)
+
     workflow_request = {"site_template_foundation": _site_template_foundation_cfg(request, execute=False)}
     plan = build_site_template_foundation_plan(workflow_request)
     if plan["status"] == "blocked":
         return _blocked_site_template_preview(plan, request)
 
-    rows = [_site_template_target_row(row, plan) for row in plan.get("targets") or [] if isinstance(row, dict)]
+    account_names = load_account_name_map(Path(project_root) / "configs")
+    rows = [_site_template_target_row(row, plan, account_names) for row in plan.get("targets") or [] if isinstance(row, dict)]
     execute_command = _build_site_template_foundation_command(request, execute=True)
     summary = plan.get("summary") if isinstance(plan.get("summary"), dict) else {}
+    source_account_id = _text(summary.get("source_advertiser_id"))
     return {
         "summary": {
             "title": "模板建站预览",
@@ -163,7 +180,7 @@ def build_site_template_foundation_preview(request: dict[str, Any], *, project_r
             "risk_level": "high",
             "execution_enabled": True,
             "items": [
-                {"label": "源账户", "value": _text(summary.get("source_advertiser_id"))},
+                {"label": "源账户", "value": _format_account(source_account_id, account_names)},
                 {"label": "源落地页", "value": _text(summary.get("source_site_id"))},
                 {"label": "模板 ID", "value": _text(summary.get("template_id")) or "执行时创建"},
                 {"label": "目标账户数", "value": int(summary.get("target_count") or 0)},
@@ -173,7 +190,7 @@ def build_site_template_foundation_preview(request: dict[str, Any], *, project_r
             "warnings": ["这是模板建站真实执行入口；执行前必须核对中文摘要和目标账户明细，并输入“确认执行”。"],
             "blocking_reasons": [],
         },
-        "table": {"columns": ["账户 ID", "现有落地页 ID", "动作", "小游戏路径", "发布"], "rows": rows},
+        "table": {"columns": ["账户 ID", "账户名", "现有落地页 ID", "动作", "小游戏路径", "发布"], "rows": rows},
         "artifact_path": "",
         "raw": {"project_root": str(project_root), "request": request, "plan": plan, "execute_command": execute_command},
     }
@@ -307,6 +324,59 @@ def _review_from_preview(preview: dict[str, Any], *, can_execute: bool) -> dict[
     }
 
 
+def _site_status_validation_reasons(request: dict[str, Any]) -> list[str]:
+    if not _text(request.get("status")):
+        return ["必须明确选择目标状态"]
+    return []
+
+
+def _site_template_validation_reasons(request: dict[str, Any]) -> list[str]:
+    reasons: list[str] = []
+    if request.get("edit_existing") is None:
+        reasons.append("必须明确选择目标类型")
+    if request.get("publish") is None:
+        reasons.append("必须明确选择执行后是否发布")
+    return reasons
+
+
+def _blocked_site_status_validation(request: dict[str, Any], reasons: list[str]) -> dict[str, Any]:
+    return {
+        "summary": {
+            "title": "落地页状态更新预览",
+            "status": "blocked",
+            "risk_level": "high",
+            "execution_enabled": False,
+            "items": [{"label": "目标状态", "value": _status_label(_text(request.get("status")))}],
+            "warnings": [],
+            "blocking_reasons": reasons,
+        },
+        "table": {"columns": ["账户 ID", "账户名", "落地页 ID", "目标状态"], "rows": []},
+        "artifact_path": "",
+        "raw": {"request": request},
+    }
+
+
+def _blocked_site_template_validation(request: dict[str, Any], reasons: list[str]) -> dict[str, Any]:
+    return {
+        "summary": {
+            "title": "模板建站预览",
+            "status": "blocked",
+            "risk_level": "high",
+            "execution_enabled": False,
+            "items": [
+                {"label": "源账户", "value": _text(request.get("source_advertiser_id"))},
+                {"label": "源落地页", "value": _text(request.get("source_site_id"))},
+                {"label": "小游戏路径", "value": _text(request.get("game_path"))},
+            ],
+            "warnings": [],
+            "blocking_reasons": reasons,
+        },
+        "table": {"columns": ["账户 ID", "账户名", "现有落地页 ID", "动作", "小游戏路径", "发布"], "rows": []},
+        "artifact_path": "",
+        "raw": {"request": request},
+    }
+
+
 def _blocked_site_template_preview(plan: dict[str, Any], request: dict[str, Any]) -> dict[str, Any]:
     summary = plan.get("summary") if isinstance(plan.get("summary"), dict) else {}
     return {
@@ -323,7 +393,7 @@ def _blocked_site_template_preview(plan: dict[str, Any], request: dict[str, Any]
             "warnings": [],
             "blocking_reasons": list(plan.get("blocking_reasons") or []),
         },
-        "table": {"columns": ["账户 ID", "现有落地页 ID", "动作", "小游戏路径", "发布"], "rows": []},
+        "table": {"columns": ["账户 ID", "账户名", "现有落地页 ID", "动作", "小游戏路径", "发布"], "rows": []},
         "artifact_path": "",
         "raw": {"request": request, "plan": plan},
     }
@@ -341,7 +411,7 @@ def _blocked_preview(plan: dict[str, Any], request: dict[str, Any]) -> dict[str,
             "warnings": [],
             "blocking_reasons": list(plan.get("blocking_reasons") or []),
         },
-        "table": {"columns": ["账户 ID", "落地页 ID", "目标状态"], "rows": []},
+        "table": {"columns": ["账户 ID", "账户名", "落地页 ID", "目标状态"], "rows": []},
         "artifact_path": "",
         "raw": {"request": request, "plan": plan},
     }
@@ -355,7 +425,7 @@ def _build_site_status_command(request: dict[str, Any], *, execute: bool) -> lis
         "--config",
         "configs/project-update-execute.local.json",
         "--status",
-        _text(cfg.get("status")) or "delete",
+        _text(cfg.get("status")),
     ]
     handsel_artifact = _text(cfg.get("handsel_artifact") or cfg.get("handsel_artifact_path"))
     advertiser_id = _text(cfg.get("advertiser_id"))
@@ -410,7 +480,7 @@ def _site_status_cfg(request: dict[str, Any], *, execute: bool) -> dict[str, Any
         "handsel_artifact": _text(request.get("handsel_artifact") or request.get("handsel_artifact_path")),
         "advertiser_id": _text(request.get("advertiser_id")),
         "site_ids": request.get("site_ids"),
-        "status": _text(request.get("status")) or "delete",
+        "status": _text(request.get("status")),
         "execute": execute,
     }
 
@@ -430,15 +500,17 @@ def _site_template_foundation_cfg(request: dict[str, Any], *, execute: bool) -> 
         "site_name_prefix": _text(request.get("site_name_prefix")),
         "edit_existing": _to_bool(request.get("edit_existing")),
         "execute": execute,
-        "publish": _to_bool(request.get("publish"), default=True),
+        "publish": _to_bool(request.get("publish")),
     }
 
 
-def _site_template_target_row(row: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
+def _site_template_target_row(row: dict[str, Any], plan: dict[str, Any], account_names: dict[str, str]) -> dict[str, Any]:
     summary = plan.get("summary") if isinstance(plan.get("summary"), dict) else {}
     edit_existing = bool(summary.get("edit_existing"))
+    advertiser_id = _text(row.get("advertiser_id"))
     return {
-        "账户 ID": _text(row.get("advertiser_id")),
+        "账户 ID": advertiser_id,
+        "账户名": account_name_for(account_names, advertiser_id),
         "现有落地页 ID": _text(row.get("site_id")),
         "动作": "修复现有落地页" if edit_existing else "新建落地页",
         "小游戏路径": _text(summary.get("game_path")),
@@ -446,14 +518,16 @@ def _site_template_target_row(row: dict[str, Any], plan: dict[str, Any]) -> dict
     }
 
 
-def _handsel_result_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
+def _handsel_result_rows(payload: dict[str, Any], account_names: dict[str, str]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for row in payload.get("success_list") or []:
         if not isinstance(row, dict):
             continue
+        account_id = _text(row.get("target_advertiser_id") or row.get("advertiser_id"))
         rows.append(
             {
-                "目标账户 ID": _text(row.get("target_advertiser_id") or row.get("advertiser_id")),
+                "目标账户 ID": account_id,
+                "账户名": account_name_for(account_names, account_id),
                 "新落地页 ID": _text(row.get("site_id")),
                 "原落地页 ID": _text(row.get("origin_site_id") or row.get("source_site_id")),
                 "结果": "成功",
@@ -463,9 +537,11 @@ def _handsel_result_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(row, dict):
             continue
         reason = _text(row.get("error_reason") or row.get("message")) or "失败"
+        account_id = _text(row.get("target_advertiser_id") or row.get("advertiser_id"))
         rows.append(
             {
-                "目标账户 ID": _text(row.get("target_advertiser_id") or row.get("advertiser_id")),
+                "目标账户 ID": account_id,
+                "账户名": account_name_for(account_names, account_id),
                 "新落地页 ID": _text(row.get("site_id")),
                 "原落地页 ID": _text(row.get("origin_site_id") or row.get("source_site_id")),
                 "结果": reason,
@@ -514,3 +590,10 @@ def _status_label(status: str) -> str:
 
 def _text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _format_account(advertiser_id: str, account_names: dict[str, str]) -> str:
+    account_id = _text(advertiser_id)
+    if not account_id:
+        return ""
+    return f"{account_name_for(account_names, account_id)}（{account_id}）"

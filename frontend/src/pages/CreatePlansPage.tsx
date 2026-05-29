@@ -1,4 +1,4 @@
-import { FileSearchOutlined, HistoryOutlined } from "@ant-design/icons";
+import { FileSearchOutlined } from "@ant-design/icons";
 import { Alert, Button, Card, Col, Collapse, Form, Input, Modal, Row, Select, Space, Typography, message as antdMessage } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
@@ -30,13 +30,13 @@ type TaskResponse = ChineseResult & {
 };
 
 const defaultRequest: CreatePlanRequest = {
-  mode: "wx_pay_male_random_materials",
+  mode: "",
   advertiser_ids: "",
-  owner: "郭靖",
+  owner: "",
   product_key: "",
   product_name: "",
   target_date: "",
-  template_catalog: "configs/create-templates/wx-mini-game.json",
+  template_catalog: "",
   cpa_bid: "",
   roi_coefficient: "",
 };
@@ -135,6 +135,7 @@ export function CreatePlansPage() {
   const queryClient = useQueryClient();
   const [request, setRequest] = useState<CreatePlanRequest>(defaultRequest);
   const [planPath, setPlanPath] = useState("");
+  const [planSource, setPlanSource] = useState<"" | "current_generated" | "manual">("");
   const [previewResult, setPreviewResult] = useState<ChineseResult | undefined>();
   const [generateResult, setGenerateResult] = useState<TaskResponse | undefined>();
   const [executePreviewResult, setExecutePreviewResult] = useState<ChineseResult | undefined>();
@@ -145,7 +146,7 @@ export function CreatePlansPage() {
   const activeTaskId = executeTaskId || generateTaskId;
   const currentStep = executeResult ? 3 : executePreviewResult ? 2 : previewResult || generateResult ? 1 : 0;
   const executePath = useMemo(() => `/create-plans/${planIdFromPath(planPath)}/execute`, [planPath]);
-  const executeRequest = { plan_path: planPath };
+  const executeRequest = { plan_path: planPath, plan_source: planSource };
   const generateTaskDetail = useQuery({
     queryKey: ["tasks", generateTaskId],
     queryFn: () => apiGet<TaskDetailResponse>(`/tasks/${generateTaskId}`),
@@ -209,6 +210,9 @@ export function CreatePlansPage() {
       }));
   }, [productsQuery.data]);
   const is7rSelected = is7rMode(request.mode);
+  const canGenerate = previewResult?.summary.status === "planned";
+  const canReadPlan = Boolean(planPath.trim());
+  const canExecuteCurrentPlan = planSource === "current_generated";
   const existingPlanBlock = useMemo(
     () => existingPlanBlockFromResult(executeTaskDetail.data ?? executeResult),
     [executeTaskDetail.data, executeResult],
@@ -218,6 +222,7 @@ export function CreatePlansPage() {
     const generatedPlanPath = planPathFromTask(generateTaskDetail.data);
     if (generatedPlanPath && generatedPlanPath !== planPath) {
       setPlanPath(generatedPlanPath);
+      setPlanSource("current_generated");
       setExecutePreviewResult(undefined);
       setExecuteResult(undefined);
     }
@@ -229,6 +234,7 @@ export function CreatePlansPage() {
     setExecutePreviewResult(undefined);
     setExecuteResult(undefined);
     setPlanPath("");
+    setPlanSource("");
   }, [request]);
 
   function matchingTemplatePath(productKey: string, productName: string): string | undefined {
@@ -241,6 +247,7 @@ export function CreatePlansPage() {
       setPreviewResult(result);
       setGenerateResult(undefined);
       setPlanPath("");
+      setPlanSource("");
       setExecutePreviewResult(undefined);
       setExecuteResult(undefined);
     },
@@ -250,6 +257,7 @@ export function CreatePlansPage() {
     onSuccess: async (result) => {
       setGenerateResult(result);
       setPlanPath("");
+      setPlanSource("");
       setExecutePreviewResult(undefined);
       setExecuteResult(undefined);
       await queryClient.invalidateQueries({ queryKey: ["tasks"] });
@@ -263,29 +271,6 @@ export function CreatePlansPage() {
       setExecuteResult(undefined);
     },
   });
-  const latestExecutePreview = useMutation({
-    mutationFn: async () => {
-      const latest = await apiGet<ChineseResult>("/create-plans/latest");
-      const latestPath = latest.artifact_path ?? "";
-      if (!latestPath || latest.summary.status === "blocked") {
-        return { planPath: latestPath, result: latest };
-      }
-      const result = await apiPost<ChineseResult>(`/create-plans/${planIdFromPath(latestPath)}/execute/preview`, {
-        plan_path: latestPath,
-      });
-      return { planPath: latestPath, result };
-    },
-    onSuccess: ({ planPath: latestPath, result }) => {
-      setPlanPath(latestPath);
-      setExecutePreviewResult(result);
-      setExecuteResult(undefined);
-      if (result.summary.status === "ready") {
-        antdMessage.success("已读取最近生成的创建计划，可以核对后确认执行");
-      } else {
-        antdMessage.warning("未找到可执行的最近创建计划");
-      }
-    },
-  });
   const execute = useMutation({
     mutationFn: () => apiPost<TaskResponse>(executePath, { ...executeRequest, confirmation: "确认执行" }),
     onSuccess: async (result) => {
@@ -294,7 +279,7 @@ export function CreatePlansPage() {
       antdMessage.success("真实创建任务已提交，本页会显示进度");
     },
   });
-  const readPlanPending = executePreview.isPending || latestExecutePreview.isPending;
+  const readPlanPending = executePreview.isPending;
   function readPlanPreview() {
     if (planPath.trim()) {
       executePreview.mutate();
@@ -304,7 +289,7 @@ export function CreatePlansPage() {
       antdMessage.info("本次创建计划还在生成或刚生成完成，系统会自动读取本次计划；不要读取历史最近计划。");
       return;
     }
-    latestExecutePreview.mutate();
+    antdMessage.warning("请先生成本次创建计划，或在高级信息里手动填写计划 JSON 路径。");
   }
 
   return (
@@ -324,9 +309,14 @@ export function CreatePlansPage() {
               <Col xs={24} lg={8}>
                 <Form.Item label="固定创建模式">
                   <Select
-                    value={request.mode}
-                    onChange={(value) => setRequest({ ...request, mode: value, roi_coefficient: is7rMode(value) ? request.roi_coefficient : "" })}
+                    allowClear
+                    value={request.mode || undefined}
+                    onChange={(value) => {
+                      const nextMode = value ?? "";
+                      setRequest({ ...request, mode: nextMode, roi_coefficient: is7rMode(nextMode) ? request.roi_coefficient : "" });
+                    }}
                     options={createModeOptions}
+                    placeholder="请选择固定创建模式"
                   />
                 </Form.Item>
               </Col>
@@ -350,13 +340,13 @@ export function CreatePlansPage() {
                       });
                     }}
                     options={productOptions}
-                    placeholder="选择产品；留空时手动填写账户 ID"
+                    placeholder="选择产品后可一键填入该产品启用账户"
                   />
                 </Form.Item>
               </Col>
               <Col xs={24} lg={8}>
                 <Form.Item label="负责人">
-                  <Input value={request.owner} onChange={(event) => setRequest({ ...request, owner: event.target.value })} />
+                  <Input value={request.owner} onChange={(event) => setRequest({ ...request, owner: event.target.value })} placeholder="必须填写" />
                 </Form.Item>
               </Col>
               <Col xs={24} lg={8}>
@@ -397,7 +387,7 @@ export function CreatePlansPage() {
                       value={request.template_catalog || undefined}
                       onChange={(value) => setRequest({ ...request, template_catalog: value })}
                       options={templateOptions}
-                      placeholder="选择模板；会写入下面的模板 JSON 路径"
+                      placeholder="请选择固定模板"
                     />
                     <Button
                       icon={<FileSearchOutlined />}
@@ -434,7 +424,7 @@ export function CreatePlansPage() {
                     rows={5}
                     value={request.advertiser_ids}
                     onChange={(event) => setRequest({ ...request, advertiser_ids: event.target.value })}
-                    placeholder="多个账户用换行或逗号分隔；留空时，后端会按所选产品自动使用产品账户库启用账户"
+                    placeholder="多个账户用换行或逗号分隔；必须明确填写本次账户"
                   />
                 </Form.Item>
                 {request.product_key.trim() ? (
@@ -442,7 +432,7 @@ export function CreatePlansPage() {
                     <Alert
                       type="info"
                       showIcon
-                      message="账户 ID 可留空：后端会自动使用该产品在产品账户库里的启用账户。"
+                      message="账户不会由后端自动补齐；需要你点击按钮把产品账户库的启用账户填入本次账户 ID。"
                     />
                     <Space wrap>
                       <Button
@@ -450,7 +440,7 @@ export function CreatePlansPage() {
                         loading={accountsQuery.isLoading}
                         onClick={() => setRequest({ ...request, advertiser_ids: accountIdsFromProduct.join("\n") })}
                       >
-                        填入该产品启用账户（可选）
+                        使用该产品启用账户
                       </Button>
                       <Typography.Text type="secondary">
                         已从账户库读取 {accountIdsFromProduct.length} 个启用账户
@@ -467,8 +457,8 @@ export function CreatePlansPage() {
                   <Button icon={<FileSearchOutlined />} type="primary" onClick={() => preview.mutate()} loading={preview.isPending}>
                     检查创建计划
                   </Button>
-                  <Button disabled={!previewResult} onClick={() => generate.mutate()} loading={generate.isPending}>
-                    生成计划文件
+                  <Button disabled={!canGenerate} onClick={() => generate.mutate()} loading={generate.isPending}>
+                    生成本次计划
                   </Button>
                 </Space>
               </Col>
@@ -484,8 +474,25 @@ export function CreatePlansPage() {
             <Alert
               type="info"
               showIcon
-              message="这里不会重新生成计划；执行对象以第一步生成的账户、项目、单元、素材和文案为准。"
+              message="这里不会重新生成计划；主路径只执行本页刚生成的新计划，避免误拿历史 artifact 创建。"
             />
+            {planSource === "current_generated" ? (
+              <Alert
+                type="success"
+                showIcon
+                message="当前计划来源：本页刚生成的新计划"
+                description={planPath}
+              />
+            ) : planSource === "manual" ? (
+              <Alert
+                type="warning"
+                showIcon
+                message="当前计划来源：手动指定的历史计划"
+                description="手动指定计划只用于高级核对；本页不会直接执行历史计划。要真实新建一批，请回到第一步重新生成本次计划。"
+              />
+            ) : (
+              <Alert type="info" showIcon message="当前还没有可执行计划；请先在第一步生成本次计划。" />
+            )}
             {existingPlanBlock ? (
               <Alert
                 type="warning"
@@ -505,23 +512,28 @@ export function CreatePlansPage() {
               items={[
                 {
                   key: "manual-plan",
-                  label: "高级信息：手动指定计划文件",
+                  label: "高级信息：手动查看历史计划文件",
                   children: (
                     <Space direction="vertical" size="middle" className="full-width">
                       <Input
                         value={planPath}
-                        onChange={(event) => setPlanPath(event.target.value)}
-                        placeholder="例如 data/runs/create_mode/xxx.json；留空时读取最近生成的计划"
+                        onChange={(event) => {
+                          const nextPath = event.target.value;
+                          setPlanPath(nextPath);
+                          setPlanSource(nextPath.trim() ? "manual" : "");
+                          setExecutePreviewResult(undefined);
+                          setExecuteResult(undefined);
+                        }}
+                        placeholder="例如 data/runs/create_mode/xxx.json；历史计划只用于核对"
                       />
                     </Space>
                   ),
                 },
               ]}
             />
-            <Button icon={planPath.trim() ? <FileSearchOutlined /> : <HistoryOutlined />} onClick={readPlanPreview} loading={readPlanPending}>
-              检查创建明细
+            <Button icon={<FileSearchOutlined />} disabled={!canReadPlan} onClick={readPlanPreview} loading={readPlanPending}>
+              {canExecuteCurrentPlan ? "核对本次计划明细" : "查看手动计划明细"}
             </Button>
-            {latestExecutePreview.error ? <Alert type="error" showIcon message={(latestExecutePreview.error as Error).message} /> : null}
             {executePreview.error ? <Alert type="error" showIcon message={(executePreview.error as Error).message} /> : null}
             <SummaryPanel
               result={executePreviewResult}
@@ -530,11 +542,17 @@ export function CreatePlansPage() {
               showArtifactPath={false}
               showRawJson={false}
               footer={
-                executePreviewResult?.summary.execution_enabled ? (
+                executePreviewResult?.summary.execution_enabled && canExecuteCurrentPlan ? (
                   <ConfirmExecutePanel
                     buttonText="确认并创建"
                     disabled={execute.isPending}
                     onConfirm={() => execute.mutate()}
+                  />
+                ) : executePreviewResult?.summary.execution_enabled && planSource === "manual" ? (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    message="手动指定的历史计划不能在本页直接执行；请重新生成本次计划后再确认创建。"
                   />
                 ) : null
               }

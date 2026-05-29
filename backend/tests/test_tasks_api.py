@@ -254,3 +254,71 @@ def test_tasks_show_create_template_and_project_action_context(tmp_path: Path):
     assert {"label": "基础模板", "value": "微小每付男素材不限"} in create_detail["summary"]["items"]
     assert {"label": "模板文件", "value": "configs/create-templates/diandian-hero.local.json"} in create_detail["summary"]["items"]
     assert {"label": "项目管理动作", "value": "删除项目"} in project_detail["summary"]["items"]
+
+
+def test_tasks_show_account_remark_and_site_business_context_without_technical_columns(tmp_path: Path):
+    runs_dir = tmp_path / "data" / "runs"
+    task_dir = runs_dir / "frontend_tasks"
+    remark_dir = tmp_path / "configs" / "account-updates"
+    task_dir.mkdir(parents=True)
+    remark_dir.mkdir(parents=True)
+    (remark_dir / "remark.local.json").write_text(
+        json.dumps(
+            {
+                "account_remark_update": {
+                    "update_id": "remark-1",
+                    "remark": "黑旗游戏",
+                    "advertiser_ids": ["1001", "1002"],
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (task_dir / "frontend-remark.json").write_text(
+        json.dumps(
+            {
+                "task_id": "frontend-remark",
+                "operation_type": "account_remark_update",
+                "status": "queued",
+                "created_at": "2026-05-28T15:00:00+08:00",
+                "updated_at": "2026-05-28T15:00:00+08:00",
+                "return_code": None,
+                "request": {"account_remark_update_path": "configs/account-updates/remark.local.json"},
+                "result": {"status": "queued"},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (task_dir / "frontend-site.json").write_text(
+        json.dumps(
+            {
+                "task_id": "frontend-site",
+                "operation_type": "site_status_update",
+                "status": "queued",
+                "created_at": "2026-05-28T15:01:00+08:00",
+                "updated_at": "2026-05-28T15:01:00+08:00",
+                "return_code": None,
+                "request": {"status": "delete", "site_pairs_text": "2001,9001\n2001,9002"},
+                "result": {"status": "queued"},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    rows = {row["task_id"]: row for row in list_tasks(runs_dir, tmp_path / "configs")}
+    remark_detail = load_task_detail(runs_dir, "frontend-remark", tmp_path / "configs")
+    site_detail = load_task_detail(runs_dir, "frontend-site", tmp_path / "configs")
+
+    assert rows["frontend-remark"]["business_context"] == "目标备注：黑旗游戏；账户数：2"
+    assert rows["frontend-site"]["business_context"] == "目标状态：删除；落地页数：2"
+    assert {"label": "目标备注", "value": "黑旗游戏"} in remark_detail["summary"]["items"]
+    assert {"label": "账户数", "value": 2} in remark_detail["summary"]["items"]
+    assert {"label": "目标状态", "value": "删除"} in site_detail["summary"]["items"]
+    assert {"label": "落地页数", "value": 2} in site_detail["summary"]["items"]
+    assert remark_detail["table"]["columns"] == ["任务 ID", "任务内容", "业务内容", "当前状态", "业务结果", "结果摘要"]
+    assert site_detail["table"]["columns"] == ["任务 ID", "任务内容", "业务内容", "当前状态", "业务结果", "结果摘要"]
+    assert not any(item["label"] == "退出码" for item in remark_detail["summary"]["items"])
+    assert "结果文件" not in remark_detail["table"]["columns"]

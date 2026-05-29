@@ -45,7 +45,7 @@ def test_action_preview_endpoint_returns_chinese_summary(tmp_path):
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["summary"]["title"] == "固定脚本 dry-run 预览"
+    assert payload["summary"]["title"] == "链路探针预览"
     assert payload["summary"]["execution_enabled"] is True
     assert payload["table"]["rows"][0]["消息"] == "hello"
     assert payload["raw"]["action"] == "dry_run_probe"
@@ -54,7 +54,7 @@ def test_action_preview_endpoint_returns_chinese_summary(tmp_path):
 def test_action_catalog_lists_only_allowlisted_fixed_scripts(tmp_path):
     catalog = list_action_catalog()
 
-    assert catalog["summary"]["title"] == "固定脚本动作目录"
+    assert catalog["summary"]["title"] == "链路探针动作目录"
     assert catalog["summary"]["execution_enabled"] is False
     assert catalog["table"]["columns"] == ["动作", "名称", "风险", "说明"]
     assert catalog["table"]["rows"][0]["动作"] == "dry_run_probe"
@@ -69,5 +69,6 @@ def test_action_catalog_endpoint_returns_chinese_summary(tmp_path):
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["summary"]["title"] == "固定脚本动作目录"
-    assert payload["table"]["rows"][0]["名称"] == "固定脚本链路探针"
+    assert payload["summary"]["title"] == "链路探针动作目录"
+    assert payload["table"]["rows"][0]["名称"] == "链路探针"
+    assert "不触发真实业务动作" in payload["table"]["rows"][0]["说明"]

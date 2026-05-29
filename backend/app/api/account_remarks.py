@@ -17,7 +17,7 @@ router = APIRouter()
 
 
 class AccountRemarkConfigPreviewRequest(BaseModel):
-    update_id: str = "ui-account-remark"
+    update_id: str = ""
     remark: str = ""
     advertiser_ids: str | list[str] = ""
     output_path: str = ""
@@ -25,7 +25,8 @@ class AccountRemarkConfigPreviewRequest(BaseModel):
 
 
 class AccountRemarkExecutePreviewRequest(BaseModel):
-    account_remark_update_path: str = "configs/account-updates/ui-account-remark.local.json"
+    account_remark_update_path: str = ""
+    config_source: str = ""
 
 
 class AccountRemarkExecuteRequest(AccountRemarkExecutePreviewRequest):

@@ -69,14 +69,14 @@ def load_task_detail(runs_dir: str | Path, task_id: str, configs_dir: str | Path
     task_operation_label = operation_label(payload.get("operation_type"))
     task_status_label = status_label(payload.get("status"))
     display_artifact_path = _display_artifact_path(base, result_artifact_path)
+    result_summary = _short_result_summary(base, payload, result, account_names, result_artifact)
     row = {
         "任务 ID": str(payload.get("task_id") or task_id),
         "任务内容": task_operation_label,
         "业务内容": business_context,
         "当前状态": task_status_label,
         "业务结果": business_status_label or task_status_label,
-        "退出码": payload.get("return_code"),
-        "结果文件": display_artifact_path,
+        "结果摘要": result_summary,
     }
     sections = _task_detail_sections(result, result_artifact, account_names)
     return {
@@ -90,7 +90,6 @@ def load_task_detail(runs_dir: str | Path, task_id: str, configs_dir: str | Path
                 {"label": "任务内容", "value": task_operation_label},
                 *context_items,
                 {"label": "当前状态", "value": task_status_label},
-                {"label": "退出码", "value": row["退出码"]},
                 *([{"label": "当前进度", "value": progress["label"]}] if progress.get("label") else []),
                 *([{"label": "业务状态", "value": business_status}] if business_status else []),
                 *([{"label": "业务结果", "value": business_status_label}] if business_status_label else []),
@@ -100,7 +99,7 @@ def load_task_detail(runs_dir: str | Path, task_id: str, configs_dir: str | Path
             "blocking_reasons": blocking_reasons,
             "progress": progress,
         },
-        "table": {"columns": ["任务 ID", "任务内容", "业务内容", "当前状态", "业务结果", "退出码", "结果文件"], "rows": [row]},
+        "table": {"columns": ["任务 ID", "任务内容", "业务内容", "当前状态", "业务结果", "结果摘要"], "rows": [row]},
         "sections": sections,
         "artifact_path": display_artifact_path or str(base / "frontend_tasks" / f"{task_id}.json"),
         "raw": {"task": payload, "result": result, "result_artifact": result_artifact},
@@ -347,6 +346,9 @@ PROJECT_OPERATION_TYPES = {
     "project_realtime_filter_config",
     "project_update_execute",
 }
+ACCOUNT_REMARK_OPERATION_TYPES = {"account_remark_config_generate", "account_remark_update"}
+SITE_STATUS_OPERATION_TYPES = {"site_status_update"}
+SITE_TEMPLATE_OPERATION_TYPES = {"site_template_foundation"}
 
 
 def _task_business_context(
@@ -370,7 +372,83 @@ def _task_context_items(
     if operation_type in PROJECT_OPERATION_TYPES:
         action_text = _project_task_action_text(runs_dir, payload, result, artifact)
         return [{"label": "项目管理动作", "value": action_text or "未指定动作"}]
+    if operation_type in ACCOUNT_REMARK_OPERATION_TYPES:
+        return _account_remark_task_context_items(runs_dir, payload, result, artifact)
+    if operation_type in SITE_STATUS_OPERATION_TYPES:
+        return _site_status_task_context_items(payload, result, artifact)
+    if operation_type in SITE_TEMPLATE_OPERATION_TYPES:
+        return _site_template_task_context_items(payload, result, artifact)
     return []
+
+
+def _account_remark_task_context_items(
+    runs_dir: Path,
+    payload: dict[str, Any],
+    result: dict[str, Any],
+    artifact: dict[str, Any],
+) -> list[dict[str, Any]]:
+    request = _dict(payload.get("request"))
+    cfg_payload = _read_first_json(
+        runs_dir,
+        [
+            request.get("account_remark_update_path"),
+            request.get("path"),
+            request.get("output_path"),
+            result.get("execute_artifact_path"),
+            result.get("artifact_path"),
+        ],
+    )
+    cfg = _dict(cfg_payload.get("account_remark_update")) or cfg_payload
+    summary = _dict(artifact.get("summary")) or _dict(result.get("summary"))
+    remark = str(cfg.get("remark") or request.get("remark") or summary.get("remark") or "").strip()
+    account_ids = _split_ids(cfg.get("advertiser_ids") or request.get("advertiser_ids"))
+    account_count = len(account_ids) or _to_int(summary.get("account_count"))
+    items = []
+    if remark:
+        items.append({"label": "目标备注", "value": remark})
+    if account_count:
+        items.append({"label": "账户数", "value": account_count})
+    return items
+
+
+def _site_status_task_context_items(
+    payload: dict[str, Any],
+    result: dict[str, Any],
+    artifact: dict[str, Any],
+) -> list[dict[str, Any]]:
+    request = _dict(payload.get("request"))
+    summary = _dict(artifact.get("summary")) or _dict(result.get("summary"))
+    status = str(request.get("status") or summary.get("status") or "").strip()
+    site_count = _site_pair_count(request) or _to_int(summary.get("site_count") or summary.get("target_site_count"))
+    items = []
+    if status:
+        items.append({"label": "目标状态", "value": _site_status_label(status)})
+    if site_count:
+        items.append({"label": "落地页数", "value": site_count})
+    return items
+
+
+def _site_template_task_context_items(
+    payload: dict[str, Any],
+    result: dict[str, Any],
+    artifact: dict[str, Any],
+) -> list[dict[str, Any]]:
+    request = _dict(payload.get("request"))
+    summary = _dict(artifact.get("summary")) or _dict(result.get("summary"))
+    game_path = str(request.get("game_path") or summary.get("game_path") or "").strip()
+    edit_existing = _first_present_bool(request, summary, key="edit_existing")
+    publish = _first_present_bool(request, summary, key="publish")
+    target_count = len(_split_ids(request.get("target_advertiser_ids"))) or _to_int(summary.get("target_count"))
+    items = []
+    if edit_existing is not None:
+        items.append({"label": "建站动作", "value": "修复现有落地页" if edit_existing else "新建落地页"})
+    if target_count:
+        items.append({"label": "目标账户数", "value": target_count})
+    if game_path:
+        items.append({"label": "小游戏路径", "value": game_path})
+    if publish is not None:
+        items.append({"label": "发布", "value": "是" if publish else "否"})
+    return items
 
 
 def _create_task_context_items(
@@ -688,6 +766,71 @@ def _ledger_sample_account_id(row: dict[str, Any]) -> str:
 
 def _ledger_entity_label(value: Any) -> str:
     return {"project": "项目", "promotion": "单元", "material_bind": "素材绑定"}.get(str(value or ""), str(value or ""))
+
+
+def _split_ids(value: Any) -> list[str]:
+    if isinstance(value, list):
+        raw_items = value
+    else:
+        raw_items = str(value or "").replace("\n", ",").split(",")
+    output: list[str] = []
+    seen: set[str] = set()
+    for item in raw_items:
+        text = str(item or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        output.append(text)
+    return output
+
+
+def _site_pair_count(request: dict[str, Any]) -> int:
+    pairs = request.get("site_pairs") if isinstance(request.get("site_pairs"), list) else []
+    if pairs:
+        return sum(
+            1
+            for row in pairs
+            if isinstance(row, dict) and str(row.get("advertiser_id") or "").strip() and str(row.get("site_id") or "").strip()
+        )
+    text = str(request.get("site_pairs_text") or "").strip()
+    if not text:
+        return len(_split_ids(request.get("site_ids")))
+    count = 0
+    seen: set[tuple[str, str]] = set()
+    for line in text.splitlines():
+        parts = [part.strip() for part in line.replace("\t", ",").split(",") if part.strip()]
+        if len(parts) < 2:
+            continue
+        pair = (parts[0], parts[1])
+        if pair in seen:
+            continue
+        seen.add(pair)
+        count += 1
+    return count
+
+
+def _site_status_label(value: Any) -> str:
+    return {
+        "published": "发布",
+        "unpublished": "下线",
+        "delete": "删除",
+        "undeleted": "恢复删除",
+    }.get(str(value or "").strip(), str(value or "").strip())
+
+
+def _first_present_bool(*sources: dict[str, Any], key: str) -> bool | None:
+    for source in sources:
+        if key not in source:
+            continue
+        value = source.get(key)
+        if isinstance(value, bool):
+            return value
+        text = str(value).strip().lower()
+        if text in {"1", "true", "yes", "y", "是"}:
+            return True
+        if text in {"0", "false", "no", "n", "否"}:
+            return False
+    return None
 
 
 def _to_int(value: Any) -> int:

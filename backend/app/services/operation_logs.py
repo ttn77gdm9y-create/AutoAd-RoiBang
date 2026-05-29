@@ -48,7 +48,7 @@ def build_operation_logs_result(
         },
         "table": {
             "columns": [
-                "任务 ID",
+                "关联任务",
                 "操作",
                 "业务内容",
                 "状态",
@@ -58,9 +58,7 @@ def build_operation_logs_result(
                 "产品 Key",
                 "创建时间",
                 "账户数",
-                "退出码",
-                "结果文件",
-                "报告文件",
+                "结果摘要",
             ],
             "rows": table_rows,
         },
@@ -112,10 +110,17 @@ def build_operation_log_detail_result(
     )
     blocking_reasons = _detail_blocking_reasons(failure, create_review)
     context_items = _business_context_items(row, artifact_details)
+    business_context = _business_context(row, artifact_details)
     table_rows = [
-        {"字段": "操作日志文件", "内容": str(row.get("artifact_path") or "")},
-        {"字段": "执行结果文件", "内容": str(row.get("execute_artifact_path") or "")},
-        {"字段": "报告文件", "内容": str(row.get("report_artifact_path") or "")},
+        {"字段": "关联任务", "内容": str(row.get("task_id") or task_id)},
+        {"字段": "操作", "内容": operation_label(row.get("operation_type"))},
+        {"字段": "业务内容", "内容": business_context},
+        {"字段": "状态", "内容": status_label(row.get("status"))},
+        {"字段": "触发人", "内容": str(row.get("actor") or "")},
+        {"字段": "产品", "内容": str(row.get("product") or "")},
+        {"字段": "产品 Key", "内容": str(row.get("product_key") or "")},
+        {"字段": "账户数", "内容": str(int(row.get("account_count") or 0))},
+        {"字段": "结果摘要", "内容": _operation_result_summary(row, business_context)},
         {"字段": "失败阶段", "内容": str(failure.get("operation") or "")},
         {"字段": "失败代码", "内容": str(failure.get("code") or "")},
         {"字段": "失败原因", "内容": str(failure.get("message") or "")},
@@ -161,10 +166,11 @@ def build_operation_log_detail_result(
 
 
 def _table_row(row: dict[str, Any]) -> dict[str, Any]:
+    business_context = _business_context(row, {})
     return {
-        "任务 ID": str(row.get("task_id") or ""),
+        "关联任务": str(row.get("task_id") or ""),
         "操作": operation_label(row.get("operation_type")),
-        "业务内容": _business_context(row, {}),
+        "业务内容": business_context,
         "状态": status_label(row.get("status")),
         "任务状态": status_label(row.get("task_status") or row.get("status")),
         "触发人": str(row.get("actor") or ""),
@@ -172,10 +178,27 @@ def _table_row(row: dict[str, Any]) -> dict[str, Any]:
         "产品 Key": str(row.get("product_key") or ""),
         "创建时间": str(row.get("created_at") or ""),
         "账户数": row.get("account_count") or 0,
-        "退出码": row.get("return_code"),
-        "结果文件": str(row.get("execute_artifact_path") or row.get("artifact_path") or ""),
-        "报告文件": str(row.get("report_artifact_path") or ""),
+        "结果摘要": _operation_result_summary(row, business_context),
     }
+
+
+def _operation_result_summary(row: dict[str, Any], business_context: str = "") -> str:
+    parts = [f"{operation_label(row.get('operation_type'))}：{status_label(row.get('status'))}"]
+    context = (business_context or _business_context(row, {})).strip()
+    if context:
+        parts.append(_summary_context_phrase(context))
+    account_count = _to_int(row.get("account_count"))
+    if account_count:
+        parts.append(f"账户 {account_count}")
+    review_blocking_count = _to_int(row.get("review_blocking_reason_count"))
+    if review_blocking_count:
+        parts.append(f"阻断 {review_blocking_count}")
+    return "，".join(part for part in parts if part)
+
+
+def _summary_context_phrase(context: str) -> str:
+    first = context.split("；", 1)[0].strip()
+    return first.replace("：", " ") if first else ""
 
 
 def _detail_blocking_reasons(failure: dict[str, Any], create_review: dict[str, Any]) -> list[str]:
@@ -458,6 +481,9 @@ PROJECT_OPERATION_TYPES = {
     "project_realtime_filter_config",
     "project_update_execute",
 }
+ACCOUNT_REMARK_OPERATION_TYPES = {"account_remark_config_generate", "account_remark_update"}
+SITE_STATUS_OPERATION_TYPES = {"site_status_update"}
+SITE_TEMPLATE_OPERATION_TYPES = {"site_template_foundation"}
 
 
 def _business_context(row: dict[str, Any], details: dict[str, Any]) -> str:
@@ -480,6 +506,39 @@ def _business_context_items(row: dict[str, Any], details: dict[str, Any]) -> lis
         action_text = _project_actions_text(row, details)
         if action_text:
             return [{"label": "项目管理动作", "value": action_text}]
+    if operation_type in ACCOUNT_REMARK_OPERATION_TYPES:
+        remark = str(details.get("remark") or row.get("account_remark") or "").strip()
+        account_count = _to_int(row.get("account_count"))
+        items = []
+        if remark:
+            items.append({"label": "目标备注", "value": remark})
+        if account_count:
+            items.append({"label": "账户数", "value": account_count})
+        return items
+    if operation_type in SITE_STATUS_OPERATION_TYPES:
+        status = str(details.get("status_label") or row.get("site_status_label") or row.get("site_status") or "").strip()
+        site_count = _to_int(row.get("site_count"))
+        items = []
+        if status:
+            items.append({"label": "目标状态", "value": status})
+        if site_count:
+            items.append({"label": "落地页数", "value": site_count})
+        return items
+    if operation_type in SITE_TEMPLATE_OPERATION_TYPES:
+        game_path = str(details.get("game_path") or row.get("site_template_game_path") or "").strip()
+        edit_existing = row.get("site_template_edit_existing")
+        publish = row.get("site_template_publish")
+        target_count = _to_int(row.get("site_template_target_count") or row.get("account_count"))
+        items = []
+        if isinstance(edit_existing, bool):
+            items.append({"label": "建站动作", "value": "修复现有落地页" if edit_existing else "新建落地页"})
+        if target_count:
+            items.append({"label": "目标账户数", "value": target_count})
+        if game_path:
+            items.append({"label": "小游戏路径", "value": game_path})
+        if isinstance(publish, bool):
+            items.append({"label": "发布", "value": "是" if publish else "否"})
+        return items
     return []
 
 

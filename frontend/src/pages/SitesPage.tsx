@@ -1,7 +1,7 @@
 import { FileSearchOutlined } from "@ant-design/icons";
 import { Alert, Button, Col, Collapse, Form, Input, Row, Select, Space, Tabs, Typography, message as antdMessage } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { apiGet, apiPost } from "../api/client";
 import { ConfirmExecutePanel } from "../components/ConfirmExecutePanel";
@@ -28,8 +28,8 @@ type SiteTemplateRequest = {
   target_accounts_path: string;
   site_mapping_artifact: string;
   site_name_prefix: string;
-  edit_existing: boolean;
-  publish: boolean;
+  edit_existing: boolean | null;
+  publish: boolean | null;
 };
 
 type TaskResponse = ChineseResult & {
@@ -44,7 +44,7 @@ const defaultRequest: SiteStatusRequest = {
   advertiser_id: "",
   site_ids: "",
   handsel_artifact: "",
-  status: "delete",
+  status: "",
 };
 
 const defaultTemplateRequest: SiteTemplateRequest = {
@@ -59,8 +59,8 @@ const defaultTemplateRequest: SiteTemplateRequest = {
   target_accounts_path: "",
   site_mapping_artifact: "",
   site_name_prefix: "",
-  edit_existing: false,
-  publish: true,
+  edit_existing: null,
+  publish: null,
 };
 
 export function SitesPage() {
@@ -70,9 +70,11 @@ export function SitesPage() {
   const [handselArtifactPath, setHandselArtifactPath] = useState("");
   const [templateRequest, setTemplateRequest] = useState<SiteTemplateRequest>(defaultTemplateRequest);
   const [previewResult, setPreviewResult] = useState<ChineseResult | undefined>();
+  const [reviewedStatusRequest, setReviewedStatusRequest] = useState<SiteStatusRequest | undefined>();
   const [executeResult, setExecuteResult] = useState<TaskResponse | undefined>();
   const [handselResult, setHandselResult] = useState<ChineseResult | undefined>();
   const [templatePreviewResult, setTemplatePreviewResult] = useState<ChineseResult | undefined>();
+  const [reviewedTemplateRequest, setReviewedTemplateRequest] = useState<SiteTemplateRequest | undefined>();
   const [templateExecuteResult, setTemplateExecuteResult] = useState<TaskResponse | undefined>();
   const activeTaskId = templateExecuteResult?.task?.task_id ?? executeResult?.task?.task_id ?? "";
   const currentStep =
@@ -87,15 +89,31 @@ export function SitesPage() {
     enabled: Boolean(activeTaskId),
     refetchInterval: 3000,
   });
+  useEffect(() => {
+    setPreviewResult(undefined);
+    setReviewedStatusRequest(undefined);
+    setExecuteResult(undefined);
+  }, [request]);
+  useEffect(() => {
+    setTemplatePreviewResult(undefined);
+    setReviewedTemplateRequest(undefined);
+    setTemplateExecuteResult(undefined);
+  }, [templateRequest]);
   const preview = useMutation({
     mutationFn: () => apiPost<ChineseResult>("/sites/status/preview", request),
     onSuccess: (result) => {
       setPreviewResult(result);
+      setReviewedStatusRequest(result.summary.execution_enabled ? { ...request } : undefined);
       setExecuteResult(undefined);
     },
   });
   const execute = useMutation({
-    mutationFn: () => apiPost<TaskResponse>("/sites/status/execute", { ...request, confirmation: "确认执行" }),
+    mutationFn: () => {
+      if (!reviewedStatusRequest) {
+        throw new Error("请先检查并核对落地页动作");
+      }
+      return apiPost<TaskResponse>("/sites/status/execute", { ...reviewedStatusRequest, confirmation: "确认执行" });
+    },
     onSuccess: async (result) => {
       setExecuteResult(result);
       await queryClient.invalidateQueries({ queryKey: ["tasks"] });
@@ -113,12 +131,17 @@ export function SitesPage() {
     mutationFn: () => apiPost<ChineseResult>("/sites/template-foundation/preview", templateRequest),
     onSuccess: (result) => {
       setTemplatePreviewResult(result);
+      setReviewedTemplateRequest(result.summary.execution_enabled ? { ...templateRequest } : undefined);
       setTemplateExecuteResult(undefined);
     },
   });
   const templateExecute = useMutation({
-    mutationFn: () =>
-      apiPost<TaskResponse>("/sites/template-foundation/execute", { ...templateRequest, confirmation: "确认执行" }),
+    mutationFn: () => {
+      if (!reviewedTemplateRequest) {
+        throw new Error("请先检查并核对模板建站动作");
+      }
+      return apiPost<TaskResponse>("/sites/template-foundation/execute", { ...reviewedTemplateRequest, confirmation: "确认执行" });
+    },
     onSuccess: async (result) => {
       setTemplateExecuteResult(result);
       await queryClient.invalidateQueries({ queryKey: ["tasks"] });
@@ -158,14 +181,16 @@ export function SitesPage() {
                       <Col xs={24} lg={8}>
                         <Form.Item label="目标状态">
                           <Select
-                            value={request.status}
-                            onChange={(value) => setRequest({ ...request, status: value })}
+                            allowClear
+                            value={request.status || undefined}
+                            onChange={(value) => setRequest({ ...request, status: value ?? "" })}
                             options={[
                               { label: "删除", value: "delete" },
                               { label: "下线", value: "unpublished" },
                               { label: "发布", value: "published" },
                               { label: "恢复删除", value: "undeleted" },
                             ]}
+                            placeholder="请选择目标状态"
                           />
                         </Form.Item>
                       </Col>
@@ -213,7 +238,15 @@ export function SitesPage() {
                   </Form>
                   {preview.error ? <Alert type="error" showIcon message={(preview.error as Error).message} /> : null}
                   <SummaryPanel result={previewResult} loading={preview.isPending} detailsCollapsed showArtifactPath={false} showRawJson={false} />
-                  {previewResult?.summary.execution_enabled ? (
+                  {reviewedStatusRequest ? (
+                    <Alert
+                      type="success"
+                      showIcon
+                      message="当前落地页动作已核对"
+                      description={reviewedStatusRequest.handsel_artifact ? "执行对象来自转赠结果文件。" : "执行对象来自当前手动填写的账户和落地页。"}
+                    />
+                  ) : null}
+                  {previewResult?.summary.execution_enabled && reviewedStatusRequest ? (
                     <ConfirmExecutePanel buttonText="确认并执行落地页动作" disabled={execute.isPending} onConfirm={() => execute.mutate()} />
                   ) : null}
                   {execute.error ? <Alert type="error" showIcon message={(execute.error as Error).message} /> : null}
@@ -328,24 +361,38 @@ export function SitesPage() {
                       <Col xs={24} lg={8}>
                         <Form.Item label="目标类型">
                           <Select
-                            value={templateRequest.edit_existing ? "edit" : "create"}
-                            onChange={(value) => setTemplateRequest({ ...templateRequest, edit_existing: value === "edit" })}
+                            allowClear
+                            value={templateRequest.edit_existing === null ? undefined : templateRequest.edit_existing ? "edit" : "create"}
+                            onChange={(value) =>
+                              setTemplateRequest({
+                                ...templateRequest,
+                                edit_existing: value ? value === "edit" : null,
+                              })
+                            }
                             options={[
                               { label: "新建落地页", value: "create" },
                               { label: "修复现有落地页", value: "edit" },
                             ]}
+                            placeholder="请选择目标类型"
                           />
                         </Form.Item>
                       </Col>
                       <Col xs={24} lg={8}>
                         <Form.Item label="执行后发布">
                           <Select
-                            value={templateRequest.publish ? "yes" : "no"}
-                            onChange={(value) => setTemplateRequest({ ...templateRequest, publish: value === "yes" })}
+                            allowClear
+                            value={templateRequest.publish === null ? undefined : templateRequest.publish ? "yes" : "no"}
+                            onChange={(value) =>
+                              setTemplateRequest({
+                                ...templateRequest,
+                                publish: value ? value === "yes" : null,
+                              })
+                            }
                             options={[
                               { label: "是", value: "yes" },
                               { label: "否", value: "no" },
                             ]}
+                            placeholder="请选择"
                           />
                         </Form.Item>
                       </Col>
@@ -392,7 +439,15 @@ export function SitesPage() {
                     showArtifactPath={false}
                     showRawJson={false}
                   />
-                  {templatePreviewResult?.summary.execution_enabled ? (
+                  {reviewedTemplateRequest ? (
+                    <Alert
+                      type="success"
+                      showIcon
+                      message="当前模板建站动作已核对"
+                      description={reviewedTemplateRequest.edit_existing ? "执行对象为修复现有落地页。" : "执行对象为新建落地页。"}
+                    />
+                  ) : null}
+                  {templatePreviewResult?.summary.execution_enabled && reviewedTemplateRequest ? (
                     <ConfirmExecutePanel buttonText="确认并执行模板建站" disabled={templateExecute.isPending} onConfirm={() => templateExecute.mutate()} />
                   ) : null}
                   {templateExecute.error ? <Alert type="error" showIcon message={(templateExecute.error as Error).message} /> : null}

@@ -18,20 +18,27 @@ from roibang_v2.workflows.frontend_operation_log import record_frontend_operatio
 from backend.app.services.artifacts import find_latest_artifact
 from backend.app.services.account_names import account_name_for
 from backend.app.services.account_names import load_account_name_map
-from backend.app.services.accounts_store import filter_accounts
-from backend.app.services.accounts_store import load_accounts
 from backend.app.services.ui_labels import create_mode_label
 
 
 def build_create_plan_generate_preview(request: dict[str, Any], *, project_root: str | Path) -> dict[str, Any]:
-    mode = _text(request.get("mode") or request.get("mode_key")) or "wx_pay_male_random_materials"
-    owner = _text(request.get("owner")) or "郭靖"
+    mode = _text(request.get("mode") or request.get("mode_key"))
+    owner = _text(request.get("owner"))
     target_date = _text(request.get("target_date"))
     product_key = _text(request.get("product_key"))
     product_name = _resolve_product_name(request, product_key, project_root=project_root)
     template_catalog = _text(request.get("template_catalog"))
     cpa_bid = _text(request.get("cpa_bid"))
     roi_coefficient = _text(request.get("roi_coefficient"))
+    advertiser_ids, account_source, account_warnings = _resolve_generate_accounts(request, project_root=project_root)
+    validation_reasons = _generate_validation_reasons(
+        mode=mode,
+        owner=owner,
+        template_catalog=template_catalog,
+        advertiser_ids=advertiser_ids,
+    )
+    if validation_reasons:
+        return _blocked_generate_preview(mode, product_name, owner, target_date, validation_reasons, request)
     if roi_coefficient and not _is_7r_mode(mode):
         return _blocked_generate_preview(
             mode,
@@ -41,11 +48,7 @@ def build_create_plan_generate_preview(request: dict[str, Any], *, project_root:
             "非 7R 创建模式不允许填写 ROI 系数；请清空该字段，或切换到 7R 创建模式。",
             request,
         )
-    advertiser_ids, account_source, account_warnings = _resolve_generate_accounts(request, project_root=project_root)
     account_names = load_account_name_map(Path(project_root) / "configs")
-
-    if not advertiser_ids:
-        return _blocked_generate_preview(mode, product_name, owner, target_date, "至少填写一个账户 ID", request)
 
     try:
         command = build_create_plan_command(
@@ -372,6 +375,9 @@ def _build_plan_preview_result(
         return _blocked_plan_preview(title, plan_id, plan_path, "创建计划 JSON 无法生成中文摘要", request)
 
     summary = preview.get("summary") if isinstance(preview.get("summary"), dict) else {}
+    mode_key = _plan_mode_key(plan, preview)
+    template_name = _plan_template_name(plan, preview)
+    template_path = _plan_template_path(plan, preview)
     blocking_reasons = [str(item) for item in preview.get("blocking_reasons") or []]
     warnings = [str(item) for item in preview.get("warnings") or []]
     status = "blocked" if blocking_reasons else "ready"
@@ -402,14 +408,21 @@ def _build_plan_preview_result(
             "risk_level": "high" if execution_preview else ("medium" if warnings else "low"),
             "execution_enabled": execution_enabled,
             "items": [
+                {"label": "计划来源", "value": _plan_source_label(request.get("plan_source"), execution_preview=execution_preview)},
                 {"label": "计划 ID", "value": _text(summary.get("plan_id")) or plan_id},
                 {"label": "产品", "value": _text(summary.get("product"))},
                 {"label": "产品 Key", "value": _text(summary.get("product_key"))},
+                {"label": "固定模式", "value": mode_key},
+                {"label": "固定模板", "value": template_name},
+                {"label": "模板文件", "value": template_path},
+                {"label": "创建计划 JSON", "value": plan_path},
                 {"label": "账户数", "value": _int(summary.get("target_account_count"))},
                 {"label": "项目数", "value": _int(summary.get("planned_project_count"))},
                 {"label": "单元数", "value": _int(summary.get("planned_unit_count"))},
+                {"label": "候选素材数", "value": _int(summary.get("source_material_count"))},
                 {"label": "素材分配数", "value": _int(summary.get("material_assignment_count"))},
                 {"label": "唯一素材数", "value": _int(summary.get("unique_material_count"))},
+                {"label": "素材复用规则", "value": _material_reuse_rule(plan, summary)},
                 {"label": "缺视频 ID", "value": _int(summary.get("missing_video_id_material_count"))},
             ],
             "warnings": warnings
@@ -431,9 +444,10 @@ def _blocked_generate_preview(
     product_name: str,
     owner: str,
     target_date: str,
-    reason: str,
+    reason: str | list[str],
     request: dict[str, Any],
 ) -> dict[str, Any]:
+    reasons = reason if isinstance(reason, list) else [reason]
     return {
         "summary": {
             "title": "创建计划生成预览",
@@ -447,7 +461,7 @@ def _blocked_generate_preview(
                 {"label": "目标日期", "value": target_date},
             ],
             "warnings": [],
-            "blocking_reasons": [reason],
+            "blocking_reasons": reasons,
         },
         "table": {"columns": ["账户 ID", "账户名", "创建模式", "产品", "负责人", "目标日期", "出价", "ROI 系数"], "rows": []},
         "artifact_path": "",
@@ -719,19 +733,26 @@ def _resolve_generate_accounts(request: dict[str, Any], *, project_root: str | P
     if explicit_accounts:
         return explicit_accounts, "manual", []
 
-    product_key = _text(request.get("product_key"))
-    if not product_key:
-        return [], "manual", []
+    return [], "manual", []
 
-    accounts = filter_accounts(
-        load_accounts(Path(project_root) / "configs"),
-        product_key=product_key,
-        status="active",
-    )
-    advertiser_ids = _unique_account_ids(row.get("advertiser_id") for row in accounts)
+
+def _generate_validation_reasons(
+    *,
+    mode: str,
+    owner: str,
+    template_catalog: str,
+    advertiser_ids: list[str],
+) -> list[str]:
+    reasons: list[str] = []
+    if not mode:
+        reasons.append("必须明确选择固定创建模式")
+    if not owner:
+        reasons.append("必须明确填写负责人")
+    if not template_catalog:
+        reasons.append("必须明确选择固定模板 JSON")
     if not advertiser_ids:
-        return [], "product_active_accounts", []
-    return advertiser_ids, "product_active_accounts", ["未手动填写账户 ID，已自动使用产品账户库中的 active 账户。"]
+        reasons.append("必须明确填写本次账户 ID")
+    return reasons
 
 
 def _resolve_product_name(request: dict[str, Any], product_key: str, *, project_root: str | Path) -> str:
@@ -772,6 +793,68 @@ def _account_source_label(source: str) -> str:
     if source == "product_active_accounts":
         return "产品账户库 active 账户"
     return "手动填写账户 ID"
+
+
+def _plan_source_label(value: Any, *, execution_preview: bool) -> str:
+    source = _text(value)
+    if source == "current_generated":
+        return "本页刚生成的新计划"
+    if source == "manual":
+        return "手动指定的历史计划"
+    if source == "latest":
+        return "最近创建计划"
+    return "执行预览计划" if execution_preview else "创建计划"
+
+
+def _plan_mode_key(plan: dict[str, Any], preview: dict[str, Any]) -> str:
+    summary = preview.get("summary") if isinstance(preview.get("summary"), dict) else {}
+    request = plan.get("create_request") if isinstance(plan.get("create_request"), dict) else {}
+    return _text(summary.get("mode_key") or plan.get("mode_key") or request.get("mode") or request.get("mode_key"))
+
+
+def _plan_template_name(plan: dict[str, Any], preview: dict[str, Any]) -> str:
+    request = plan.get("create_request") if isinstance(plan.get("create_request"), dict) else {}
+    review = preview.get("review") if isinstance(preview.get("review"), dict) else {}
+    details = review.get("details") if isinstance(review.get("details"), dict) else {}
+    return _text(
+        request.get("project_template_name")
+        or request.get("template_key")
+        or details.get("project_template_name")
+        or details.get("template_key")
+    )
+
+
+def _plan_template_path(plan: dict[str, Any], preview: dict[str, Any]) -> str:
+    request = plan.get("create_request") if isinstance(plan.get("create_request"), dict) else {}
+    review = preview.get("review") if isinstance(preview.get("review"), dict) else {}
+    details = review.get("details") if isinstance(review.get("details"), dict) else {}
+    summary = plan.get("summary") if isinstance(plan.get("summary"), dict) else {}
+    return _text(
+        summary.get("template_catalog_path")
+        or request.get("template_catalog_path")
+        or request.get("template_catalog")
+        or request.get("template_catalog_json")
+        or details.get("template_catalog_path")
+    )
+
+
+def _material_reuse_rule(plan: dict[str, Any], summary: dict[str, Any]) -> str:
+    request = plan.get("create_request") if isinstance(plan.get("create_request"), dict) else {}
+    selection = request.get("material_selection") if isinstance(request.get("material_selection"), dict) else {}
+    requirements = request.get("material_requirements") if isinstance(request.get("material_requirements"), dict) else {}
+    selection_type = _text(summary.get("selection_type") or selection.get("selection_type"))
+    lookback_days = _int(selection.get("lookback_days"))
+    allow_reuse = bool(requirements.get("allow_reuse_across_accounts")) or _text(requirements.get("on_insufficient")) == "allow_reuse"
+    reuse_text = "，素材不足时允许按固定规则复用" if allow_reuse else ""
+    if selection_type == "random_materials":
+        return f"随机素材{reuse_text}"
+    if selection_type == "high_spend":
+        window = f"近 {lookback_days} 天" if lookback_days else "历史"
+        return f"{window}高消耗素材{reuse_text}"
+    if selection_type == "test_new":
+        window = f"近 {lookback_days} 天" if lookback_days else "历史"
+        return f"{window}测新素材{reuse_text}"
+    return selection_type or ("允许复用" if allow_reuse else "未配置")
 
 
 def _display_create_mode(request: dict[str, Any]) -> str:
