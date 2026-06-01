@@ -23,6 +23,7 @@ from backend.app.services.accounts_store import parse_csv_bytes
 from backend.app.services.accounts_store import parse_paste_text
 from backend.app.services.accounts_store import parse_xlsx_bytes
 from backend.app.services.accounts_store import preview_import
+from backend.app.services.accounts_store import preview_bulk_update_accounts
 
 router = APIRouter()
 
@@ -108,6 +109,21 @@ def download_accounts_template() -> Response:
 def bulk_update(request: Request, body: BulkUpdateAccountsRequest) -> dict:
     settings = request.app.state.settings
     return bulk_update_accounts(
+        settings.configs_dir,
+        filters={
+            "product_key": body.product_key,
+            "channel": body.channel,
+            "owner": body.owner,
+            "status": body.status,
+        },
+        updates=body.updates,
+    )
+
+
+@router.post("/accounts/bulk-update/preview")
+def bulk_update_preview(request: Request, body: BulkUpdateAccountsRequest) -> dict:
+    settings = request.app.state.settings
+    return preview_bulk_update_accounts(
         settings.configs_dir,
         filters={
             "product_key": body.product_key,

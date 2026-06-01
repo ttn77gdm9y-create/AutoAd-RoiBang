@@ -16,6 +16,9 @@ export function AccountsPage() {
   const [pasteText, setPasteText] = useState("");
   const [fileList, setFileList] = useState<UploadFile[]>([]);
   const [preview, setPreview] = useState<ChineseResult | undefined>();
+  const [pastePreviewReady, setPastePreviewReady] = useState(false);
+  const [filePreviewReady, setFilePreviewReady] = useState(false);
+  const [bulkPreviewReady, setBulkPreviewReady] = useState(false);
   const queryPath = useMemo(() => {
     const params = new URLSearchParams();
     Object.entries(filters).forEach(([key, value]) => {
@@ -32,23 +35,31 @@ export function AccountsPage() {
   });
   const pastePreview = useMutation({
     mutationFn: () => apiPost<ChineseResult>("/accounts/paste/preview", { text: pasteText }),
-    onSuccess: setPreview,
+    onSuccess: (result) => {
+      setPreview(result);
+      setPastePreviewReady(result.summary.status === "planned");
+    },
   });
   const pasteCommit = useMutation({
     mutationFn: () => apiPost<ChineseResult>("/accounts/paste/commit", { text: pasteText }),
     onSuccess: (result) => {
       setPreview(result);
+      setPastePreviewReady(false);
       queryClient.invalidateQueries({ queryKey: ["accounts"] });
     },
   });
   const filePreview = useMutation({
     mutationFn: () => apiUpload<ChineseResult>("/accounts/import/preview", fileList[0].originFileObj as File),
-    onSuccess: setPreview,
+    onSuccess: (result) => {
+      setPreview(result);
+      setFilePreviewReady(result.summary.status === "planned");
+    },
   });
   const fileCommit = useMutation({
     mutationFn: () => apiUpload<ChineseResult>("/accounts/import/commit", fileList[0].originFileObj as File),
     onSuccess: (result) => {
       setPreview(result);
+      setFilePreviewReady(false);
       queryClient.invalidateQueries({ queryKey: ["accounts"] });
     },
   });
@@ -59,10 +70,18 @@ export function AccountsPage() {
       queryClient.invalidateQueries({ queryKey: ["accounts"] });
     },
   });
+  const bulkPreview = useMutation({
+    mutationFn: () => apiPost<ChineseResult>("/accounts/bulk-update/preview", { ...filters, updates: buildBulkUpdates() }),
+    onSuccess: (result) => {
+      setPreview(result);
+      setBulkPreviewReady(result.summary.status === "planned");
+    },
+  });
   const bulkUpdate = useMutation({
     mutationFn: () => apiPost<ChineseResult>("/accounts/bulk-update", { ...filters, updates: buildBulkUpdates() }),
     onSuccess: (result) => {
       setPreview(result);
+      setBulkPreviewReady(false);
       queryClient.invalidateQueries({ queryKey: ["accounts"] });
     },
   });
@@ -75,7 +94,11 @@ export function AccountsPage() {
     filePreview.isPending ||
     fileCommit.isPending ||
     historyBackfill.isPending ||
+    bulkPreview.isPending ||
     bulkUpdate.isPending;
+  const canCommitPaste = Boolean(pasteText.trim()) && pastePreviewReady && !busy;
+  const canCommitFile = selectedFile && filePreviewReady && !busy;
+  const canCommitBulk = hasBulkFields && bulkPreviewReady && !busy;
 
   function buildBulkUpdates() {
     const updates: Record<string, string> = {};
@@ -89,6 +112,21 @@ export function AccountsPage() {
       updates.account_remark = bulkValues.account_remark;
     }
     return updates;
+  }
+
+  function updateFilters(patch: Partial<typeof filters>) {
+    setFilters({ ...filters, ...patch });
+    setBulkPreviewReady(false);
+  }
+
+  function updateBulkFields(patch: Partial<typeof bulkFields>) {
+    setBulkFields({ ...bulkFields, ...patch });
+    setBulkPreviewReady(false);
+  }
+
+  function updateBulkValues(patch: Partial<typeof bulkValues>) {
+    setBulkValues({ ...bulkValues, ...patch });
+    setBulkPreviewReady(false);
   }
 
   return (
@@ -116,22 +154,22 @@ export function AccountsPage() {
         <Form.Item label="产品">
           <Input
             value={filters.product_key}
-            onChange={(event) => setFilters({ ...filters, product_key: event.target.value })}
+            onChange={(event) => updateFilters({ product_key: event.target.value })}
             placeholder="产品 Key，例如 diandian-hero"
           />
         </Form.Item>
         <Form.Item label="渠道">
-          <Input value={filters.channel} onChange={(event) => setFilters({ ...filters, channel: event.target.value })} />
+          <Input value={filters.channel} onChange={(event) => updateFilters({ channel: event.target.value })} />
         </Form.Item>
         <Form.Item label="负责人">
-          <Input value={filters.owner} onChange={(event) => setFilters({ ...filters, owner: event.target.value })} />
+          <Input value={filters.owner} onChange={(event) => updateFilters({ owner: event.target.value })} />
         </Form.Item>
         <Form.Item label="状态">
           <Select
             allowClear
             className="status-select"
             value={filters.status || undefined}
-            onChange={(value) => setFilters({ ...filters, status: value ?? "" })}
+            onChange={(value) => updateFilters({ status: value ?? "" })}
             options={[
               { label: "启用", value: "active" },
               { label: "暂停", value: "paused" },
@@ -152,41 +190,53 @@ export function AccountsPage() {
           <div className="bulk-edit-grid">
             <Checkbox
               checked={bulkFields.channel}
-              onChange={(event) => setBulkFields({ ...bulkFields, channel: event.target.checked })}
+              onChange={(event) => updateBulkFields({ channel: event.target.checked })}
             >
               渠道
             </Checkbox>
             <Input
               disabled={!bulkFields.channel}
               value={bulkValues.channel}
-              onChange={(event) => setBulkValues({ ...bulkValues, channel: event.target.value })}
+              onChange={(event) => updateBulkValues({ channel: event.target.value })}
               placeholder="例如：微信"
             />
-            <Checkbox checked={bulkFields.owner} onChange={(event) => setBulkFields({ ...bulkFields, owner: event.target.checked })}>
+            <Checkbox checked={bulkFields.owner} onChange={(event) => updateBulkFields({ owner: event.target.checked })}>
               负责人
             </Checkbox>
             <Input
               disabled={!bulkFields.owner}
               value={bulkValues.owner}
-              onChange={(event) => setBulkValues({ ...bulkValues, owner: event.target.value })}
+              onChange={(event) => updateBulkValues({ owner: event.target.value })}
               placeholder="例如：郭靖"
             />
             <Checkbox
               checked={bulkFields.account_remark}
-              onChange={(event) => setBulkFields({ ...bulkFields, account_remark: event.target.checked })}
+              onChange={(event) => updateBulkFields({ account_remark: event.target.checked })}
             >
               备注
             </Checkbox>
             <Input
               disabled={!bulkFields.account_remark}
               value={bulkValues.account_remark}
-              onChange={(event) => setBulkValues({ ...bulkValues, account_remark: event.target.value })}
+              onChange={(event) => updateBulkValues({ account_remark: event.target.value })}
               placeholder="例如：点点英雄-黑旗"
             />
           </div>
-          <Button type="primary" danger icon={<SaveOutlined />} disabled={!hasBulkFields || busy} onClick={() => bulkUpdate.mutate()}>
-            确认批量修改
-          </Button>
+          <Space wrap>
+            <Button icon={<EyeOutlined />} disabled={!hasBulkFields || busy} loading={bulkPreview.isPending} onClick={() => bulkPreview.mutate()}>
+              检查批量修改
+            </Button>
+            <Button
+              type="primary"
+              danger
+              icon={<SaveOutlined />}
+              disabled={!canCommitBulk}
+              loading={bulkUpdate.isPending}
+              onClick={() => bulkUpdate.mutate()}
+            >
+              确认写入批量修改
+            </Button>
+          </Space>
         </div>
       </section>
 
@@ -203,7 +253,10 @@ export function AccountsPage() {
             beforeUpload={() => false}
             maxCount={1}
             fileList={fileList}
-            onChange={({ fileList: nextFileList }) => setFileList(nextFileList)}
+            onChange={({ fileList: nextFileList }) => {
+              setFileList(nextFileList);
+              setFilePreviewReady(false);
+            }}
           >
             <Button icon={<UploadOutlined />}>选择 CSV / Excel</Button>
           </Upload>
@@ -211,7 +264,7 @@ export function AccountsPage() {
             <Button icon={<EyeOutlined />} disabled={!selectedFile || busy} onClick={() => filePreview.mutate()}>
               检查上传内容
             </Button>
-            <Button type="primary" icon={<SaveOutlined />} disabled={!selectedFile || busy} onClick={() => fileCommit.mutate()}>
+            <Button type="primary" icon={<SaveOutlined />} disabled={!canCommitFile} onClick={() => fileCommit.mutate()}>
               确认写入上传账户
             </Button>
           </Space>
@@ -221,21 +274,24 @@ export function AccountsPage() {
           <Input.TextArea
             rows={6}
             value={pasteText}
-            onChange={(event) => setPasteText(event.target.value)}
+            onChange={(event) => {
+              setPasteText(event.target.value);
+              setPastePreviewReady(false);
+            }}
             placeholder="粘贴带表头的 CSV 或 Tab 分隔文本"
           />
           <Space>
             <Button icon={<FormOutlined />} disabled={!pasteText.trim() || busy} onClick={() => pastePreview.mutate()}>
               检查粘贴内容
             </Button>
-            <Button type="primary" icon={<SaveOutlined />} disabled={!pasteText.trim() || busy} onClick={() => pasteCommit.mutate()}>
+            <Button type="primary" icon={<SaveOutlined />} disabled={!canCommitPaste} onClick={() => pasteCommit.mutate()}>
               确认写入粘贴账户
             </Button>
           </Space>
         </div>
       </section>
 
-      {[pastePreview.error, pasteCommit.error, filePreview.error, fileCommit.error, historyBackfill.error, bulkUpdate.error, query.error]
+      {[pastePreview.error, pasteCommit.error, filePreview.error, fileCommit.error, historyBackfill.error, bulkPreview.error, bulkUpdate.error, query.error]
         .filter(Boolean)
         .map((error) => (
           <Alert key={(error as Error).message} type="error" showIcon message={(error as Error).message} />

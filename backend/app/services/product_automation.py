@@ -4,6 +4,8 @@ import csv
 import io
 import json
 import re
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +14,9 @@ from backend.app.services.account_names import load_account_name_map
 from backend.app.services.artifacts import find_latest_artifact
 from backend.app.services.artifacts import read_json
 from roibang_v2.config import load_json
+from roibang_v2.db.bootstrap import bootstrap_database
+from roibang_v2.runs import write_run_artifact
+from roibang_v2.workflows.ai_create_template_drafts import run_ai_create_template_drafts_request
 from roibang_v2.workflows.product_automation_job import SUPPORTED_JOBS
 from roibang_v2.workflows.product_automation_job import load_product_configs
 from roibang_v2.workflows.product_automation_job import run_product_automation_job
@@ -454,6 +459,358 @@ def build_product_automation_dry_run(
     }
 
 
+def build_ai_template_drafts(
+    *,
+    project_root: str | Path,
+    configs_dir: str | Path,
+    runs_dir: str | Path,
+    product_key: str,
+    max_drafts: int = 5,
+) -> dict[str, Any]:
+    product_key_text = _text(product_key)
+    if not product_key_text:
+        return _blocked_result("AI 模板草稿不可用", ["请选择产品"], {"product_key": product_key})
+
+    products = load_product_configs(Path(configs_dir) / "products")
+    product = next((item for item in products if _text(item.get("product_key")) == product_key_text), None)
+    if not product:
+        return _blocked_result("AI 模板草稿不可用", [f"未找到产品配置：{product_key_text}"], {"product_key": product_key_text})
+
+    product_name = _text(product.get("product"))
+    source_advertiser_id = _text(product.get("source_advertiser_id"))
+    if not source_advertiser_id:
+        return _blocked_result(
+            "AI 模板草稿不可用",
+            [f"{product_name or product_key_text} 未配置源素材账户 ID"],
+            {"product_key": product_key_text},
+        )
+
+    root = Path(project_root)
+    db_path = root / "data" / "roibang_v2.sqlite3"
+    if not db_path.exists():
+        return _blocked_result("AI 模板草稿不可用", [f"本地数据库不存在：{db_path}"], {"product_key": product_key_text})
+    bootstrap_database(db_path)
+
+    result = run_ai_create_template_drafts_request(
+        {
+            "ai_create_template_drafts": {
+                "product": product_name,
+                "source_advertiser_id": source_advertiser_id,
+                "manual_mode_dir": str(Path(configs_dir) / "create-modes"),
+                "max_drafts": max(int(max_drafts or 5), 0),
+            }
+        },
+        db_path=db_path,
+        runs_dir=runs_dir,
+    )
+    drafts = [draft for draft in result.get("drafts", []) if isinstance(draft, dict)]
+    rows = [_ai_template_draft_row(draft, product_name=product_name) for draft in drafts]
+    status = "draft_only" if drafts else ("blocked" if result.get("blocking_reasons") else "empty")
+    return {
+        "summary": {
+            "title": "AI 模板草稿",
+            "status": status,
+            "risk_level": "medium" if drafts else "low",
+            "execution_enabled": False,
+            "items": [
+                {"label": "产品", "value": product_name or product_key_text},
+                {"label": "草稿数", "value": len(drafts)},
+                {"label": "真实执行", "value": "否"},
+            ],
+            "warnings": [
+                "AI 模板草稿只写 data/runs，不写人工固定模板；转正前不能被创建脚本直接使用。"
+            ]
+            if drafts
+            else [],
+            "blocking_reasons": [_text(reason) for reason in result.get("blocking_reasons", []) if _text(reason)],
+        },
+        "table": {
+            "columns": [
+                "草稿名",
+                "产品",
+                "草稿 Key",
+                "基于人工模板",
+                "候选素材",
+                "消耗",
+                "转化",
+                "ROI",
+                "差异",
+                "风险",
+                "状态",
+            ],
+            "rows": rows,
+        },
+        "artifact_path": _text(result.get("artifact_path")),
+        "raw": result,
+    }
+
+
+def build_ai_template_draft_preview(
+    *,
+    project_root: str | Path,
+    configs_dir: str | Path,
+    runs_dir: str | Path,
+    product_key: str,
+    artifact_path: str,
+    draft_key: str,
+) -> dict[str, Any]:
+    product_key_text = _text(product_key)
+    artifact_path_text = _text(artifact_path)
+    draft_key_text = _text(draft_key)
+    blocking = []
+    if not product_key_text:
+        blocking.append("请选择产品")
+    elif not PRODUCT_KEY_PATTERN.fullmatch(product_key_text):
+        blocking.append("产品 Key 只能包含英文、数字、中划线或下划线，且不能包含路径符号")
+    if not artifact_path_text:
+        blocking.append("缺少 AI 模板草稿结果文件")
+    if not draft_key_text:
+        blocking.append("请选择要转正预览的草稿")
+    elif not PRODUCT_KEY_PATTERN.fullmatch(draft_key_text):
+        blocking.append("草稿 Key 只能包含英文、数字、中划线或下划线，且不能包含路径符号")
+    if blocking:
+        return _blocked_result(
+            "AI 模板草稿转正预览不可用",
+            blocking,
+            {"product_key": product_key_text, "artifact_path": artifact_path_text, "draft_key": draft_key_text},
+        )
+
+    products = load_product_configs(Path(configs_dir) / "products")
+    product = next((item for item in products if _text(item.get("product_key")) == product_key_text), None)
+    if not product:
+        return _blocked_result("AI 模板草稿转正预览不可用", [f"未找到产品配置：{product_key_text}"], {"product_key": product_key_text})
+
+    source_path = _project_path(project_root, artifact_path_text)
+    if not source_path.exists():
+        return _blocked_result(
+            "AI 模板草稿转正预览不可用",
+            [f"AI 模板草稿结果文件不存在：{artifact_path_text}"],
+            {"product_key": product_key_text, "artifact_path": artifact_path_text, "draft_key": draft_key_text},
+        )
+    source_payload = read_json(source_path)
+    drafts = source_payload.get("drafts") if isinstance(source_payload.get("drafts"), list) else []
+    draft = next(
+        (item for item in drafts if isinstance(item, dict) and _text(item.get("draft_key")) == draft_key_text),
+        None,
+    )
+    if not draft:
+        return _blocked_result(
+            "AI 模板草稿转正预览不可用",
+            [f"草稿结果文件中没有找到草稿：{draft_key_text}"],
+            {"product_key": product_key_text, "artifact_path": str(source_path), "draft_key": draft_key_text},
+        )
+
+    product_name = _text(product.get("product"))
+    target_path = Path(configs_dir) / "create-modes" / product_key_text / f"{draft_key_text}.local.json"
+    proposed_create_mode = dict(
+        draft.get("proposed_create_mode") if isinstance(draft.get("proposed_create_mode"), dict) else {}
+    )
+    proposed_create_mode.update(
+        {
+            "mode_key": draft_key_text,
+            "product_key": product_key_text,
+            "product": product_name,
+            "source_advertiser_id": _text(product.get("source_advertiser_id")),
+            "organization_id": _text(product.get("organization_id")),
+        }
+    )
+    preview = {
+        "ok": True,
+        "workflow": "ai_template_draft_promotion_preview",
+        "phase": "preview",
+        "status": "preview_only",
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "product_key": product_key_text,
+        "product": product_name,
+        "draft_key": draft_key_text,
+        "draft_name": _text(draft.get("draft_name")),
+        "target_path": str(target_path),
+        "target_path_exists": target_path.exists(),
+        "source_artifact_path": str(source_path),
+        "summary": {
+            "title": "AI 模板草稿转正预览",
+            "中文摘要": f"为产品 {product_name or product_key_text} 的草稿 {draft_key_text} 生成转正预览 JSON；不写入人工固定模板，不执行真实创建。",
+            "产品": product_name or product_key_text,
+            "草稿 Key": draft_key_text,
+            "目标文件": str(target_path),
+            "真实执行": "否",
+        },
+        "proposed_create_mode": proposed_create_mode,
+        "evidence": draft.get("evidence") if isinstance(draft.get("evidence"), dict) else {},
+        "differences_from_manual_template": _string_list(draft.get("differences_from_manual_template")),
+        "risk_notes": _string_list(draft.get("risk_notes")),
+        "manual_template_boundary": {
+            "writes_manual_template": False,
+            "generates_create_plan": False,
+            "requires_human_promotion_script": True,
+            "target_manual_template_path": str(target_path),
+            "preview_output_only": "data/runs/ai_template_draft_preview",
+        },
+        "execution": {
+            "enabled": False,
+            "status": "preview_only",
+            "real_business_action": False,
+        },
+        "actions": [],
+    }
+    artifact = write_run_artifact(runs_dir, "ai_template_draft_preview", preview)
+    warnings = [
+        "这里只生成转正预览 JSON，不写入 configs/create-modes（人工创建模式目录）。",
+        "后续真正转正必须由单独固定脚本读取这个预览，并由人工确认后写入。",
+    ]
+    if target_path.exists():
+        warnings.append("目标文件已经存在；本次预览不会覆盖。")
+    row = {
+        "草稿名": preview["draft_name"],
+        "产品": product_name,
+        "产品 Key": product_key_text,
+        "草稿 Key": draft_key_text,
+        "目标模式 Key": draft_key_text,
+        "目标文件": str(target_path),
+        "基于人工模板": _text(draft.get("base_manual_mode_key")),
+        "差异": "；".join(preview["differences_from_manual_template"]),
+        "风险": "；".join(preview["risk_notes"]),
+        "目标文件已存在": "是" if target_path.exists() else "否",
+        "状态": "preview_only",
+    }
+    return {
+        "summary": {
+            "title": "AI 模板草稿转正预览",
+            "status": "planned",
+            "risk_level": "medium",
+            "execution_enabled": False,
+            "items": [
+                {"label": "产品", "value": product_name or product_key_text},
+                {"label": "草稿", "value": draft_key_text},
+                {"label": "目标文件已存在", "value": "是" if target_path.exists() else "否"},
+                {"label": "真实执行", "value": "否"},
+            ],
+            "warnings": warnings,
+            "blocking_reasons": [],
+        },
+        "table": {
+            "columns": [
+                "草稿名",
+                "产品",
+                "产品 Key",
+                "草稿 Key",
+                "目标模式 Key",
+                "目标文件",
+                "基于人工模板",
+                "差异",
+                "风险",
+                "目标文件已存在",
+                "状态",
+            ],
+            "rows": [row],
+        },
+        "artifact_path": str(artifact),
+        "raw": {"preview": {**preview, "artifact_path": str(artifact)}},
+    }
+
+
+def build_ai_template_draft_promote(
+    *,
+    project_root: str | Path,
+    configs_dir: str | Path,
+    runs_dir: str | Path,
+    product_key: str,
+    preview_path: str,
+    replace: bool = False,
+) -> dict[str, Any]:
+    product_key_text = _text(product_key)
+    preview_path_text = _text(preview_path)
+    blocking = []
+    if not product_key_text:
+        blocking.append("请选择产品")
+    elif not PRODUCT_KEY_PATTERN.fullmatch(product_key_text):
+        blocking.append("产品 Key 只能包含英文、数字、中划线或下划线，且不能包含路径符号")
+    if not preview_path_text:
+        blocking.append("缺少转正预览 JSON 文件")
+    if blocking:
+        return _blocked_result(
+            "AI 模板草稿写入创建模式不可用",
+            blocking,
+            {"product_key": product_key_text, "preview_path": preview_path_text},
+        )
+
+    script_path = Path(__file__).resolve().parents[3] / "scripts" / "run_ai_template_draft_promote.py"
+    command = [
+        sys.executable,
+        str(script_path),
+        "--preview",
+        preview_path_text,
+        "--mode-dir",
+        str(Path(configs_dir) / "create-modes"),
+        "--runs-dir",
+        str(Path(runs_dir)),
+        "--product-key",
+        product_key_text,
+    ]
+    if replace:
+        command.append("--replace")
+    completed = subprocess.run(
+        command,
+        cwd=Path(project_root),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    result = _parse_script_json(completed.stdout)
+    if not result:
+        return _blocked_result(
+            "AI 模板草稿写入创建模式失败",
+            ["固定脚本没有输出有效 JSON"],
+            {
+                "command": command,
+                "return_code": completed.returncode,
+                "stdout": completed.stdout,
+                "stderr": completed.stderr,
+            },
+        )
+
+    ok = bool(result.get("ok"))
+    summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+    row = {
+        "产品": _text(summary.get("product")),
+        "产品 Key": _text(summary.get("product_key")),
+        "草稿 Key": _text(summary.get("draft_key")),
+        "目标文件": _text(summary.get("target_path") or result.get("target_path")),
+        "固定脚本": "scripts/run_ai_template_draft_promote.py",
+        "真实执行": "否",
+        "状态": _text(result.get("status")),
+    }
+    return {
+        "summary": {
+            "title": "AI 模板草稿已写入创建模式" if ok else "AI 模板草稿写入被阻止",
+            "status": "committed" if ok else "blocked",
+            "risk_level": "low" if ok else "medium",
+            "execution_enabled": False,
+            "items": [
+                {"label": "产品", "value": row["产品"] or row["产品 Key"]},
+                {"label": "草稿", "value": row["草稿 Key"]},
+                {"label": "目标文件", "value": row["目标文件"]},
+                {"label": "真实执行", "value": "否"},
+            ],
+            "warnings": ["写入的是本地创建模式 JSON；没有生成创建计划，也没有执行真实投放。"] if ok else [],
+            "blocking_reasons": [_text(reason) for reason in result.get("blocking_reasons", []) if _text(reason)],
+        },
+        "table": {
+            "columns": ["产品", "产品 Key", "草稿 Key", "目标文件", "固定脚本", "真实执行", "状态"],
+            "rows": [row],
+        },
+        "artifact_path": _text(result.get("artifact_path")),
+        "raw": {
+            "result": result,
+            "command": command,
+            "return_code": completed.returncode,
+            "stdout": completed.stdout,
+            "stderr": completed.stderr,
+        },
+    }
+
+
 def _validate_save_request(body: dict[str, Any]) -> list[str]:
     reasons = []
     product_key = _text(body.get("product_key"))
@@ -543,6 +900,25 @@ def _latest_status_text(product_key: str, latest_by_job: dict[str, dict[str, dic
         status = _text(parsed.get("status") or ("完成" if ok else "需要处理"))
         parts.append(f"{JOB_INFO[job]['label']}：{status}")
     return "；".join(parts) if parts else "暂无最近运行"
+
+
+def _ai_template_draft_row(draft: dict[str, Any], *, product_name: str) -> dict[str, Any]:
+    evidence = draft.get("evidence") if isinstance(draft.get("evidence"), dict) else {}
+    differences = draft.get("differences_from_manual_template")
+    risk_notes = draft.get("risk_notes")
+    return {
+        "草稿名": _text(draft.get("draft_name")),
+        "产品": _text(product_name),
+        "草稿 Key": _text(draft.get("draft_key")),
+        "基于人工模板": _text(draft.get("base_manual_mode_key")),
+        "候选素材": int(evidence.get("candidate_count") or 0),
+        "消耗": round(float(evidence.get("stat_cost") or 0), 4),
+        "转化": round(float(evidence.get("convert_cnt") or 0), 4),
+        "ROI": round(float(evidence.get("avg_roi_1day") or 0), 4),
+        "差异": "；".join(str(item) for item in differences if str(item).strip()) if isinstance(differences, list) else "",
+        "风险": "；".join(str(item) for item in risk_notes if str(item).strip()) if isinstance(risk_notes, list) else "",
+        "状态": _text(draft.get("status")),
+    }
 
 
 def _allowed_account_count(project_root: str | Path, path_text: str) -> tuple[int, str]:
@@ -730,6 +1106,25 @@ def _enabled(value: Any, default: bool = True) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in {"1", "true", "yes", "y", "on", "enabled"}
+
+
+def _project_path(project_root: str | Path, path_text: str) -> Path:
+    path = Path(path_text)
+    return path if path.is_absolute() else Path(project_root) / path
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [_text(item) for item in value if _text(item)]
+
+
+def _parse_script_json(stdout: str) -> dict[str, Any]:
+    try:
+        value = json.loads(stdout)
+    except json.JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
 
 
 def _text(value: Any) -> str:

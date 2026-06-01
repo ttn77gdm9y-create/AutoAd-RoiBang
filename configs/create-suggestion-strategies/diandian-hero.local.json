@@ -1,0 +1,41 @@
+{
+  "strategy_id": "diandian-hero-wx-pay-general-recent-scale-v1",
+  "strategy_version": "2026-05-31",
+  "enabled": true,
+  "product_key": "diandian-hero",
+  "mode_key": "wx_pay_general_recent_scale",
+  "target_date": "latest",
+  "account": {
+    "candidate_scope": "allowed_accounts_with_recent_spend",
+    "recent_window_days": 1,
+    "min_recent_stat_cost": 100,
+    "min_recent_convert_cnt": 1,
+    "require_allowed_account": true,
+    "max_active_projects": 12,
+    "cooldown_days_after_create": 2,
+    "disabled_statuses": [
+      "PROJECT_STATUS_DISABLE",
+      "PROJECT_STATUS_DISABLED",
+      "PROJECT_STATUS_DELETE",
+      "DISABLE",
+      "DISABLED",
+      "DELETED"
+    ]
+  },
+  "materials": {
+    "window_key": "last_7d",
+    "material_type": "video",
+    "min_qualified_material_count": 5,
+    "min_stat_cost": 500,
+    "min_convert_cnt": 1,
+    "min_roi_1day": 0.05
+  },
+  "recommendation": {
+    "project_count": 1,
+    "units_per_project": 1,
+    "daily_budget": 88888
+  },
+  "limits": {
+    "max_suggestions_per_run": 3
+  }
+}

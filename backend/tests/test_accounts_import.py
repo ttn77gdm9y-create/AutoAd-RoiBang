@@ -266,6 +266,52 @@ def test_bulk_update_accounts_changes_only_filtered_rows(tmp_path):
     assert by_id["2001"]["owner"] == ""
 
 
+def test_bulk_update_accounts_preview_does_not_write(tmp_path):
+    store = tmp_path / "configs" / "accounts" / "product-accounts.local.json"
+    store.parent.mkdir(parents=True)
+    store.write_text(
+        json.dumps(
+            {
+                "accounts": [
+                    {
+                        "product_key": "diandian-hero",
+                        "product_name": "点点英雄",
+                        "advertiser_id": "1001",
+                        "advertiser_name": "黑旗游戏-1",
+                        "channel": "",
+                        "owner": "",
+                        "account_remark": "旧备注",
+                        "status": "active",
+                        "notes": "",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    client = _client(tmp_path)
+
+    response = client.post(
+        "/api/accounts/bulk-update/preview",
+        json={
+            "product_key": "diandian-hero",
+            "status": "active",
+            "updates": {"owner": "郭靖"},
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["title"] == "账户批量修改预览"
+    assert payload["summary"]["status"] == "planned"
+    assert payload["summary"]["execution_enabled"] is True
+    assert {"label": "匹配账户", "value": 1} in payload["summary"]["items"]
+    assert payload["table"]["rows"][0]["负责人"] == "郭靖"
+    saved = json.loads(store.read_text(encoding="utf-8"))
+    assert saved["accounts"][0]["owner"] == ""
+
+
 def test_bulk_update_accounts_blocks_empty_updates(tmp_path):
     client = _client(tmp_path)
 

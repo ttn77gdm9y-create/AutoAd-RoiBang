@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 
 def utc_timestamp() -> str:
@@ -31,7 +32,7 @@ def write_latest_artifact(runs_dir: str | Path, workflow: str, payload: dict[str
     target_dir = Path(runs_dir) / workflow
     target_dir.mkdir(parents=True, exist_ok=True)
     target = target_dir / "latest.json"
-    tmp = target_dir / ".latest.json.tmp"
+    tmp = target_dir / f".latest.{uuid4().hex}.json.tmp"
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     tmp.replace(target)
     return target

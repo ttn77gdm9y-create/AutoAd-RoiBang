@@ -11,6 +11,9 @@ from pydantic import BaseModel
 from pydantic import Field
 
 from backend.app.services.product_automation import build_allowed_accounts_template
+from backend.app.services.product_automation import build_ai_template_draft_preview
+from backend.app.services.product_automation import build_ai_template_draft_promote
+from backend.app.services.product_automation import build_ai_template_drafts
 from backend.app.services.product_automation import build_product_automation_dry_run
 from backend.app.services.product_automation import build_product_automation_overview
 from backend.app.services.product_automation import import_allowed_accounts_upload
@@ -36,6 +39,23 @@ class ProductAutomationDryRunRequest(BaseModel):
     product_key: str
     job: str
     target_date: str = "yesterday"
+
+
+class ProductAutomationAiTemplateDraftRequest(BaseModel):
+    product_key: str
+    max_drafts: int = 5
+
+
+class ProductAutomationAiTemplateDraftPreviewRequest(BaseModel):
+    product_key: str
+    artifact_path: str
+    draft_key: str
+
+
+class ProductAutomationAiTemplateDraftPromoteRequest(BaseModel):
+    product_key: str
+    preview_path: str
+    replace: bool = False
 
 
 @router.get("/product-automation/overview")
@@ -104,6 +124,50 @@ def product_automation_dry_run(request: Request, body: ProductAutomationDryRunRe
         product_key=body.product_key,
         job=body.job,
         target_date=body.target_date,
+    )
+
+
+@router.post("/product-automation/ai-template-drafts")
+def product_automation_ai_template_drafts(request: Request, body: ProductAutomationAiTemplateDraftRequest) -> dict:
+    settings = request.app.state.settings
+    return build_ai_template_drafts(
+        project_root=settings.project_root,
+        configs_dir=settings.configs_dir,
+        runs_dir=settings.runs_dir,
+        product_key=body.product_key,
+        max_drafts=body.max_drafts,
+    )
+
+
+@router.post("/product-automation/ai-template-draft-preview")
+def product_automation_ai_template_draft_preview(
+    request: Request,
+    body: ProductAutomationAiTemplateDraftPreviewRequest,
+) -> dict:
+    settings = request.app.state.settings
+    return build_ai_template_draft_preview(
+        project_root=settings.project_root,
+        configs_dir=settings.configs_dir,
+        runs_dir=settings.runs_dir,
+        product_key=body.product_key,
+        artifact_path=body.artifact_path,
+        draft_key=body.draft_key,
+    )
+
+
+@router.post("/product-automation/ai-template-draft-promote")
+def product_automation_ai_template_draft_promote(
+    request: Request,
+    body: ProductAutomationAiTemplateDraftPromoteRequest,
+) -> dict:
+    settings = request.app.state.settings
+    return build_ai_template_draft_promote(
+        project_root=settings.project_root,
+        configs_dir=settings.configs_dir,
+        runs_dir=settings.runs_dir,
+        product_key=body.product_key,
+        preview_path=body.preview_path,
+        replace=body.replace,
     )
 
 

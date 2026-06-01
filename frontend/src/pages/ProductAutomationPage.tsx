@@ -62,16 +62,23 @@ export function ProductAutomationPage() {
   const [allowedImportResult, setAllowedImportResult] = useState<ChineseResult | undefined>();
   const [saveResult, setSaveResult] = useState<ChineseResult | undefined>();
   const [dryRunResult, setDryRunResult] = useState<ChineseResult | undefined>();
+  const [aiTemplateDraftResult, setAiTemplateDraftResult] = useState<ChineseResult | undefined>();
+  const [selectedAiDraftKey, setSelectedAiDraftKey] = useState("");
+  const [aiTemplateDraftPreviewResult, setAiTemplateDraftPreviewResult] = useState<ChineseResult | undefined>();
+  const [aiTemplateDraftPromoteResult, setAiTemplateDraftPromoteResult] = useState<ChineseResult | undefined>();
   const overview = useQuery({
     queryKey: ["product-automation", "overview"],
     queryFn: () => apiGet<ChineseResult>("/product-automation/overview"),
   });
   const products = useMemo(() => productFormsFromOverview(overview.data), [overview.data]);
   const jobs = useMemo(() => jobOptionsFromOverview(overview.data), [overview.data]);
+  const aiDraftOptions = useMemo(() => draftOptionsFromResult(aiTemplateDraftResult), [aiTemplateDraftResult]);
   const productOptions = products.map((product) => ({ label: `${product.product}（${product.product_key}）`, value: product.product_key }));
   const jobOptions = jobs.map((job) => ({ label: job.label, value: job.value }));
   const templateReady = Boolean(form.product.trim() && form.product_key.trim());
   const selectedAllowedFile = Boolean(allowedFileList[0]?.originFileObj);
+  const aiTemplateDraftArtifactPath = aiTemplateDraftResult?.artifact_path ?? "";
+  const aiTemplateDraftPreviewArtifactPath = aiTemplateDraftPreviewResult?.artifact_path ?? "";
 
   useEffect(() => {
     if (!selectedProductKey) {
@@ -114,10 +121,52 @@ export function ProductAutomationPage() {
       antdMessage.success("预演 JSON 已生成，没有执行真实业务动作");
     },
   });
+  const aiTemplateDraft = useMutation({
+    mutationFn: () =>
+      apiPost<ChineseResult>("/product-automation/ai-template-drafts", {
+        product_key: form.product_key,
+        max_drafts: 5,
+      }),
+    onSuccess: (result) => {
+      setAiTemplateDraftResult(result);
+      setSelectedAiDraftKey(firstDraftKeyFromResult(result));
+      setAiTemplateDraftPreviewResult(undefined);
+      setAiTemplateDraftPromoteResult(undefined);
+      antdMessage.success("AI 模板草稿已生成，没有执行真实业务动作");
+    },
+  });
+  const aiTemplateDraftPreview = useMutation({
+    mutationFn: () =>
+      apiPost<ChineseResult>("/product-automation/ai-template-draft-preview", {
+        product_key: form.product_key,
+        artifact_path: aiTemplateDraftArtifactPath,
+        draft_key: selectedAiDraftKey,
+      }),
+    onSuccess: (result) => {
+      setAiTemplateDraftPreviewResult(result);
+      setAiTemplateDraftPromoteResult(undefined);
+      antdMessage.success("转正预览 JSON 已生成，没有写入人工模板");
+    },
+  });
+  const aiTemplateDraftPromote = useMutation({
+    mutationFn: () =>
+      apiPost<ChineseResult>("/product-automation/ai-template-draft-promote", {
+        product_key: form.product_key,
+        preview_path: aiTemplateDraftPreviewArtifactPath,
+      }),
+    onSuccess: (result) => {
+      setAiTemplateDraftPromoteResult(result);
+      antdMessage.success("创建模式已写入本地 JSON，没有执行真实投放");
+    },
+  });
 
   function updateForm(patch: Partial<ProductAutomationForm>) {
     setForm((current) => ({ ...current, ...patch }));
     setSaveResult(undefined);
+    setAiTemplateDraftResult(undefined);
+    setSelectedAiDraftKey("");
+    setAiTemplateDraftPreviewResult(undefined);
+    setAiTemplateDraftPromoteResult(undefined);
   }
 
   function updateJobs(values: Array<string | number | boolean>) {
@@ -131,7 +180,7 @@ export function ProductAutomationPage() {
         <Alert
           type="info"
           showIcon
-          message="这里只维护产品配置和生成预演 JSON；真实同步、补材和预推送仍由固定定时脚本执行。"
+          message="这里只维护产品配置和生成任务请求 JSON；真实同步、补材和预推送仍由固定定时脚本执行。"
           description="新产品默认沿用点点英雄逻辑：源素材预推送目标账户来自允许创建账户名单，不使用最近巡检结果文件。"
         />
 
@@ -152,6 +201,10 @@ export function ProductAutomationPage() {
                         if (!value) {
                           setForm(emptyForm);
                           setSaveResult(undefined);
+                          setAiTemplateDraftResult(undefined);
+                          setSelectedAiDraftKey("");
+                          setAiTemplateDraftPreviewResult(undefined);
+                          setAiTemplateDraftPromoteResult(undefined);
                         }
                       }}
                       options={productOptions}
@@ -185,7 +238,7 @@ export function ProductAutomationPage() {
                   </Form.Item>
                 </Col>
                 <Col xs={24} lg={12}>
-                  <Form.Item label="允许创建账户名单文件路径">
+                  <Form.Item label="名单文件路径（上传后自动回填）">
                     <Space.Compact className="full-width">
                       <Input
                         value={form.allowed_target_accounts_path}
@@ -280,7 +333,82 @@ export function ProductAutomationPage() {
           </Space>
         </Card>
 
-        <Card size="small" title="生成预演">
+        <Card size="small" title="AI 模板草稿">
+          <Space direction="vertical" size="middle" className="full-width">
+            <Alert
+              type="info"
+              showIcon
+              message="这里只生成 AI 模板草稿，草稿不写入人工固定模板，也不能被创建脚本直接使用。"
+            />
+            <Space wrap className="workflow-actions">
+              <Button
+                icon={<FileSearchOutlined />}
+                type="primary"
+                disabled={!form.product_key}
+                loading={aiTemplateDraft.isPending}
+                onClick={() => aiTemplateDraft.mutate()}
+              >
+                生成 AI 模板草稿
+              </Button>
+              <Select
+                allowClear
+                className="draft-select"
+                value={selectedAiDraftKey || undefined}
+                onChange={(value) => {
+                  setSelectedAiDraftKey(value ?? "");
+                  setAiTemplateDraftPreviewResult(undefined);
+                  setAiTemplateDraftPromoteResult(undefined);
+                }}
+                options={aiDraftOptions}
+                placeholder="选择要预览转正的草稿"
+              />
+              <Button
+                icon={<FileSearchOutlined />}
+                disabled={!form.product_key || !aiTemplateDraftArtifactPath || !selectedAiDraftKey}
+                loading={aiTemplateDraftPreview.isPending}
+                onClick={() => aiTemplateDraftPreview.mutate()}
+              >
+                生成转正预览 JSON
+              </Button>
+            </Space>
+            {aiTemplateDraft.error ? <Alert type="error" showIcon message={(aiTemplateDraft.error as Error).message} /> : null}
+            {aiTemplateDraftPreview.error ? <Alert type="error" showIcon message={(aiTemplateDraftPreview.error as Error).message} /> : null}
+            {aiTemplateDraftPromote.error ? <Alert type="error" showIcon message={(aiTemplateDraftPromote.error as Error).message} /> : null}
+            <SummaryPanel
+              result={aiTemplateDraftResult}
+              loading={aiTemplateDraft.isPending}
+              detailsCollapsed
+              showArtifactPath
+              showRawJson
+            />
+            <SummaryPanel
+              result={aiTemplateDraftPreviewResult}
+              loading={aiTemplateDraftPreview.isPending}
+              detailsCollapsed
+              showArtifactPath
+              showRawJson
+            />
+            <Space wrap className="workflow-actions">
+              <Button
+                icon={<SaveOutlined />}
+                disabled={!form.product_key || !aiTemplateDraftPreviewArtifactPath}
+                loading={aiTemplateDraftPromote.isPending}
+                onClick={() => aiTemplateDraftPromote.mutate()}
+              >
+                保存为创建模式 JSON
+              </Button>
+            </Space>
+            <SummaryPanel
+              result={aiTemplateDraftPromoteResult}
+              loading={aiTemplateDraftPromote.isPending}
+              detailsCollapsed
+              showArtifactPath
+              showRawJson
+            />
+          </Space>
+        </Card>
+
+        <Card size="small" title="任务请求 JSON">
           <Space direction="vertical" size="middle" className="full-width">
             <Alert type="info" showIcon message="预演只生成请求 JSON 和脚本命令，不执行真实同步、补材或预推送。" />
             <Form layout="vertical" className="filter-bar">
@@ -306,7 +434,7 @@ export function ProductAutomationPage() {
                   </Form.Item>
                 </Col>
                 <Col xs={24} lg={8}>
-                  <Form.Item label="目标日期">
+                  <Form.Item label="任务数据日期">
                     <Select
                       value={dryRunRequest.target_date}
                       onChange={(value) => setDryRunRequest({ ...dryRunRequest, target_date: value })}
@@ -321,7 +449,7 @@ export function ProductAutomationPage() {
             </Form>
             <Space wrap className="workflow-actions">
               <Button icon={<FileSearchOutlined />} onClick={() => dryRun.mutate()} loading={dryRun.isPending}>
-                生成预演
+                生成任务请求 JSON
               </Button>
             </Space>
             {dryRun.error ? <Alert type="error" showIcon message={(dryRun.error as Error).message} /> : null}
@@ -368,6 +496,23 @@ function jobOptionsFromOverview(result?: ChineseResult): JobOption[] {
       description: String(item.description ?? ""),
     }))
     .filter((item) => item.value);
+}
+
+function draftOptionsFromResult(result?: ChineseResult): Array<{ label: string; value: string }> {
+  return (result?.table.rows ?? [])
+    .map((row) => {
+      const draftKey = String(row["草稿 Key"] ?? "");
+      if (!draftKey) {
+        return undefined;
+      }
+      const draftName = String(row["草稿名"] ?? draftKey);
+      return { label: `${draftName}（${draftKey}）`, value: draftKey };
+    })
+    .filter((item): item is { label: string; value: string } => Boolean(item));
+}
+
+function firstDraftKeyFromResult(result?: ChineseResult): string {
+  return draftOptionsFromResult(result)[0]?.value ?? "";
 }
 
 function allowedAccountsTemplatePath(form: ProductAutomationForm): string {

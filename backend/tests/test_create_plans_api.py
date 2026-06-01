@@ -1,9 +1,11 @@
 import json
+import sqlite3
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from backend.app.main import create_app
+from roibang_v2.db.bootstrap import bootstrap_database
 
 
 def _create_plan_request() -> dict:
@@ -105,6 +107,50 @@ def _write_create_plan(root: Path) -> str:
     return "data/runs/create_mode/plan-1.json"
 
 
+def _write_create_suggestion_preview(root: Path) -> str:
+    path = root / "data" / "runs" / "create_plan_from_suggestions" / "source.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "workflow": "create_plan_from_suggestions",
+                "status": "preview_only",
+                "summary": {"source_suggestion_count": 1, "account_count": 1},
+                "suggestion_groups": [
+                    {
+                        "group_id": "create-plan-group-1",
+                        "strategy_ids": ["stage4-capacity-v1"],
+                        "account_count": 1,
+                    }
+                ],
+                "source_suggestions": [
+                    {
+                        "suggestion_id": "create-acc-1",
+                        "suggested_action": "suggest_create_project",
+                        "product_key": "diandian-hero",
+                        "product_name": "点点英雄",
+                        "advertiser_id": "acc-1",
+                        "account_name": "账户一",
+                        "mode_key": "wx_pay_male_random_materials",
+                        "strategy_id": "stage4-capacity-v1",
+                        "metrics": {
+                            "project_capacity": 1,
+                            "qualified_material_count": 3,
+                            "convert_cnt": 6,
+                            "roi_1day": 1.2,
+                        },
+                        "reason": "账户容量和素材满足扩量条件。",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return "data/runs/create_plan_from_suggestions/source.json"
+
+
 def test_create_plan_preview_returns_chinese_summary(tmp_path):
     client = TestClient(create_app(project_root=tmp_path))
 
@@ -151,6 +197,89 @@ def test_create_plan_templates_lists_configured_template_catalogs(tmp_path):
     assert payload["table"]["rows"][0]["模板"] == "点点英雄 - diandian-hero.local.json"
     assert payload["table"]["rows"][0]["产品 Key"] == "diandian-hero"
     assert payload["table"]["rows"][0]["路径"] == "configs/create-templates/diandian-hero.local.json"
+
+
+def test_create_plan_modes_lists_product_specific_ai_promoted_modes(tmp_path):
+    mode_path = tmp_path / "configs" / "create-modes" / "demo-game" / "ai_wx_pay_general_recent_scale_cost500_v1.local.json"
+    mode_path.parent.mkdir(parents=True)
+    mode_path.write_text(
+        json.dumps(
+            {
+                "mode_key": "ai_wx_pay_general_recent_scale_cost500_v1",
+                "display_name": "AI 每付通投近期放量 消耗500草稿",
+                "product_key": "demo-game",
+                "product": "演示游戏",
+                "template_key": "wx_pay_general",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    client = TestClient(create_app(project_root=tmp_path))
+
+    response = client.get("/api/create-plans/modes", params={"product_key": "demo-game"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["title"] == "创建模式列表"
+    assert payload["summary"]["execution_enabled"] is False
+    assert {"label": "产品专属模式", "value": 1} in payload["summary"]["items"]
+    rows = payload["table"]["rows"]
+    ai_row = next(row for row in rows if row["模式 Key"] == "ai_wx_pay_general_recent_scale_cost500_v1")
+    assert ai_row["创建模式"] == "AI 每付通投近期放量 消耗500草稿"
+    assert ai_row["产品"] == "演示游戏"
+    assert ai_row["产品 Key"] == "demo-game"
+    assert ai_row["来源"] == "产品专属"
+    assert ai_row["路径"] == "configs/create-modes/demo-game/ai_wx_pay_general_recent_scale_cost500_v1.local.json"
+    assert ai_row["模板 Key"] == "wx_pay_general"
+    assert any(row["模式 Key"] == "wx_pay_general_recent_scale" for row in rows)
+    assert payload["raw"]["modes"][0]["label"]
+
+
+def test_create_plan_preview_shows_ai_promoted_mode_source_and_path(tmp_path):
+    mode_path = tmp_path / "configs" / "create-modes" / "demo-game" / "ai_wx_pay_general_recent_scale_cost500_v1.local.json"
+    mode_path.parent.mkdir(parents=True)
+    mode_path.write_text(
+        json.dumps(
+            {
+                "mode_key": "ai_wx_pay_general_recent_scale_cost500_v1",
+                "display_name": "AI 每付通投近期放量 消耗500草稿",
+                "product_key": "demo-game",
+                "product": "演示游戏",
+                "template_key": "wx_pay_general",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    client = TestClient(create_app(project_root=tmp_path))
+
+    response = client.post(
+        "/api/create-plans/preview",
+        json={
+            **_create_plan_request(),
+            "mode": "ai_wx_pay_general_recent_scale_cost500_v1",
+            "product_key": "demo-game",
+            "product_name": "演示游戏",
+            "template_catalog": "configs/create-templates/wx-mini-game.json",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["status"] == "planned"
+    assert {"label": "创建模式", "value": "ai_wx_pay_general_recent_scale_cost500_v1"} in payload["summary"]["items"]
+    assert {"label": "模式名称", "value": "AI 每付通投近期放量 消耗500草稿"} in payload["summary"]["items"]
+    assert {"label": "模式来源", "value": "产品专属"} in payload["summary"]["items"]
+    assert {
+        "label": "模式文件",
+        "value": "configs/create-modes/demo-game/ai_wx_pay_general_recent_scale_cost500_v1.local.json",
+    } in payload["summary"]["items"]
+    assert payload["raw"]["mode_metadata"]["source"] == "产品专属"
+    assert payload["raw"]["mode_metadata"]["path"] == "configs/create-modes/demo-game/ai_wx_pay_general_recent_scale_cost500_v1.local.json"
+    command = payload["raw"]["command"]
+    assert command[command.index("--mode") + 1] == "ai_wx_pay_general_recent_scale_cost500_v1"
+    assert command[command.index("--product-key") + 1] == "demo-game"
 
 
 def test_create_plan_template_detail_returns_summary_and_raw_json(tmp_path):
@@ -470,6 +599,31 @@ def test_create_plan_execute_preview_reads_plan_summary(tmp_path):
     assert [section["title"] for section in payload["sections"]] == ["已选素材", "文案", "CTA", "卖点", "账户素材分布"]
 
 
+def test_create_plan_execution_review_preview_returns_sections_and_artifact(tmp_path):
+    plan_path = _write_create_plan(tmp_path)
+    source_path = _write_create_suggestion_preview(tmp_path)
+    client = TestClient(create_app(project_root=tmp_path))
+
+    response = client.post(
+        "/api/create-plans/execution-review/preview",
+        json={
+            "plan_path": plan_path,
+            "source_suggestion_preview_path": source_path,
+            "operator": "郭靖",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["title"] == "创建计划执行前复核"
+    assert payload["summary"]["status"] == "warning_only"
+    assert payload["summary"]["execution_enabled"] is False
+    assert {"label": "来源策略", "value": "stage4-capacity-v1"} in payload["summary"]["items"]
+    assert payload["table"]["columns"] == ["检查项", "结果", "等级", "说明", "证据"]
+    assert {section["title"] for section in payload["sections"]} == {"运营记录", "确认执行清单", "来源建议证据"}
+    assert Path(payload["artifact_path"]).exists()
+
+
 def test_create_plan_execute_preview_blocks_missing_plan(tmp_path):
     client = TestClient(create_app(project_root=tmp_path))
 
@@ -496,6 +650,56 @@ def test_create_plan_execute_requires_confirmation(tmp_path):
 
     assert response.status_code == 400
     assert response.json()["detail"] == "真实执行前必须输入：确认执行"
+
+
+def test_create_plan_execute_blocks_when_execution_review_finds_duplicate_ledger(tmp_path):
+    plan_path = _write_create_plan(tmp_path)
+    source_path = _write_create_suggestion_preview(tmp_path)
+    db_path = tmp_path / "data" / "roibang_v2.sqlite3"
+    bootstrap_database(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO create_provider_id_ledger (
+              entity_type, local_key, provider_id, plan_id, request_id, advertiser_id,
+              parent_local_key, status, source_workflow, execution_enabled,
+              response_payload_json, first_seen_at, last_seen_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "project",
+                "acc-1-p001",
+                "project-real-1",
+                "plan-1",
+                "",
+                "acc-1",
+                "",
+                "active",
+                "create_live_execute_once",
+                0,
+                "{}",
+                "2026-05-31T00:00:00Z",
+                "2026-05-31T00:00:00Z",
+            ),
+        )
+    client = TestClient(create_app(project_root=tmp_path))
+
+    response = client.post(
+        "/api/create-plans/plan-1/execute",
+        json={
+            "confirmation": "确认执行",
+            "plan_path": plan_path,
+            "source_suggestion_preview_path": source_path,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["title"] == "创建计划执行被复核阻断"
+    assert payload["summary"]["status"] == "blocked"
+    assert payload["summary"]["execution_enabled"] is False
+    assert "本地账本已存在计划 plan-1" in payload["summary"]["blocking_reasons"][0]
+    assert "task" not in payload
 
 
 def test_create_plan_execute_starts_allowlisted_task(tmp_path, monkeypatch):

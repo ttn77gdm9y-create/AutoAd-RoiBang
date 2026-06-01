@@ -12,6 +12,7 @@ data/runs/**/*.jsonl
 data/runs/**/*.log
 data/runs/**/*.md
 data/generated/
+data/dev-logs/
 data/requests/**/*.json
 data/snapshots/**/*.json
 !data/.gitkeep

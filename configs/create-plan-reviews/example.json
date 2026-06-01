@@ -1,0 +1,24 @@
+{
+  "review_config_id": "create-plan-execution-review-v1",
+  "description": "创建计划真实执行前的只读复核策略。这里只判断能否进入人工确认，不直接创建项目、单元或素材绑定。",
+  "batch_naming": {
+    "default_sequence": "01",
+    "pattern": "{target_date} {product} {mode_label} 批次 {sequence}"
+  },
+  "checks": {
+    "require_source_suggestion_evidence": false,
+    "max_accounts_per_batch": 50,
+    "min_source_material_count": 1,
+    "min_unique_material_count": 1,
+    "min_qualified_material_count": 1,
+    "min_roi_1day": 0,
+    "min_convert_cnt": 0,
+    "warn_material_usage_at_or_above": 10,
+    "block_duplicate_plan_ledger": true,
+    "block_below_qualified_material": true,
+    "block_below_roi": true,
+    "block_below_conversion": true,
+    "block_7r_roi_missing": true,
+    "block_non_7r_roi_present": true
+  }
+}

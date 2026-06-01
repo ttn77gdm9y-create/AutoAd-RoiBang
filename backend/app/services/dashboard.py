@@ -547,15 +547,17 @@ def build_dashboard_suggestions(
         date_range=date_range,
     )
     rows = []
+    account_name_by_advertiser = _dashboard_account_names(context)
     for suggestion in context["suggestions"]:
         advertiser_id = str(suggestion.get("advertiser_id") or "")
-        action = str(suggestion.get("action") or suggestion.get("suggestion_type") or "")
+        action = str(suggestion.get("suggested_action") or suggestion.get("action") or suggestion.get("suggestion_type") or "")
         action_info = _suggestion_action_info(action)
         rows.append(
             {
                 "优先级": action_info["priority"],
                 "产品": context["product_by_advertiser"].get(advertiser_id, "未归档产品"),
                 "账户 ID": advertiser_id,
+                "账户名": account_name_by_advertiser.get(advertiser_id, ""),
                 "层级": str(suggestion.get("target_level") or suggestion.get("level") or ""),
                 "项目 ID": str(suggestion.get("project_id") or ""),
                 "建议动作": action,
@@ -580,12 +582,32 @@ def build_dashboard_suggestions(
             "blocking_reasons": [],
         },
         "table": {
-            "columns": ["优先级", "产品", "账户 ID", "层级", "项目 ID", "建议动作", "中文解释", "可生成配置"],
+            "columns": ["优先级", "产品", "账户 ID", "账户名", "层级", "项目 ID", "建议动作", "中文解释", "可生成配置"],
             "rows": rows,
         },
         "artifact_path": str(context["suggestions_path"] or ""),
         "raw": {"suggestions": context["suggestions"]},
     }
+
+
+def _dashboard_account_names(context: dict[str, Any]) -> dict[str, str]:
+    names: dict[str, str] = {}
+    for account in context["accounts"]:
+        advertiser_id = str(account.get("advertiser_id") or "").strip()
+        account_name = str(account.get("advertiser_name") or account.get("account_name") or "").strip()
+        if advertiser_id and account_name:
+            names[advertiser_id] = account_name
+    for account in context["patrol_accounts"]:
+        advertiser_id = str(account.get("advertiser_id") or "").strip()
+        account_name = str(account.get("advertiser_name") or account.get("account_name") or "").strip()
+        if advertiser_id and account_name:
+            names.setdefault(advertiser_id, account_name)
+    for suggestion in context["suggestions"]:
+        advertiser_id = str(suggestion.get("advertiser_id") or "").strip()
+        account_name = str(suggestion.get("advertiser_name") or suggestion.get("account_name") or "").strip()
+        if advertiser_id and account_name:
+            names.setdefault(advertiser_id, account_name)
+    return names
 
 
 def build_dashboard_materials(
@@ -753,28 +775,34 @@ def _load_dashboard_context(
         start_date=start_date,
         end_date=end_date,
     )
-    patrol_path = _find_artifact_by_target_date(
-        runs_dir,
-        "delivery_patrol",
-        start_date=resolved_start_date,
-        end_date=resolved_end_date,
-    )
-    has_date_filter = bool(resolved_start_date or resolved_end_date)
-    suggestions_path = _find_artifact_by_target_date(
-        runs_dir,
-        "delivery_patrol_suggestions",
-        start_date=resolved_start_date,
-        end_date=resolved_end_date,
-        fallback_to_latest=not has_date_filter,
-    )
-    patrol = read_json(patrol_path) if patrol_path else {}
-    suggestions_payload = read_json(suggestions_path) if suggestions_path else {}
     accounts = [
         account
         for account in load_accounts(configs_dir)
         if _account_matches(account, product_key=product_key, channel=channel, owner=owner, status=status)
     ]
     has_filters = bool(product_key or channel or owner or status)
+    account_scope_ids = {str(account.get("advertiser_id") or "") for account in accounts if account.get("advertiser_id")}
+    patrol_path = _find_dashboard_patrol_artifact(
+        runs_dir,
+        start_date=resolved_start_date,
+        end_date=resolved_end_date,
+        account_scope_ids=account_scope_ids,
+    )
+    has_date_filter = bool(resolved_start_date or resolved_end_date)
+    patrol = read_json(patrol_path) if patrol_path else {}
+    suggestions_path = _linked_suggestions_artifact_path(runs_dir, patrol)
+    suggestions_payload = read_json(suggestions_path) if suggestions_path else {}
+    if not suggestions_payload and isinstance(patrol.get("delivery_patrol_suggestions"), dict):
+        suggestions_payload = dict(patrol["delivery_patrol_suggestions"])
+    if not suggestions_payload:
+        suggestions_path = _find_artifact_by_target_date(
+            runs_dir,
+            "delivery_patrol_suggestions",
+            start_date=resolved_start_date,
+            end_date=resolved_end_date,
+            fallback_to_latest=not has_date_filter,
+        )
+        suggestions_payload = read_json(suggestions_path) if suggestions_path else {}
     fact_advertiser_ids = {
         str(row.get("advertiser_id") or "")
         for row in [
@@ -1162,13 +1190,13 @@ def _suggestion_explanation(suggestion: dict[str, Any]) -> str:
 
 def _suggestion_action_info(action: str) -> dict[str, str]:
     normalized = action.strip().lower()
-    if normalized in {"delete", "delete_project", "remove_project"}:
+    if normalized in {"delete", "delete_project", "remove_project", "suggest_delete_project"}:
         return {"priority": "高", "config_hint": "可生成删除项目配置"}
-    if normalized in {"pause", "pause_project", "stop", "stop_project", "status_update", "disable_project"}:
+    if normalized in {"pause", "pause_project", "stop", "stop_project", "status_update", "disable_project", "suggest_close_project"}:
         return {"priority": "高", "config_hint": "可生成暂停项目配置"}
-    if normalized in {"lower_budget", "budget_down", "decrease_budget", "budget_update"}:
+    if normalized in {"lower_budget", "budget_down", "decrease_budget", "budget_update", "suggest_lower_budget", "adjust_project_budget"}:
         return {"priority": "中", "config_hint": "可生成调预算配置"}
-    if normalized in {"lower_bid", "bid_down", "decrease_bid", "bid_update"}:
+    if normalized in {"lower_bid", "bid_down", "decrease_bid", "bid_update", "suggest_lower_bid", "adjust_project_bid"}:
         return {"priority": "中", "config_hint": "可生成调出价配置"}
     if normalized in {"watch", "observe", "keep_watch"}:
         return {"priority": "低", "config_hint": "观察，无需生成执行配置"}
@@ -1176,10 +1204,139 @@ def _suggestion_action_info(action: str) -> dict[str, str]:
 
 
 def _suggestion_count(payload: dict[str, Any], suggestions: list[dict[str, Any]]) -> int:
+    if isinstance(payload, dict) and isinstance(payload.get("suggestions"), list):
+        return len(suggestions)
     summary = payload.get("summary") if isinstance(payload, dict) else {}
     if isinstance(summary, dict) and summary.get("suggestion_count") is not None:
         return _int(summary.get("suggestion_count"))
     return len(suggestions)
+
+
+def _find_dashboard_patrol_artifact(
+    runs_dir: str | Path,
+    *,
+    start_date: str,
+    end_date: str,
+    account_scope_ids: set[str],
+) -> Path | None:
+    candidates = _artifact_candidates_by_target_date(
+        runs_dir,
+        "delivery_patrol",
+        start_date=start_date,
+        end_date=end_date,
+    )
+    if not candidates:
+        return find_latest_artifact(runs_dir, "delivery_patrol")
+
+    payloads = [(path, read_json(path)) for path in candidates]
+    if account_scope_ids:
+        scoped_payloads = [
+            (path, payload)
+            for path, payload in payloads
+            if _artifact_advertiser_ids(payload) & account_scope_ids
+        ]
+        if scoped_payloads:
+            payloads = scoped_payloads
+        else:
+            return candidates[-1]
+
+    best_index = 0
+    best_score: tuple[float, ...] | None = None
+    for index, (_path, payload) in enumerate(payloads):
+        business_score, *activity_score = _dashboard_patrol_score(payload, account_scope_ids)
+        score = (business_score, float(index), *activity_score)
+        if best_score is None or score > best_score:
+            best_score = score
+            best_index = index
+    return payloads[best_index][0]
+
+
+def _artifact_candidates_by_target_date(
+    runs_dir: str | Path,
+    workflow: str,
+    *,
+    start_date: str,
+    end_date: str,
+) -> list[Path]:
+    base = Path(runs_dir) / workflow
+    if not base.exists():
+        return []
+    candidates = sorted(path for path in base.glob("*.json") if path.name != "latest.json")
+    if not start_date and not end_date:
+        return candidates
+
+    start = _parse_date(start_date) if start_date else None
+    end = _parse_date(end_date) if end_date else start
+    if start and end and start > end:
+        start, end = end, start
+    output = []
+    for path in candidates:
+        target = _artifact_target_date(read_json(path))
+        if target and (start is None or target >= start) and (end is None or target <= end):
+            output.append(path)
+    return output
+
+
+def _dashboard_patrol_score(payload: dict[str, Any], account_scope_ids: set[str]) -> tuple[float, ...]:
+    summary = payload.get("summary") if isinstance(payload, dict) else {}
+    if not isinstance(summary, dict):
+        summary = {}
+    today_metrics = _today_metrics(summary)
+    account_count = max(_int(summary.get("account_count")), len(_list(payload.get("accounts"))))
+    project_count = max(_int(summary.get("project_count")), len(_list(payload.get("projects"))))
+    promotion_count = max(_int(summary.get("promotion_count")), len(_list(payload.get("promotions"))))
+    stat_cost = _num(today_metrics.get("stat_cost"))
+    has_business_data = bool(account_count or project_count or promotion_count or stat_cost)
+    return (
+        1.0 if has_business_data else 0.0,
+        float(project_count + promotion_count + account_count),
+        stat_cost,
+    )
+
+
+def _artifact_advertiser_ids(payload: dict[str, Any]) -> set[str]:
+    ids: set[str] = set()
+    for key in ["accounts", "projects", "promotions", "suggestions"]:
+        for row in _list(payload.get(key)):
+            advertiser_id = str(row.get("advertiser_id") or row.get("account_id") or "")
+            if advertiser_id:
+                ids.add(advertiser_id)
+    embedded_suggestions = payload.get("delivery_patrol_suggestions")
+    if isinstance(embedded_suggestions, dict):
+        ids.update(_artifact_advertiser_ids(embedded_suggestions))
+    return ids
+
+
+def _linked_suggestions_artifact_path(runs_dir: str | Path, patrol: dict[str, Any]) -> Path | None:
+    summary = patrol.get("summary") if isinstance(patrol, dict) else {}
+    if not isinstance(summary, dict):
+        summary = {}
+    embedded = patrol.get("delivery_patrol_suggestions") if isinstance(patrol, dict) else {}
+    if not isinstance(embedded, dict):
+        embedded = {}
+    for value in [
+        summary.get("suggestion_artifact_path"),
+        patrol.get("suggestion_artifact_path") if isinstance(patrol, dict) else "",
+        embedded.get("artifact_path"),
+    ]:
+        resolved = _resolve_artifact_path(runs_dir, value)
+        if resolved:
+            return resolved
+    return None
+
+
+def _resolve_artifact_path(runs_dir: str | Path, value: Any) -> Path | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    path = Path(text)
+    if path.is_absolute():
+        return path if path.exists() else None
+    root = Path(runs_dir).parent.parent
+    for candidate in [root / path, Path(runs_dir) / path, path]:
+        if candidate.exists():
+            return candidate
+    return None
 
 
 def _find_artifact_by_target_date(
@@ -1190,23 +1347,14 @@ def _find_artifact_by_target_date(
     end_date: str,
     fallback_to_latest: bool = False,
 ) -> Path | None:
-    if not start_date and not end_date:
-        return find_latest_artifact(runs_dir, workflow)
-
-    start = _parse_date(start_date) if start_date else None
-    end = _parse_date(end_date) if end_date else start
-    if start and end and start > end:
-        start, end = end, start
-
-    base = Path(runs_dir) / workflow
-    if not base.exists():
-        return None
-    candidates = sorted(path for path in base.glob("*.json") if path.name != "latest.json")
-    for path in reversed(candidates):
-        payload = read_json(path)
-        target = _artifact_target_date(payload)
-        if target and (start is None or target >= start) and (end is None or target <= end):
-            return path
+    candidates = _artifact_candidates_by_target_date(
+        runs_dir,
+        workflow,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    if candidates:
+        return candidates[-1]
     return find_latest_artifact(runs_dir, workflow) if fallback_to_latest else None
 
 

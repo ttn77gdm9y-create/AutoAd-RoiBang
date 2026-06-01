@@ -203,6 +203,27 @@ def bulk_update_accounts(
     filters: dict[str, str],
     updates: dict[str, str],
 ) -> dict[str, Any]:
+    preview = preview_bulk_update_accounts(configs_dir, filters=filters, updates=updates)
+    if preview["summary"]["status"] == "blocked":
+        return preview
+    updated_accounts = preview.get("raw", {}).get("updated_accounts")
+    if not isinstance(updated_accounts, list):
+        return _bulk_update_blocked(filters, ["批量修改预览结果缺少待写入账户，已停止写入"])
+    path = save_accounts(configs_dir, [dict(account) for account in updated_accounts if isinstance(account, dict)])
+    preview["summary"]["title"] = "账户批量修改完成"
+    preview["summary"]["status"] = "committed"
+    preview["summary"]["execution_enabled"] = False
+    preview["summary"]["warnings"] = ["已写入产品账户库；未命中账户保持不变。"]
+    preview["artifact_path"] = str(path)
+    return preview
+
+
+def preview_bulk_update_accounts(
+    configs_dir: str | Path,
+    *,
+    filters: dict[str, str],
+    updates: dict[str, str],
+) -> dict[str, Any]:
     unsupported_fields = sorted(set(updates) - set(BULK_UPDATE_FIELDS))
     if unsupported_fields:
         return _bulk_update_blocked(
@@ -242,14 +263,13 @@ def bulk_update_accounts(
         else:
             updated_accounts.append(account)
 
-    path = save_accounts(configs_dir, updated_accounts)
     changed_labels = "、".join(BULK_UPDATE_FIELDS[field] for field in normalized_updates)
     return {
         "summary": {
-            "title": "账户批量修改完成",
-            "status": "committed",
+            "title": "账户批量修改预览",
+            "status": "planned",
             "risk_level": "medium",
-            "execution_enabled": False,
+            "execution_enabled": True,
             "items": [
                 {"label": "匹配账户", "value": len(updated_rows)},
                 {"label": "修改字段", "value": changed_labels},
@@ -258,12 +278,17 @@ def bulk_update_accounts(
                 {"label": "负责人筛选", "value": str(filters.get("owner") or "全部")},
                 {"label": "状态筛选", "value": str(filters.get("status") or "全部")},
             ],
-            "warnings": ["只修改当前筛选条件命中的账户；未勾选字段保持不变。"],
+            "warnings": ["这里只预览批量修改结果；点击确认写入后才会修改产品账户库。"],
             "blocking_reasons": [],
         },
         "table": {"columns": _table_columns(), "rows": updated_rows},
-        "artifact_path": str(path),
-        "raw": {"filters": filters, "updates": normalized_updates, "matched_count": len(updated_rows)},
+        "artifact_path": str(account_store_path(configs_dir)),
+        "raw": {
+            "filters": filters,
+            "updates": normalized_updates,
+            "matched_count": len(updated_rows),
+            "updated_accounts": updated_accounts,
+        },
     }
 
 

@@ -99,12 +99,29 @@ def test_account_remark_config_preview_blocks_missing_required_choices(tmp_path)
     assert payload["summary"]["status"] == "blocked"
     assert payload["summary"]["execution_enabled"] is False
     assert payload["summary"]["blocking_reasons"] == [
-        "必须明确填写配置 ID",
         "必须明确填写目标备注",
         "必须明确填写本次账户 ID",
-        "必须明确填写账户备注 JSON 输出路径",
     ]
     assert payload["table"]["rows"] == []
+
+
+def test_account_remark_config_preview_auto_fills_internal_id_and_output_path(tmp_path):
+    client = TestClient(create_app(project_root=tmp_path))
+
+    response = client.post(
+        "/api/account-remarks/config/preview",
+        json={**_account_remark_request(), "update_id": "", "output_path": ""},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["status"] == "planned"
+    assert "必须明确填写配置 ID" not in payload["summary"]["blocking_reasons"]
+    assert "必须明确填写账户备注 JSON 输出路径" not in payload["summary"]["blocking_reasons"]
+    update_id = next(item["value"] for item in payload["summary"]["items"] if item["label"] == "配置 ID")
+    output_json = next(item["value"] for item in payload["summary"]["items"] if item["label"] == "输出 JSON")
+    assert update_id.startswith("account-remark-")
+    assert output_json == f"configs/account-updates/{update_id}.local.json"
 
 
 def test_account_remark_config_generate_starts_frontend_task(tmp_path, monkeypatch):
@@ -133,7 +150,7 @@ def test_account_remark_config_generate_starts_frontend_task(tmp_path, monkeypat
     assert started["command"] == ["python3", "scripts/run_frontend_task.py", "--task", str(task_path)]
 
     operations = client.get("/api/operations", params={"operation_type": "account_remark_config_generate"}).json()
-    assert operations["table"]["rows"][0]["任务 ID"] == task["task_id"]
+    assert operations["table"]["rows"][0]["关联任务"] == task["task_id"]
     assert operations["table"]["rows"][0]["操作"] == "账户备注配置生成"
     assert operations["table"]["rows"][0]["状态"] == "排队中"
     assert operations["table"]["rows"][0]["账户数"] == 2
@@ -227,7 +244,7 @@ def test_account_remark_execute_starts_allowlisted_task(tmp_path, monkeypatch):
     assert tasks[0]["operation_type"] == "account_remark_update"
 
     operations = client.get("/api/operations", params={"operation_type": "account_remark_update"}).json()
-    assert operations["table"]["rows"][0]["任务 ID"] == task["task_id"]
+    assert operations["table"]["rows"][0]["关联任务"] == task["task_id"]
     assert operations["table"]["rows"][0]["操作"] == "账户备注真实执行"
     assert operations["table"]["rows"][0]["状态"] == "排队中"
     assert operations["table"]["rows"][0]["账户数"] == 2

@@ -34,7 +34,9 @@ const riskLabel: Record<string, string> = {
 
 const statusLabel: Record<string, string> = {
   blocked: "已阻止",
+  committed: "已写入",
   completed: "已完成",
+  draft_only: "仅草稿",
   empty: "暂无结果",
   failed: "失败",
   loaded: "已加载",
@@ -42,10 +44,14 @@ const statusLabel: Record<string, string> = {
   planned: "已生成计划",
   queued: "排队中",
   ready: "待确认",
+  ready_for_confirmation: "可确认",
   running: "运行中",
+  split_required: "需拆分",
   success: "成功",
   succeeded: "成功",
   trial_ready: "试用就绪",
+  warning: "需关注",
+  warning_only: "有警告",
 };
 
 function progressStatus(status?: string): "normal" | "active" | "exception" | "success" {

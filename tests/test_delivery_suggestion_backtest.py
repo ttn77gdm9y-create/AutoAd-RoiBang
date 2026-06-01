@@ -52,6 +52,26 @@ def _init_db(path: Path) -> None:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE create_provider_id_ledger (
+          entity_type TEXT NOT NULL,
+          local_key TEXT NOT NULL,
+          provider_id TEXT NOT NULL,
+          plan_id TEXT NOT NULL DEFAULT '',
+          request_id TEXT NOT NULL DEFAULT '',
+          advertiser_id TEXT NOT NULL DEFAULT '',
+          parent_local_key TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL,
+          source_workflow TEXT NOT NULL,
+          execution_enabled INTEGER NOT NULL,
+          response_payload_json TEXT NOT NULL DEFAULT '{}',
+          first_seen_at TEXT NOT NULL,
+          last_seen_at TEXT NOT NULL,
+          PRIMARY KEY (entity_type, local_key, plan_id, request_id)
+        )
+        """
+    )
     conn.commit()
     conn.close()
 
@@ -80,6 +100,36 @@ def _insert_operation(path: Path, *, operation_id: str, advertiser_id: str, proj
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (operation_id, "2026-05-13 10:00:00", advertiser_id, "project", project_id, "修改", detail, "test", "now"),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _insert_created_project(path: Path, *, advertiser_id: str, plan_id: str, local_key: str, provider_id: str) -> None:
+    conn = sqlite3.connect(path)
+    conn.execute(
+        """
+        INSERT INTO create_provider_id_ledger (
+          entity_type, local_key, provider_id, plan_id, request_id, advertiser_id,
+          parent_local_key, status, source_workflow, execution_enabled,
+          response_payload_json, first_seen_at, last_seen_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "project",
+            local_key,
+            provider_id,
+            plan_id,
+            "request-1",
+            advertiser_id,
+            "",
+            "active",
+            "create_live_execute_once",
+            1,
+            "{}",
+            "2026-05-13T00:00:00+00:00",
+            "2026-05-13T00:00:00+00:00",
+        ),
     )
     conn.commit()
     conn.close()
@@ -120,6 +170,109 @@ def _suggestions() -> dict:
             },
         ],
     }
+
+
+def _create_suggestions() -> dict:
+    return {
+        "ok": True,
+        "workflow": "rule_suggestions",
+        "summary": {"target_date": "2026-05-12"},
+        "suggestions": [
+            {
+                "suggestion_id": "create-unprocessed",
+                "suggested_action": "suggest_create_project",
+                "target_date": "2026-05-12",
+                "entity_type": "account",
+                "advertiser_id": "adv-create-1",
+                "account_name": "创建账户一",
+            },
+            {
+                "suggestion_id": "create-preview",
+                "suggested_action": "suggest_create_project",
+                "target_date": "2026-05-12",
+                "entity_type": "account",
+                "advertiser_id": "adv-create-2",
+                "account_name": "创建账户二",
+            },
+            {
+                "suggestion_id": "create-executed",
+                "suggested_action": "suggest_create_project",
+                "target_date": "2026-05-12",
+                "entity_type": "account",
+                "advertiser_id": "adv-create-3",
+                "account_name": "创建账户三",
+            },
+            {
+                "suggestion_id": "create-failed",
+                "suggested_action": "suggest_create_project",
+                "target_date": "2026-05-12",
+                "entity_type": "account",
+                "advertiser_id": "adv-create-4",
+                "account_name": "创建账户四",
+            },
+        ],
+    }
+
+
+def _write_create_lifecycle_artifacts(runs_dir: Path) -> None:
+    _write_json(
+        runs_dir / "create_plan_from_suggestions" / "preview.json",
+        {
+            "workflow": "create_plan_from_suggestions",
+            "status": "preview_only",
+            "generated_at": "2026-05-12T01:00:00+00:00",
+            "source": {"source_suggestion_ids": ["create-preview"]},
+            "source_suggestions": [{"suggestion_id": "create-preview"}],
+        },
+    )
+    _write_json(
+        runs_dir / "create_plan_execution_review" / "review-ok.json",
+        {
+            "workflow": "create_plan_execution_review",
+            "status": "warning_only",
+            "generated_at": "2026-05-12T02:00:00+00:00",
+            "operation_record": {
+                "plan_id": "plan-create-ok",
+                "source_suggestion_ids": ["create-executed"],
+            },
+        },
+    )
+    _write_json(
+        runs_dir / "create_live_execute_once" / "execute-ok.json",
+        {
+            "workflow": "create_live_execute_once",
+            "status": "create_http_completed",
+            "generated_at": "2026-05-12T03:00:00+00:00",
+            "summary": {"plan_id": "plan-create-ok"},
+        },
+    )
+    _write_json(
+        runs_dir / "create_plan_execution_review" / "review-failed.json",
+        {
+            "workflow": "create_plan_execution_review",
+            "status": "warning_only",
+            "generated_at": "2026-05-12T02:10:00+00:00",
+            "operation_record": {
+                "plan_id": "plan-create-failed",
+                "source_suggestion_ids": ["create-failed"],
+            },
+        },
+    )
+    _write_json(
+        runs_dir / "create_live_execute_once" / "execute-failed.json",
+        {
+            "workflow": "create_live_execute_once",
+            "status": "create_http_failed",
+            "generated_at": "2026-05-12T03:10:00+00:00",
+            "summary": {"plan_id": "plan-create-failed"},
+            "blocking_reasons": ["平台返回创建失败"],
+        },
+    )
+
+
+def _write_json(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _load_script():
@@ -167,6 +320,86 @@ def test_delivery_suggestion_backtest_evaluates_close_and_bid_suggestions(tmp_pa
     assert Path(result["artifact_path"]).exists()
     assert Path(result["latest_artifact_path"]).exists()
     assert json.loads(Path(result["latest_artifact_path"]).read_text(encoding="utf-8"))["workflow"] == "delivery_suggestion_backtest"
+
+
+def test_delivery_suggestion_backtest_evaluates_pause_project_alias(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _init_db(db_path)
+    _insert_metric(db_path, date="2026-05-13", advertiser_id="adv-1", project_id="p-pause-supported", cost=0, convert=0)
+
+    result = run_delivery_suggestion_backtest_request(
+        {
+            "suggestions_artifact": {
+                "ok": True,
+                "workflow": "control_strategy_suggestions",
+                "summary": {"target_date": "2026-05-12"},
+                "suggestions": [
+                    {
+                        "suggestion_id": "pause-1",
+                        "suggestion_type": "pause_project",
+                        "target_date": "2026-05-12",
+                        "entity_type": "project",
+                        "advertiser_id": "adv-1",
+                        "entity_id": "p-pause-supported",
+                        "entity_name": "暂停支持",
+                    }
+                ],
+            },
+            "db_path": str(db_path),
+            "lookahead_days": 1,
+        },
+        runs_dir=tmp_path / "runs",
+    )
+
+    assert result["summary"]["evaluated_suggestion_count"] == 1
+    assert result["evaluations"][0]["suggested_action"] == "pause_project"
+    assert result["evaluations"][0]["evaluation_status"] == "supported"
+
+
+def test_delivery_suggestion_backtest_evaluates_create_project_lifecycle(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    runs_dir = tmp_path / "data" / "runs"
+    _init_db(db_path)
+    _write_create_lifecycle_artifacts(runs_dir)
+    _insert_created_project(
+        db_path,
+        advertiser_id="adv-create-3",
+        plan_id="plan-create-ok",
+        local_key="target-3-p001",
+        provider_id="project-created-3",
+    )
+    _insert_metric(db_path, date="2026-05-13", advertiser_id="adv-create-3", project_id="project-created-3", cost=300, convert=2)
+
+    result = run_delivery_suggestion_backtest_request(
+        {
+            "suggestions_artifact": _create_suggestions(),
+            "suggestions_artifact_paths": [],
+            "db_path": str(db_path),
+            "project_root": str(tmp_path),
+            "lookahead_days": 1,
+        },
+        runs_dir=runs_dir,
+    )
+
+    assert result["ok"] is True
+    assert result["summary"]["evaluated_suggestion_count"] == 4
+    assert result["summary"]["create_suggestion_count"] == 4
+    assert result["summary"]["create_adopted_count"] == 2
+    assert result["summary"]["create_executed_count"] == 2
+    assert result["summary"]["create_with_future_data_count"] == 1
+    assert result["summary"]["create_execution_failed_count"] == 1
+    statuses = {item["suggestion_id"]: item["evaluation_status"] for item in result["evaluations"]}
+    assert statuses == {
+        "create-unprocessed": "create_not_adopted",
+        "create-preview": "create_plan_previewed",
+        "create-executed": "create_adopted_with_future_data",
+        "create-failed": "create_execution_failed",
+    }
+    executed = next(item for item in result["evaluations"] if item["suggestion_id"] == "create-executed")
+    assert executed["create_lifecycle_status"] == "execution_completed"
+    assert executed["project_ids"] == ["project-created-3"]
+    assert executed["after_metrics"]["stat_cost"] == 300
+    assert executed["after_metrics"]["convert_cnt"] == 2
 
 
 def test_delivery_suggestion_backtest_cli_accepts_artifact_file(tmp_path: Path, capsys):

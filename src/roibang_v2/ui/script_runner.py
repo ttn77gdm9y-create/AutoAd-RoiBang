@@ -237,6 +237,68 @@ def build_project_update_execute_command(*, project_update_path: str, execute: b
     return command
 
 
+def build_project_update_from_suggestions_command(
+    *,
+    suggestions_artifact_path: str,
+    project_update_id: str,
+    operator: str = "",
+    product_key: str = "",
+    product_name: str = "",
+    allowed_target_accounts_path: str = "",
+    selected_suggestion_ids: list[str] | None = None,
+    suggested_actions: list[str] | None = None,
+    account_names: dict[str, str] | None = None,
+    output_path: str,
+) -> list[str]:
+    command = [
+        _python(),
+        "scripts/run_project_update_from_suggestions.py",
+        "--suggestions-artifact",
+        suggestions_artifact_path.strip(),
+        "--project-update-id",
+        project_update_id.strip(),
+        "--output",
+        output_path.strip(),
+    ]
+    if operator.strip():
+        command.extend(["--operator", operator.strip()])
+    if product_key.strip():
+        command.extend(["--product-key", product_key.strip()])
+    if product_name.strip():
+        command.extend(["--product-name", product_name.strip()])
+    if allowed_target_accounts_path.strip():
+        command.extend(["--allowed-target-accounts-path", allowed_target_accounts_path.strip()])
+    for suggestion_id in selected_suggestion_ids or []:
+        if suggestion_id.strip():
+            command.extend(["--suggestion-id", suggestion_id.strip()])
+    for action in suggested_actions or []:
+        if action.strip():
+            command.extend(["--suggested-action", action.strip()])
+    for account_id, account_name in (account_names or {}).items():
+        if str(account_id).strip() and str(account_name).strip():
+            command.extend(["--account-name", f"{str(account_id).strip()}={str(account_name).strip()}"])
+    return command
+
+
+def build_suggestions_refresh_command(
+    *,
+    product_key: str = "",
+    target_date: str = "today",
+    enable_readonly: bool = True,
+) -> list[str]:
+    command = [
+        _python(),
+        "scripts/run_suggestions_refresh.py",
+        "--target-date",
+        target_date.strip() or "today",
+    ]
+    if product_key.strip():
+        command.extend(["--product-key", product_key.strip()])
+    if enable_readonly:
+        command.append("--enable-readonly")
+    return command
+
+
 def build_project_filter_command(
     *,
     project_update_id: str,
@@ -255,6 +317,8 @@ def build_project_filter_command(
     cpa_bid: str = "",
     roi_goal: str = "",
 ) -> list[str]:
+    filters = metric_filters or []
+    uses_legacy_filter = bool(metric_field.strip() or metric_op.strip() or metric_value.strip())
     command = [
         _python(),
         "scripts/run_project_realtime_filter_config.py",
@@ -264,12 +328,11 @@ def build_project_filter_command(
         project_update_id.strip(),
         "--action-type",
         action_type.strip(),
-        "--spend-window",
-        spend_window.strip(),
         "--output",
         output_path.strip(),
     ]
-    filters = metric_filters or []
+    if spend_window.strip() and (filters or uses_legacy_filter):
+        command.extend(["--spend-window", spend_window.strip()])
     if filters:
         for item in filters:
             command.extend(
@@ -278,7 +341,7 @@ def build_project_filter_command(
                     f"{str(item.get('field') or '').strip()}:{str(item.get('op') or '').strip()}:{str(item.get('value') or '').strip()}",
                 ]
             )
-    else:
+    elif uses_legacy_filter:
         command.extend(["--metric-filter", f"{metric_field.strip()}:{metric_op.strip()}:{metric_value.strip()}"])
     for account in _split_accounts(advertiser_ids or advertiser_id):
         command.extend(["--advertiser-id", account])

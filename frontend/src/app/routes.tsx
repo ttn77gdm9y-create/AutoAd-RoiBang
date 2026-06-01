@@ -5,6 +5,7 @@ import {
   ClusterOutlined,
   DatabaseOutlined,
   EditOutlined,
+  ExclamationCircleOutlined,
   HistoryOutlined,
   LinkOutlined,
   PlayCircleOutlined,
@@ -24,12 +25,14 @@ import { ProductAutomationPage } from "../pages/ProductAutomationPage";
 import { ProjectManagementPage } from "../pages/ProjectManagementPage";
 import { ResultsPage } from "../pages/ResultsPage";
 import { SitesPage } from "../pages/SitesPage";
+import { SuggestionsPage } from "../pages/SuggestionsPage";
 import { SystemSettingsPage } from "../pages/SystemSettingsPage";
 import { TasksPage } from "../pages/TasksPage";
 
 export const routeItems = [
   { key: "/", label: "首页数据看板", group: "核心业务", icon: <BarChartOutlined />, element: <DashboardPage /> },
   { key: "/accounts", label: "产品账户库", group: "核心业务", icon: <DatabaseOutlined />, element: <AccountsPage /> },
+  { key: "/suggestions", label: "投放建议工作台", group: "核心业务", icon: <ExclamationCircleOutlined />, element: <SuggestionsPage /> },
   { key: "/create-plans", label: "创建计划", group: "核心业务", icon: <PlusSquareOutlined />, element: <CreatePlansPage /> },
   { key: "/project-management", label: "项目管理", group: "核心业务", icon: <ToolOutlined />, element: <ProjectManagementPage /> },
   { key: "/account-remarks", label: "账户备注", group: "核心业务", icon: <EditOutlined />, element: <AccountRemarksPage /> },

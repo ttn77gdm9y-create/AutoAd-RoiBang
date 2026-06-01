@@ -57,6 +57,7 @@ def _write_patrol_artifact(tmp_path: Path) -> None:
                 "account_count": 2,
                 "project_count": 3,
                 "promotion_count": 8,
+                "suggestion_artifact_path": "data/runs/delivery_patrol_suggestions/20260527T100001Z.json",
                 "overall_metrics": {
                     "today": {
                         "stat_cost": 1234.56,
@@ -228,6 +229,82 @@ def _write_previous_day_patrol_artifact(tmp_path: Path) -> None:
     )
 
 
+def _write_later_empty_patrol_artifact(tmp_path: Path) -> None:
+    _write_json(
+        tmp_path / "data" / "runs" / "delivery_patrol" / "20260527T100002Z.json",
+        {
+            "workflow": "delivery_patrol",
+            "summary": {
+                "target_date": "2026-05-27",
+                "account_count": 0,
+                "project_count": 0,
+                "promotion_count": 0,
+                "suggestion_artifact_path": "data/runs/delivery_patrol_suggestions/20260527T100003Z.json",
+                "account_scope": {"account_remark_equals": "其他产品-微小-运营C"},
+                "overall_metrics": {
+                    "today": {
+                        "stat_cost": 0,
+                        "billing_convert_cnt": 0,
+                        "billing_conversion_cost": None,
+                        "billing_1day_pay_roi": None,
+                    }
+                },
+            },
+            "accounts": [],
+            "projects": [],
+            "promotions": [],
+        },
+    )
+    _write_json(
+        tmp_path / "data" / "runs" / "delivery_patrol_suggestions" / "20260527T100003Z.json",
+        {
+            "workflow": "delivery_patrol_suggestions",
+            "summary": {"target_date": "2026-05-27", "suggestion_count": 0},
+            "suggestions": [],
+        },
+    )
+
+
+def _write_older_larger_patrol_artifact(tmp_path: Path) -> None:
+    _write_json(
+        tmp_path / "data" / "runs" / "delivery_patrol" / "20260526T100000Z.json",
+        {
+            "workflow": "delivery_patrol",
+            "summary": {
+                "target_date": "2026-05-26",
+                "account_count": 1,
+                "project_count": 99,
+                "promotion_count": 99,
+                "overall_metrics": {
+                    "today": {
+                        "stat_cost": 9999,
+                        "billing_convert_cnt": 99,
+                        "billing_conversion_cost": 101,
+                        "billing_1day_pay_roi": 0.9,
+                    }
+                },
+            },
+            "accounts": [
+                {
+                    "advertiser_id": "1001",
+                    "advertiser_name": "黑旗游戏",
+                    "metrics": {"today": {"stat_cost": 9999, "billing_convert_cnt": 99, "billing_1day_pay_roi": 0.9}},
+                }
+            ],
+            "projects": [
+                {
+                    "advertiser_id": "1001",
+                    "project_id": "older-p1",
+                    "project_name": "点点英雄-旧大盘",
+                    "business_status": "healthy",
+                    "metrics": {"today": {"stat_cost": 9999, "billing_convert_cnt": 99}},
+                }
+            ],
+            "promotions": [],
+        },
+    )
+
+
 def test_dashboard_overview_returns_chinese_metric_summary(tmp_path):
     _write_dashboard_fixture(tmp_path)
     client = _client(tmp_path)
@@ -252,6 +329,52 @@ def test_dashboard_overview_returns_chinese_metric_summary(tmp_path):
         "建议事项",
     ]
     assert payload["table"]["rows"][0]["产品"] == "点点英雄"
+
+
+def test_dashboard_overview_ignores_later_empty_patrol_artifact(tmp_path):
+    _write_dashboard_fixture(tmp_path)
+    _write_later_empty_patrol_artifact(tmp_path)
+    client = _client(tmp_path)
+
+    overview = client.get("/api/dashboard/overview").json()
+    projects = client.get("/api/dashboard/projects").json()
+    materials = client.get("/api/dashboard/materials").json()
+
+    assert {"label": "今日消耗", "value": 1234.56} in overview["summary"]["items"]
+    assert {"label": "活跃项目", "value": 3} in overview["summary"]["items"]
+    assert {"label": "建议事项", "value": 2} in overview["summary"]["items"]
+    assert overview["artifact_path"].endswith("20260527T100000Z.json")
+    assert {"label": "项目数", "value": 3} in projects["summary"]["items"]
+    assert {"label": "单元素材数", "value": 2} in materials["summary"]["items"]
+
+
+def test_dashboard_product_filter_ignores_later_empty_patrol_artifact(tmp_path):
+    _write_dashboard_fixture(tmp_path)
+    _write_later_empty_patrol_artifact(tmp_path)
+    client = _client(tmp_path)
+
+    response = client.get("/api/dashboard/overview", params={"product_key": "diandian-hero"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert {"label": "今日消耗", "value": 1000.0} in payload["summary"]["items"]
+    assert {"label": "活跃项目", "value": 2} in payload["summary"]["items"]
+    assert {"label": "建议事项", "value": 1} in payload["summary"]["items"]
+    assert payload["artifact_path"].endswith("20260527T100000Z.json")
+
+
+def test_dashboard_prefers_latest_matching_patrol_over_older_larger_artifact(tmp_path):
+    _write_dashboard_fixture(tmp_path)
+    _write_older_larger_patrol_artifact(tmp_path)
+    client = _client(tmp_path)
+
+    response = client.get("/api/dashboard/overview")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert {"label": "数据日期", "value": "2026-05-27"} in payload["summary"]["items"]
+    assert {"label": "今日消耗", "value": 1234.56} in payload["summary"]["items"]
+    assert payload["artifact_path"].endswith("20260527T100000Z.json")
 
 
 def test_dashboard_overview_uses_selected_date_range_artifact(tmp_path):
@@ -642,6 +765,7 @@ def test_dashboard_suggestions_returns_chinese_reason_and_config_hint(tmp_path):
         "优先级",
         "产品",
         "账户 ID",
+        "账户名",
         "层级",
         "项目 ID",
         "建议动作",
@@ -652,6 +776,7 @@ def test_dashboard_suggestions_returns_chinese_reason_and_config_hint(tmp_path):
         "优先级": "低",
         "产品": "点点英雄",
         "账户 ID": "1001",
+        "账户名": "黑旗游戏",
         "层级": "project",
         "项目 ID": "p2",
         "建议动作": "watch",
@@ -662,12 +787,52 @@ def test_dashboard_suggestions_returns_chinese_reason_and_config_hint(tmp_path):
         "优先级": "中",
         "产品": "你行你先坐",
         "账户 ID": "1002",
+        "账户名": "赚亿点点",
         "层级": "project",
         "项目 ID": "p3",
         "建议动作": "lower_budget",
         "中文解释": "ROI 偏低",
         "可生成配置": "可生成调预算配置",
     } in payload["table"]["rows"]
+
+
+def test_dashboard_suggestions_recognizes_actionable_suggested_action_names(tmp_path):
+    _write_account_store(tmp_path)
+    _write_json(
+        tmp_path / "data" / "runs" / "delivery_patrol_suggestions" / "20260528T100001Z.json",
+        {
+            "workflow": "delivery_patrol_suggestions",
+            "summary": {"suggestion_count": 2},
+            "suggestions": [
+                {
+                    "advertiser_id": "1001",
+                    "project_id": "p-delete",
+                    "entity_type": "project",
+                    "suggested_action": "suggest_delete_project",
+                    "reason": "关闭项目低消耗且无计费时间转化。",
+                },
+                {
+                    "advertiser_id": "1001",
+                    "project_id": "p-close",
+                    "entity_type": "project",
+                    "suggested_action": "suggest_close_project",
+                    "reason": "累计消耗达到阈值但无计费时间转化。",
+                },
+            ],
+        },
+    )
+    client = _client(tmp_path)
+
+    response = client.get("/api/dashboard/suggestions")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert {"label": "可生成配置", "value": 2} in payload["summary"]["items"]
+    hints = {row["项目 ID"]: row["可生成配置"] for row in payload["table"]["rows"]}
+    assert hints == {
+        "p-delete": "可生成删除项目配置",
+        "p-close": "可生成暂停项目配置",
+    }
 
 
 def test_dashboard_overview_keeps_patrol_data_when_account_store_missing(tmp_path):

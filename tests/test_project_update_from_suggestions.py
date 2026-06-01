@@ -154,10 +154,10 @@ def test_build_project_update_from_schedule_hollow_suggestions_only():
         "suggested_actions": [],
         "schedule_hollow_action_count": 2,
         "delete_project_action_count": 1,
-        "close_project_action_count": 0,
+        "close_project_action_count": 1,
         "lower_budget_action_count": 0,
         "lower_bid_action_count": 0,
-        "action_count": 3,
+        "action_count": 4,
         "restore_action_count": 2,
         "target_date": "2026-05-12",
         "restore_date": "2026-05-13",
@@ -218,6 +218,35 @@ def test_build_project_update_from_suggestions_can_filter_delete_actions_only():
     assert result["project_update"]["actions"][0]["project_id"] == "project-delete-1"
 
 
+def test_project_update_from_suggestions_blocks_explicit_create_project_suggestion():
+    suggestions = _management_suggestions()
+    suggestions["suggestions"].append(
+        {
+            "suggestion_type": "suggest_create_project",
+            "suggested_action": "suggest_create_project",
+            "suggestion_id": "create-project-1",
+            "target_date": "2026-05-12",
+            "advertiser_id": "1856647523922953",
+            "entity_type": "account",
+            "mode_key": "wx_pay_general_recent_scale",
+            "reason": "账户容量和素材供给达标，建议创建项目。",
+        }
+    )
+
+    try:
+        build_project_update_from_suggestions(
+            suggestions,
+            {
+                "project_update_id": "project-update-20260512-001",
+                "selected_suggestion_ids": ["create-project-1"],
+            },
+        )
+    except ValueError as exc:
+        assert "只读建议不能生成项目管理 JSON：create-project-1" in str(exc)
+    else:
+        raise AssertionError("create project suggestions must not become project management JSON")
+
+
 def test_build_project_update_from_suggestions_can_convert_close_budget_and_bid_actions():
     result = build_project_update_from_suggestions(
         _management_suggestions(),
@@ -229,12 +258,25 @@ def test_build_project_update_from_suggestions_can_convert_close_budget_and_bid_
     )
 
     assert result["summary"]["source_suggestion_count"] == 7
-    assert result["summary"]["selected_suggestion_count"] == 3
-    assert result["summary"]["close_project_action_count"] == 1
+    assert result["summary"]["selected_suggestion_count"] == 4
+    assert result["summary"]["close_project_action_count"] == 2
     assert result["summary"]["lower_budget_action_count"] == 1
     assert result["summary"]["lower_bid_action_count"] == 1
-    assert result["summary"]["action_count"] == 3
+    assert result["summary"]["action_count"] == 4
     assert result["project_update"]["actions"] == [
+        {
+            "action_type": "status_update",
+            "advertiser_id": "1856647523922953",
+            "entity_type": "project",
+            "project_id": "project-ignored",
+            "project_name": "",
+            "reason": "",
+            "source_suggestion_id": "",
+            "source_rule_id": "",
+            "metrics": {},
+            "evidence": {},
+            "opt_status": "DISABLE",
+        },
         {
             "action_type": "status_update",
             "advertiser_id": "1856647523922953",
@@ -282,6 +324,192 @@ def test_build_project_update_from_suggestions_can_convert_close_budget_and_bid_
     ]
 
 
+def test_build_project_update_from_suggestions_accepts_control_strategy_action_aliases():
+    result = build_project_update_from_suggestions(
+        {
+            "workflow": "control_strategy_suggestions",
+            "summary": {"suggestion_count": 3},
+            "suggestions": [
+                {
+                    "suggestion_type": "pause_project",
+                    "rule_id": "pause_project_low_first_day_roi",
+                    "target_date": "2026-05-28",
+                    "advertiser_id": "1001",
+                    "entity_type": "project",
+                    "entity_id": "p-pause",
+                    "entity_name": "低 ROI 暂停候选",
+                    "reason": "首日 ROI 低于阈值。",
+                },
+                {
+                    "suggestion_type": "adjust_project_budget",
+                    "rule_id": "adjust_project_budget_low_roi",
+                    "target_date": "2026-05-28",
+                    "advertiser_id": "1001",
+                    "entity_type": "project",
+                    "entity_id": "p-budget",
+                    "entity_name": "低 ROI 降预算候选",
+                    "reason": "首日 ROI 低于预算调整阈值。",
+                    "adjustment": {"type": "ratio", "value": -0.2},
+                },
+                {
+                    "suggestion_type": "adjust_project_bid",
+                    "rule_id": "adjust_project_bid_high_cpa",
+                    "target_date": "2026-05-28",
+                    "advertiser_id": "1002",
+                    "entity_type": "project",
+                    "entity_id": "p-bid",
+                    "entity_name": "高成本降出价候选",
+                    "reason": "转化成本高于配置阈值。",
+                    "adjustment": {"type": "ratio", "value": -0.1},
+                },
+            ],
+        },
+        {
+            "project_update_id": "control-aliases-001",
+            "operator": "运营A",
+            "suggested_actions": ["pause_project", "adjust_project_budget", "adjust_project_bid"],
+        },
+    )
+
+    assert result["summary"]["selected_suggestion_count"] == 3
+    assert result["summary"]["close_project_action_count"] == 1
+    assert result["summary"]["lower_budget_action_count"] == 1
+    assert result["summary"]["lower_bid_action_count"] == 1
+    assert [action["action_type"] for action in result["project_update"]["actions"]] == [
+        "status_update",
+        "budget_update",
+        "bid_update",
+    ]
+    assert result["project_update"]["actions"][0]["opt_status"] == "DISABLE"
+    assert result["project_update"]["actions"][1]["adjustment_ratio"] == -0.2
+    assert result["project_update"]["actions"][2]["adjustment_ratio"] == -0.1
+
+
+def test_build_project_update_from_suggestions_maps_legacy_filters_to_control_strategy_actions():
+    result = build_project_update_from_suggestions(
+        {
+            "workflow": "control_strategy_suggestions",
+            "summary": {"suggestion_count": 3},
+            "suggestions": [
+                {
+                    "suggestion_type": "pause_project",
+                    "rule_id": "pause_project_low_first_day_roi",
+                    "target_date": "2026-05-28",
+                    "advertiser_id": "1001",
+                    "entity_type": "project",
+                    "entity_id": "p-pause",
+                    "entity_name": "低 ROI 暂停候选",
+                    "reason": "首日 ROI 低于阈值。",
+                },
+                {
+                    "suggestion_type": "adjust_project_budget",
+                    "rule_id": "adjust_project_budget_low_roi",
+                    "target_date": "2026-05-28",
+                    "advertiser_id": "1001",
+                    "entity_type": "project",
+                    "entity_id": "p-budget",
+                    "entity_name": "低 ROI 降预算候选",
+                    "reason": "首日 ROI 低于预算调整阈值。",
+                    "adjustment": {"type": "ratio", "value": -0.2},
+                },
+                {
+                    "suggestion_type": "adjust_project_bid",
+                    "rule_id": "adjust_project_bid_high_cpa",
+                    "target_date": "2026-05-28",
+                    "advertiser_id": "1002",
+                    "entity_type": "project",
+                    "entity_id": "p-bid",
+                    "entity_name": "高成本降出价候选",
+                    "reason": "转化成本高于配置阈值。",
+                    "adjustment": {"type": "ratio", "value": -0.1},
+                },
+            ],
+        },
+        {
+            "project_update_id": "control-legacy-filters-001",
+            "operator": "运营A",
+            "suggested_actions": ["suggest_close_project", "suggest_lower_budget", "suggest_lower_bid"],
+        },
+    )
+
+    assert result["summary"]["selected_suggestion_count"] == 3
+    assert [action["action_type"] for action in result["project_update"]["actions"]] == [
+        "status_update",
+        "budget_update",
+        "bid_update",
+    ]
+
+
+def test_build_project_update_from_suggestions_accepts_control_strategy_decrease_percent_adjustment():
+    result = build_project_update_from_suggestions(
+        {
+            "workflow": "control_strategy_suggestions",
+            "summary": {"suggestion_count": 1},
+            "suggestions": [
+                {
+                    "suggestion_type": "adjust_project_budget",
+                    "rule_id": "adjust_project_budget_low_roi",
+                    "target_date": "2026-05-28",
+                    "advertiser_id": "1001",
+                    "entity_type": "project",
+                    "entity_id": "p-budget",
+                    "entity_name": "低 ROI 降预算候选",
+                    "reason": "首日 ROI 低于预算调整阈值。",
+                    "adjustment": {
+                        "field": "budget",
+                        "direction": "decrease",
+                        "decrease_percent": 20,
+                        "requires_current_budget_from_config": True,
+                        "suggested_budget": None,
+                    },
+                }
+            ],
+        },
+        {
+            "project_update_id": "control-old-adjustment-001",
+            "operator": "运营A",
+            "suggested_actions": ["adjust_project_budget"],
+        },
+    )
+
+    assert result["summary"]["action_count"] == 1
+    action = result["project_update"]["actions"][0]
+    assert action["action_type"] == "budget_update"
+    assert action["adjustment"] == {"type": "ratio", "value": -0.2}
+    assert action["adjustment_ratio"] == -0.2
+    assert action["resolve_current_value_at_execute"] is True
+
+
+def test_build_project_update_from_suggestions_can_select_single_suggestion_and_add_chinese_metadata():
+    result = build_project_update_from_suggestions(
+        _management_suggestions(),
+        {
+            "project_update_id": "selected-budget-001",
+            "operator": "运营A",
+            "product_key": "demo-game",
+            "product_name": "演示游戏",
+            "suggestions_artifact_path": "data/runs/delivery_patrol_suggestions/20260528T100001Z.json",
+            "selected_suggestion_ids": ["budget-project-1"],
+            "account_names": {"1856647523922953": "演示账户一"},
+        },
+    )
+
+    assert result["summary"]["selected_suggestion_count"] == 1
+    assert result["summary"]["action_count"] == 1
+    update = result["project_update"]
+    assert update["中文摘要"] == "根据规则建议生成项目管理动作 JSON，涉及 1 个账户、1 个动作；只生成配置，不执行真实业务动作。"
+    assert update["product_key"] == "demo-game"
+    assert update["product_name"] == "演示游戏"
+    assert update["source_artifact"] == "data/runs/delivery_patrol_suggestions/20260528T100001Z.json"
+    assert update["dry_run_required"] is True
+    assert update["execution_allowed"] is False
+    assert update["accounts"] == [{"account_id": "1856647523922953", "account_name": "演示账户一"}]
+    assert update["risk_summary"] == "包含调预算 1 个；执行前必须人工核对账户、项目、动作和来源建议。"
+    assert update["actions"][0]["中文动作"] == "调预算"
+    assert update["actions"][0]["account_name"] == "演示账户一"
+    assert update["actions"][0]["project_id"] == "project-budget-1"
+
+
 def test_run_project_update_from_suggestions_writes_update_file_and_artifact(tmp_path: Path):
     output_path = tmp_path / "project_update.local.json"
 
@@ -301,7 +529,7 @@ def test_run_project_update_from_suggestions_writes_update_file_and_artifact(tmp
     assert result["project_update_path"] == str(output_path)
     assert Path(result["artifact_path"]).exists()
     assert saved["project_update_id"] == "project-update-20260512-001"
-    assert len(saved["actions"]) == 3
+    assert len(saved["actions"]) == 4
     assert len(saved["restore_actions"]) == 2
 
 
@@ -368,6 +596,46 @@ def test_project_update_from_suggestions_cli_can_filter_to_delete_only(tmp_path:
     assert output["summary"]["action_count"] == 1
     assert saved["actions"][0]["action_type"] == "delete_project"
     assert saved["actions"][0]["project_id"] == "project-delete-1"
+
+
+def test_project_update_from_suggestions_cli_accepts_selected_ids_and_account_names(tmp_path: Path, capsys):
+    suggestions_path = tmp_path / "suggestions.json"
+    output_path = tmp_path / "selected.local.json"
+    suggestions_path.write_text(json.dumps(_management_suggestions(), ensure_ascii=False), encoding="utf-8")
+    module = _load_script()
+
+    exit_code = module.run_from_args(
+        [
+            "--suggestions-artifact",
+            str(suggestions_path),
+            "--project-update-id",
+            "selected-close-001",
+            "--operator",
+            "运营A",
+            "--product-key",
+            "demo-game",
+            "--product-name",
+            "演示游戏",
+            "--suggestion-id",
+            "close-project-1",
+            "--account-name",
+            "1856647523922953=演示账户一",
+            "--output",
+            str(output_path),
+            "--runs-dir",
+            str(tmp_path / "runs"),
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    saved = json.loads(output_path.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert output["summary"]["selected_suggestion_count"] == 1
+    assert output["summary"]["action_count"] == 1
+    assert saved["product_key"] == "demo-game"
+    assert saved["accounts"] == [{"account_id": "1856647523922953", "account_name": "演示账户一"}]
+    assert saved["actions"][0]["source_suggestion_id"] == "close-project-1"
+    assert saved["actions"][0]["中文动作"] == "暂停项目"
 
 
 def test_project_delete_from_suggestions_wrapper_defaults_to_delete_only(tmp_path: Path, capsys):

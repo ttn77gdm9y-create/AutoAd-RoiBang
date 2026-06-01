@@ -1,11 +1,13 @@
 import csv
 import io
 import json
+import sqlite3
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from backend.app.main import create_app
+from roibang_v2.db.bootstrap import bootstrap_database
 
 
 def _client(tmp_path: Path) -> TestClient:
@@ -48,6 +50,89 @@ def _write_product_fixture(tmp_path: Path) -> None:
             },
         },
     )
+
+
+def _write_create_mode_fixture(tmp_path: Path) -> None:
+    mode_dir = tmp_path / "configs" / "create-modes"
+    mode_dir.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        mode_dir / "wx_pay_general_recent_scale.example.json",
+        {
+            "mode_key": "wx_pay_general_recent_scale",
+            "display_name": "每付通投近期放量",
+            "template_key": "wx_pay_general",
+            "template_name_suffix": "每付通投近期放量",
+            "defaults": {
+                "daily_budget": 10000,
+                "cpa_bid": 111,
+                "project_count": 5,
+                "units_per_project": 1,
+            },
+            "material_requirements": {
+                "materials_per_unit": 6,
+                "allow_reuse_on_insufficient": True,
+            },
+            "material_selection": {
+                "lookback_days": 7,
+                "selection_type": "high_spend",
+                "random_shuffle": True,
+            },
+        },
+    )
+
+
+def _write_template_draft_db_fixture(tmp_path: Path) -> None:
+    db_path = tmp_path / "data" / "roibang_v2.sqlite3"
+    bootstrap_database(db_path)
+    with sqlite3.connect(db_path) as conn:
+        for index in range(35):
+            conn.execute(
+                """
+                INSERT INTO product_source_material_metric_rollups (
+                  product, source_advertiser_id, organization_id, window_key, window_days,
+                  period_start, period_end, material_id, material_type, source_video_id,
+                  name, review_status, signature, duration, file_size, create_time,
+                  first_seen_metric_date, effective_create_date, effective_create_date_source,
+                  tag_ids_json, account_count, project_count, promotion_count, stat_cost,
+                  show_cnt, click_cnt, convert_cnt, active_register, roi_1day_cost_weighted,
+                  roi_7days_cost_weighted, source, synced_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "演示游戏",
+                    "source-1",
+                    "org-1",
+                    "last_7d",
+                    7,
+                    "2026-05-22",
+                    "2026-05-28",
+                    f"material-{index}",
+                    "video",
+                    f"video-{index:03d}",
+                    f"演示素材{index}",
+                    "审核通过",
+                    "",
+                    0,
+                    0,
+                    "2026-05-28",
+                    "2026-05-28",
+                    "2026-05-28",
+                    "first_seen_metric_date",
+                    "[]",
+                    1,
+                    1,
+                    1,
+                    600,
+                    6000,
+                    600,
+                    2,
+                    2,
+                    0.06,
+                    0.08,
+                    "unit_test",
+                    "now",
+                ),
+            )
 
 
 def test_product_automation_overview_lists_product_configs_with_chinese_labels(tmp_path: Path):
@@ -174,3 +259,130 @@ def test_product_automation_dry_run_writes_request_without_execute(tmp_path: Pat
     assert request_path.exists()
     request_payload = json.loads(request_path.read_text(encoding="utf-8"))
     assert request_payload["source_material_preload_to_accounts"]["target_accounts"]["accounts"][0]["account_name"] == "演示账户一"
+
+
+def test_product_automation_ai_template_drafts_returns_readonly_drafts(tmp_path: Path):
+    _write_product_fixture(tmp_path)
+    _write_create_mode_fixture(tmp_path)
+    _write_template_draft_db_fixture(tmp_path)
+    client = _client(tmp_path)
+
+    response = client.post(
+        "/api/product-automation/ai-template-drafts",
+        json={"product_key": "demo-game", "max_drafts": 2},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["title"] == "AI 模板草稿"
+    assert payload["summary"]["status"] == "draft_only"
+    assert payload["summary"]["execution_enabled"] is False
+    assert {"label": "真实执行", "value": "否"} in payload["summary"]["items"]
+    assert payload["table"]["columns"] == [
+        "草稿名",
+        "产品",
+        "草稿 Key",
+        "基于人工模板",
+        "候选素材",
+        "消耗",
+        "转化",
+        "ROI",
+        "差异",
+        "风险",
+        "状态",
+    ]
+    row = payload["table"]["rows"][0]
+    assert row["产品"] == "演示游戏"
+    assert row["状态"] == "draft_only"
+    assert row["基于人工模板"] == "wx_pay_general_recent_scale"
+    assert row["候选素材"] == 35
+    assert Path(payload["artifact_path"]).exists()
+    assert payload["raw"]["manual_template_boundary"]["writes_manual_template"] is False
+    assert payload["raw"]["manual_template_boundary"]["generates_create_plan"] is False
+    assert payload["raw"]["actions"] == []
+
+
+def test_product_automation_ai_template_draft_preview_writes_preview_only_json(tmp_path: Path):
+    _write_product_fixture(tmp_path)
+    _write_create_mode_fixture(tmp_path)
+    _write_template_draft_db_fixture(tmp_path)
+    client = _client(tmp_path)
+    drafts_response = client.post(
+        "/api/product-automation/ai-template-drafts",
+        json={"product_key": "demo-game", "max_drafts": 2},
+    )
+    drafts_payload = drafts_response.json()
+    draft_key = drafts_payload["table"]["rows"][0]["草稿 Key"]
+
+    response = client.post(
+        "/api/product-automation/ai-template-draft-preview",
+        json={
+            "product_key": "demo-game",
+            "artifact_path": drafts_payload["artifact_path"],
+            "draft_key": draft_key,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["title"] == "AI 模板草稿转正预览"
+    assert payload["summary"]["status"] == "planned"
+    assert payload["summary"]["execution_enabled"] is False
+    assert {"label": "真实执行", "value": "否"} in payload["summary"]["items"]
+    row = payload["table"]["rows"][0]
+    assert row["产品"] == "演示游戏"
+    assert row["草稿 Key"] == draft_key
+    assert row["状态"] == "preview_only"
+    target_path = tmp_path / "configs" / "create-modes" / "demo-game" / f"{draft_key}.local.json"
+    assert row["目标文件"] == str(target_path)
+    assert Path(payload["artifact_path"]).exists()
+    assert not target_path.exists()
+    assert payload["raw"]["preview"]["execution"]["enabled"] is False
+    assert payload["raw"]["preview"]["proposed_create_mode"]["product"] == "演示游戏"
+
+
+def test_product_automation_ai_template_draft_promote_calls_fixed_script_and_writes_mode(tmp_path: Path):
+    _write_product_fixture(tmp_path)
+    _write_create_mode_fixture(tmp_path)
+    _write_template_draft_db_fixture(tmp_path)
+    client = _client(tmp_path)
+    drafts_response = client.post(
+        "/api/product-automation/ai-template-drafts",
+        json={"product_key": "demo-game", "max_drafts": 2},
+    )
+    drafts_payload = drafts_response.json()
+    draft_key = drafts_payload["table"]["rows"][0]["草稿 Key"]
+    preview_response = client.post(
+        "/api/product-automation/ai-template-draft-preview",
+        json={
+            "product_key": "demo-game",
+            "artifact_path": drafts_payload["artifact_path"],
+            "draft_key": draft_key,
+        },
+    )
+    preview_payload = preview_response.json()
+
+    response = client.post(
+        "/api/product-automation/ai-template-draft-promote",
+        json={
+            "product_key": "demo-game",
+            "preview_path": preview_payload["artifact_path"],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["title"] == "AI 模板草稿已写入创建模式"
+    assert payload["summary"]["status"] == "committed"
+    assert payload["summary"]["execution_enabled"] is False
+    assert {"label": "真实执行", "value": "否"} in payload["summary"]["items"]
+    target_path = tmp_path / "configs" / "create-modes" / "demo-game" / f"{draft_key}.local.json"
+    assert target_path.exists()
+    saved = json.loads(target_path.read_text(encoding="utf-8"))
+    assert saved["product"] == "演示游戏"
+    assert saved["product_key"] == "demo-game"
+    assert saved["mode_key"] == draft_key
+    assert payload["table"]["rows"][0]["固定脚本"] == "scripts/run_ai_template_draft_promote.py"
+    assert payload["table"]["rows"][0]["真实执行"] == "否"
+    assert payload["raw"]["result"]["execution_enabled"] is False
+    assert payload["raw"]["result"]["actions"] == []

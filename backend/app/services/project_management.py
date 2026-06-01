@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+import json
 from pathlib import Path
 from typing import Any
 
@@ -13,8 +15,6 @@ from roibang_v2.workflows.frontend_operation_log import record_frontend_operatio
 
 from backend.app.services.account_names import account_name_for
 from backend.app.services.account_names import load_account_name_map
-
-import json
 
 ACTION_LABELS = {
     "delete_project": "删除项目",
@@ -49,10 +49,10 @@ WINDOW_LABELS = {
 
 
 def build_project_management_config_preview(request: dict[str, Any], *, project_root: str | Path) -> dict[str, Any]:
-    project_update_id = _text(request.get("project_update_id"))
     action_type = _text(request.get("action_type"))
+    project_update_id = _text(request.get("project_update_id")) or _default_project_update_id()
     advertiser_ids = _split_account_ids(request.get("advertiser_ids"))
-    output_path = _text(request.get("output_path"))
+    output_path = _text(request.get("output_path")) or _default_project_update_path(project_update_id)
     name_contains = _text(request.get("name_contains"))
     spend_window = _text(request.get("spend_window"))
     opt_status = _text(request.get("opt_status"))
@@ -77,6 +77,7 @@ def build_project_management_config_preview(request: dict[str, Any], *, project_
 
     account_names = load_account_name_map(Path(project_root) / "configs")
     metric_filter_label = _metric_filters_label(metric_filters)
+    spend_window_label = _spend_window_label(spend_window, metric_filters)
 
     command = build_project_filter_command(
         project_update_id=project_update_id,
@@ -100,7 +101,7 @@ def build_project_management_config_preview(request: dict[str, Any], *, project_
             "账户名": account_name_for(account_names, advertiser_id),
             "动作": _action_label(action_type),
             "项目名包含": name_contains,
-            "数据窗口": WINDOW_LABELS.get(spend_window, spend_window),
+            "数据窗口": spend_window_label,
             "筛选条件": metric_filter_label,
             "目标值": _target_value(action_type, opt_status=opt_status, budget=budget, cpa_bid=cpa_bid, roi_goal=roi_goal),
             "输出 JSON": output_path,
@@ -117,7 +118,7 @@ def build_project_management_config_preview(request: dict[str, Any], *, project_
                 {"label": "配置 ID", "value": project_update_id},
                 {"label": "动作", "value": _action_label(action_type)},
                 {"label": "账户数", "value": len(advertiser_ids)},
-                {"label": "数据窗口", "value": WINDOW_LABELS.get(spend_window, spend_window)},
+                {"label": "数据窗口", "value": spend_window_label},
                 {"label": "筛选条件", "value": metric_filter_label},
                 {"label": "目标值", "value": _target_value(action_type, opt_status=opt_status, budget=budget, cpa_bid=cpa_bid, roi_goal=roi_goal)},
                 {"label": "输出 JSON", "value": output_path},
@@ -197,15 +198,15 @@ def build_project_management_execute_preview(request: dict[str, Any], *, project
     actions = _action_rows(project_update.get("actions"))
     if not actions:
         return _blocked_execute_preview("项目管理 JSON 中没有 actions，不能执行", request, project_update_path)
-    validation_reasons = _execute_validation_reasons(actions)
+    validation_reasons = _execute_validation_reasons(project_update, actions, request)
     if validation_reasons:
         blocked = _blocked_execute_preview(validation_reasons[0], request, project_update_path)
         blocked["summary"]["blocking_reasons"] = validation_reasons
         return blocked
 
     account_names = load_account_name_map(Path(project_root) / "configs")
-    rows = [_execute_action_row(action, account_names) for action in actions]
-    action_types = {_text(action.get("action_type")) for action in actions}
+    project_update_account_names = _project_update_account_names(project_update)
+    rows = [_execute_action_row(action, account_names, project_update_account_names) for action in actions]
     execute_command = build_project_update_execute_command(project_update_path=project_update_path, execute=True)
 
     return {
@@ -214,15 +215,7 @@ def build_project_management_execute_preview(request: dict[str, Any], *, project
             "status": "ready",
             "risk_level": _max_action_risk(actions),
             "execution_enabled": True,
-            "items": [
-                {"label": "配置来源", "value": _config_source_label(request.get("config_source"))},
-                {"label": "配置 ID", "value": _text(project_update.get("project_update_id"))},
-                {"label": "动作类型", "value": "、".join(_action_label(item) for item in sorted(action_types) if item)},
-                {"label": "动作数", "value": len(actions)},
-                {"label": "账户数", "value": len({_text(action.get("advertiser_id")) for action in actions if _text(action.get("advertiser_id"))})},
-                {"label": "项目数", "value": len({_text(action.get("project_id")) for action in actions if _text(action.get("project_id"))})},
-                {"label": "项目管理 JSON", "value": project_update_path},
-            ],
+            "items": _execute_summary_items(request, project_update, actions, project_update_path),
             "warnings": ["这是高风险真实执行入口；点击执行前必须核对中文摘要和项目明细，并输入“确认执行”。"],
             "blocking_reasons": [],
         },
@@ -348,7 +341,7 @@ def _record_config_operation(
             "task_id": task["task_id"],
             "task_artifact_path": task.get("artifact_path"),
             "status": task.get("status"),
-            "execute_artifact_path": _text(request.get("output_path")),
+            "execute_artifact_path": _summary_item_value(preview, "输出 JSON") or _text(request.get("output_path")),
         },
         details={
             "product": _text(request.get("product") or request.get("product_name")),
@@ -405,7 +398,11 @@ def _action_rows(value: Any) -> list[dict[str, Any]]:
     return [dict(item) for item in value if isinstance(item, dict)] if isinstance(value, list) else []
 
 
-def _execute_validation_reasons(actions: list[dict[str, Any]]) -> list[str]:
+def _execute_validation_reasons(
+    project_update: dict[str, Any],
+    actions: list[dict[str, Any]],
+    request: dict[str, Any],
+) -> list[str]:
     reasons: list[str] = []
     for index, action in enumerate(actions, start=1):
         action_type = _text(action.get("action_type"))
@@ -417,19 +414,26 @@ def _execute_validation_reasons(actions: list[dict[str, Any]]) -> list[str]:
             reasons.append(f"第 {index} 条{label}缺少账户 ID")
         if not _text(action.get("project_id")):
             reasons.append(f"第 {index} 条{label}缺少项目 ID")
+    if _requires_suggestion_metadata(project_update, request):
+        reasons.extend(_suggestion_project_update_validation_reasons(project_update, actions))
     return reasons
 
 
-def _execute_action_row(action: dict[str, Any], account_names: dict[str, str] | None = None) -> dict[str, Any]:
+def _execute_action_row(
+    action: dict[str, Any],
+    account_names: dict[str, str] | None = None,
+    project_update_account_names: dict[str, str] | None = None,
+) -> dict[str, Any]:
     action_type = _text(action.get("action_type"))
     advertiser_id = _text(action.get("advertiser_id"))
     return {
         "账户 ID": advertiser_id,
         "账户名": _text(action.get("advertiser_name") or action.get("account_name"))
+        or (project_update_account_names or {}).get(advertiser_id, "")
         or account_name_for(account_names or {}, advertiser_id),
         "项目 ID": _text(action.get("project_id")),
         "项目名": _text(action.get("project_name") or action.get("name")),
-        "动作": _action_label(action_type),
+        "动作": _execute_action_label(action),
         "目标值": _target_value(
             action_type,
             opt_status=_text(action.get("opt_status")),
@@ -447,6 +451,139 @@ def _max_action_risk(actions: list[dict[str, Any]]) -> str:
     if "medium" in risks:
         return "medium"
     return "low"
+
+
+def _execute_summary_items(
+    request: dict[str, Any],
+    project_update: dict[str, Any],
+    actions: list[dict[str, Any]],
+    project_update_path: str,
+) -> list[dict[str, Any]]:
+    action_labels = sorted({_execute_action_label(action) for action in actions if _execute_action_label(action)})
+    account_ids = {_text(action.get("advertiser_id")) for action in actions if _text(action.get("advertiser_id"))}
+    project_ids = {_text(action.get("project_id")) for action in actions if _text(action.get("project_id"))}
+    items = [
+        {"label": "配置来源", "value": _config_source_label(request.get("config_source"))},
+    ]
+    if _text(project_update.get("中文摘要")):
+        items.append({"label": "中文摘要", "value": _text(project_update.get("中文摘要"))})
+    product_label = _product_label(project_update)
+    if product_label:
+        items.append({"label": "产品", "value": product_label})
+    items.extend(
+        [
+            {"label": "配置 ID", "value": _text(project_update.get("project_update_id"))},
+        ]
+    )
+    source_artifact = _source_artifact(project_update)
+    if source_artifact:
+        items.append({"label": "来源建议", "value": source_artifact})
+    if _text(project_update.get("risk_summary")):
+        items.append({"label": "风险摘要", "value": _text(project_update.get("risk_summary"))})
+    items.extend(
+        [
+            {"label": "动作类型", "value": "、".join(action_labels)},
+            {"label": "动作数", "value": len(actions)},
+            {"label": "账户数", "value": len(account_ids)},
+            {"label": "项目数", "value": len(project_ids)},
+        ]
+    )
+    for label, count in _execute_action_counts(actions).items():
+        if count:
+            items.append({"label": label, "value": count})
+    items.append({"label": "项目管理 JSON", "value": project_update_path})
+    return items
+
+
+def _requires_suggestion_metadata(project_update: dict[str, Any], request: dict[str, Any]) -> bool:
+    source = project_update.get("source") if isinstance(project_update.get("source"), dict) else {}
+    return (
+        _text(request.get("config_source")) == "suggestions_generated"
+        or _text(project_update.get("source_artifact")) != ""
+        or _text(source.get("workflow")) == "delivery_patrol_suggestions"
+    )
+
+
+def _suggestion_project_update_validation_reasons(project_update: dict[str, Any], actions: list[dict[str, Any]]) -> list[str]:
+    reasons: list[str] = []
+    if not _text(project_update.get("中文摘要")):
+        reasons.append("建议生成的项目管理 JSON 缺少中文摘要")
+    if not _source_artifact(project_update):
+        reasons.append("建议生成的项目管理 JSON 缺少来源建议 artifact")
+    if not _text(project_update.get("risk_summary")):
+        reasons.append("建议生成的项目管理 JSON 缺少中文风险摘要")
+    if project_update.get("execution_allowed") is not False:
+        reasons.append("建议生成的项目管理 JSON 必须保持 execution_allowed=false，由项目管理确认入口控制真实执行")
+    if project_update.get("dry_run_required") is not True:
+        reasons.append("建议生成的项目管理 JSON 必须保持 dry_run_required=true")
+    execution = project_update.get("execution") if isinstance(project_update.get("execution"), dict) else {}
+    if execution.get("enabled") is True:
+        reasons.append("建议生成的项目管理 JSON 必须保持 execution.enabled=false，由项目管理确认入口控制真实执行")
+    account_names = _project_update_account_names(project_update)
+    for advertiser_id in sorted({_text(action.get("advertiser_id")) for action in actions if _text(action.get("advertiser_id"))}):
+        action_name = next(
+            (
+                _text(action.get("account_name") or action.get("advertiser_name"))
+                for action in actions
+                if _text(action.get("advertiser_id")) == advertiser_id
+                and _text(action.get("account_name") or action.get("advertiser_name"))
+            ),
+            "",
+        )
+        if not action_name and not account_names.get(advertiser_id):
+            reasons.append(f"建议生成的项目管理 JSON 缺少账户名：{advertiser_id}")
+    return reasons
+
+
+def _project_update_account_names(project_update: dict[str, Any]) -> dict[str, str]:
+    rows = project_update.get("accounts") if isinstance(project_update.get("accounts"), list) else []
+    names: dict[str, str] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        account_id = _text(row.get("account_id") or row.get("advertiser_id"))
+        account_name = _text(row.get("account_name") or row.get("advertiser_name"))
+        if account_id and account_name and account_name != "未配置账户名":
+            names[account_id] = account_name
+    return names
+
+
+def _source_artifact(project_update: dict[str, Any]) -> str:
+    source = project_update.get("source") if isinstance(project_update.get("source"), dict) else {}
+    return _text(project_update.get("source_artifact") or source.get("artifact_path"))
+
+
+def _product_label(project_update: dict[str, Any]) -> str:
+    product_name = _text(project_update.get("product_name") or project_update.get("product"))
+    product_key = _text(project_update.get("product_key"))
+    if product_name and product_key:
+        return f"{product_name}（{product_key}）"
+    return product_name or product_key
+
+
+def _execute_action_label(action: dict[str, Any]) -> str:
+    explicit = _text(action.get("中文动作"))
+    if explicit:
+        return explicit
+    action_type = _text(action.get("action_type"))
+    if action_type == "status_update" and _text(action.get("opt_status")) == "DISABLE":
+        return "暂停项目"
+    if action_type == "status_update" and _text(action.get("opt_status")) == "ENABLE":
+        return "开启项目"
+    return _action_label(action_type)
+
+
+def _execute_action_counts(actions: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {"删除项目": 0, "暂停项目": 0, "调预算": 0, "调出价": 0, "调整时段": 0}
+    for action in actions:
+        label = _execute_action_label(action)
+        if label == "调整预算":
+            label = "调预算"
+        if label == "调整出价":
+            label = "调出价"
+        if label in counts:
+            counts[label] += 1
+    return counts
 
 
 def _split_account_ids(value: Any) -> list[str]:
@@ -494,24 +631,18 @@ def _config_validation_reasons(
     roi_goal: str,
 ) -> list[str]:
     reasons: list[str] = []
-    if not project_update_id:
-        reasons.append("必须明确填写配置 ID")
     if not action_type:
         reasons.append("必须明确选择项目管理动作")
     elif action_type not in ACTION_LABELS:
         reasons.append(f"不支持的项目管理动作：{action_type}")
     if not advertiser_ids:
         reasons.append("必须明确填写本次账户 ID")
-    if not spend_window:
-        reasons.append("必须明确选择数据窗口")
-    elif spend_window not in WINDOW_LABELS:
+    if spend_window and spend_window not in WINDOW_LABELS:
         reasons.append(f"不支持的数据窗口：{spend_window}")
-    if not metric_filters:
-        reasons.append("必须至少填写一个筛选条件")
-    else:
+    if metric_filters:
+        if not spend_window:
+            reasons.append("使用数据筛选时必须明确选择数据窗口")
         reasons.extend(_metric_filter_validation_reasons(metric_filters))
-    if not output_path:
-        reasons.append("必须明确填写项目管理 JSON 输出路径")
     if action_type == "status_update" and not opt_status:
         reasons.append("开启/关闭项目必须明确选择目标状态")
     if action_type == "budget_update" and not budget:
@@ -551,6 +682,22 @@ def _text(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _default_project_update_id() -> str:
+    return f"project-update-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+
+
+def _default_project_update_path(project_update_id: str) -> str:
+    return f"configs/project-updates/{project_update_id}.local.json"
+
+
+def _summary_item_value(preview: dict[str, Any], label: str) -> str:
+    summary = preview.get("summary") if isinstance(preview.get("summary"), dict) else {}
+    for item in summary.get("items") or []:
+        if isinstance(item, dict) and _text(item.get("label")) == label:
+            return _text(item.get("value"))
+    return ""
+
+
 def _action_label(action_type: str) -> str:
     return ACTION_LABELS.get(action_type, action_type or "未选择")
 
@@ -562,7 +709,15 @@ def _metric_filter_label(metric_field: str, metric_op: str, metric_value: str) -
 
 
 def _metric_filters_label(metric_filters: list[dict[str, str]]) -> str:
+    if not metric_filters:
+        return "账户范围内全部可操作项目"
     return " 且 ".join(_metric_filter_label(_text(item.get("field")), _text(item.get("op")), _text(item.get("value"))) for item in metric_filters)
+
+
+def _spend_window_label(spend_window: str, metric_filters: list[dict[str, str]]) -> str:
+    if not metric_filters:
+        return "未使用"
+    return WINDOW_LABELS.get(spend_window, spend_window)
 
 
 def _target_value(action_type: str, *, opt_status: str, budget: str, cpa_bid: str, roi_goal: str) -> str:
@@ -591,6 +746,8 @@ def _config_source_label(value: Any) -> str:
     source = _text(value)
     if source == "current_generated":
         return "本页刚生成的新配置"
+    if source == "suggestions_generated":
+        return "投放建议工作台生成的项目管理配置"
     if source == "manual":
         return "手动指定的历史配置"
     return "项目管理配置"

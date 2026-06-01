@@ -1,0 +1,34 @@
+{
+  "strategy_id": "recent-scale-capacity-v1",
+  "strategy_version": "2026-05-31",
+  "enabled": false,
+  "product_key": "",
+  "mode_key": "wx_pay_general_recent_scale",
+  "target_date": "latest",
+  "account": {
+    "require_allowed_account": true,
+    "max_active_projects": 20,
+    "cooldown_days_after_create": 2,
+    "disabled_statuses": [
+      "PROJECT_STATUS_DISABLE",
+      "PROJECT_STATUS_DISABLED",
+      "PROJECT_STATUS_DELETE",
+      "DISABLE",
+      "DISABLED",
+      "DELETED"
+    ]
+  },
+  "materials": {
+    "window_key": "last_7d",
+    "material_type": "video",
+    "min_qualified_material_count": 5,
+    "min_stat_cost": 200,
+    "min_convert_cnt": 0,
+    "min_roi_1day": 0
+  },
+  "recommendation": {
+    "project_count": 1,
+    "units_per_project": 1,
+    "daily_budget": 0
+  }
+}

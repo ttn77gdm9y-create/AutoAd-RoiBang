@@ -8,6 +8,7 @@ import { ConfirmExecutePanel } from "../components/ConfirmExecutePanel";
 import { SummaryPanel } from "../components/SummaryPanel";
 import { InlineTaskStatus, WorkflowSteps } from "../components/WorkflowScaffold";
 import type { ChineseResult, TaskDetailResponse } from "../types/api";
+import { isTaskActive, taskStatus } from "../utils/workflowState";
 
 type AccountRemarkRequest = {
   update_id: string;
@@ -68,8 +69,10 @@ export function AccountRemarksPage() {
     enabled: Boolean(executeTaskId),
     refetchInterval: 3000,
   });
+  const configGenerationStatus = taskStatus(generateTaskDetail.data, generateResult);
+  const configGenerationActive = Boolean(generateTaskId) && isTaskActive(configGenerationStatus);
   const canGenerate = previewResult?.summary.status === "planned";
-  const canReadConfig = Boolean(configPath.trim());
+  const canReadConfig = Boolean(configPath.trim()) && !configGenerationActive;
   const canExecuteCurrentConfig = configSource === "current_generated";
 
   useEffect(() => {
@@ -108,8 +111,8 @@ export function AccountRemarksPage() {
       setGenerateResult(result);
       setExecutePreviewResult(undefined);
       setExecuteResult(undefined);
-      setConfigPath(request.output_path);
-      setConfigSource("current_generated");
+      setConfigPath("");
+      setConfigSource("");
       await queryClient.invalidateQueries({ queryKey: ["tasks"] });
       antdMessage.success("账户备注配置正在生成，本页会显示进度");
     },
@@ -145,7 +148,7 @@ export function AccountRemarksPage() {
           <Form layout="vertical" className="filter-bar">
             <Row gutter={[16, 0]}>
               <Col xs={24} lg={8}>
-                <Form.Item label="目标备注">
+                <Form.Item label="要写入的账户备注">
                   <Input value={request.remark} onChange={(event) => setRequest({ ...request, remark: event.target.value })} />
                 </Form.Item>
               </Col>
@@ -165,22 +168,24 @@ export function AccountRemarksPage() {
                   items={[
                     {
                       key: "advanced",
-                      label: "高级信息：配置编号和文件路径",
+                      label: "高级信息：本次备注配置文件",
                       children: (
                         <Row gutter={[16, 0]}>
                           <Col xs={24} lg={8}>
-                            <Form.Item label="配置 ID">
+                            <Form.Item label="备注配置 ID（可空，系统自动生成）">
                               <Input
                                 value={request.update_id}
                                 onChange={(event) => setRequest({ ...request, update_id: event.target.value })}
+                                placeholder="不填则自动生成"
                               />
                             </Form.Item>
                           </Col>
                           <Col xs={24} lg={16}>
-                            <Form.Item label="配置保存路径">
+                            <Form.Item label="备注配置 JSON 路径（可空，系统自动生成）">
                               <Input
                                 value={request.output_path}
                                 onChange={(event) => setRequest({ ...request, output_path: event.target.value })}
+                                placeholder="不填则保存到 configs/account-updates/"
                               />
                             </Form.Item>
                           </Col>
@@ -214,7 +219,9 @@ export function AccountRemarksPage() {
               showIcon
               message="这里不会重新选择账户；主路径只执行本页刚生成的新配置，避免误拿历史 JSON 写备注。"
             />
-            {configSource === "current_generated" ? (
+            {configGenerationActive ? (
+              <Alert type="info" showIcon message="账户备注配置正在生成，完成后再核对写入明细。" />
+            ) : configSource === "current_generated" ? (
               <Alert type="success" showIcon message="当前配置来源：本页刚生成的新配置" description={configPath} />
             ) : configSource === "manual" ? (
               <Alert
@@ -254,7 +261,7 @@ export function AccountRemarksPage() {
               onClick={() => executePreview.mutate()}
               loading={executePreview.isPending}
             >
-              {canExecuteCurrentConfig ? "核对本次写入明细" : "查看手动配置明细"}
+              {configGenerationActive ? "等待配置生成完成" : canExecuteCurrentConfig ? "核对本次写入明细" : "查看手动配置明细"}
             </Button>
             {executePreview.error ? <Alert type="error" showIcon message={(executePreview.error as Error).message} /> : null}
             <SummaryPanel

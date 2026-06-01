@@ -18,7 +18,7 @@ function rememberApiBase(apiBase: string): void {
 }
 
 function getApiBases(): string[] {
-  const bases = [...DEFAULT_API_BASES, CONFIGURED_API_BASE, getStoredApiBase()].filter(Boolean) as string[];
+  const bases = [CONFIGURED_API_BASE, getStoredApiBase(), ...DEFAULT_API_BASES].filter(Boolean) as string[];
   return [...new Set(bases)];
 }
 

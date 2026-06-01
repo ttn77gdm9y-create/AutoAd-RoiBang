@@ -11,7 +11,7 @@ def test_workbench_daily_pipeline_template_excludes_material_daily_from_main_pat
     assert "material_daily" not in pipeline["report_fetch"]["openapi"]["report_presets"]
 
 
-def test_scheduler_uses_main_daily_template_and_disables_field_catalog():
+def test_scheduler_uses_product_daily_sync_job_and_disables_field_catalog():
     payload = json.loads(Path("configs/scheduler/roibang-v2.jobs.example.json").read_text())
     jobs = payload["jobs"]
     job_ids = [job["id"] for job in jobs]
@@ -26,11 +26,11 @@ def test_scheduler_uses_main_daily_template_and_disables_field_catalog():
     assert field_job["category"] == "report_field_catalog"
     assert daily_job["script"]["command"] == [
         "python3",
-        "scripts/run_daily_report_pipeline.py",
-        "--config",
-        "configs/runtime.openapi-execute.local.example.json",
-        "--request",
-        "configs/daily-report-pipeline.daily-readonly.example.json",
+        "scripts/run_product_automation_job.py",
+        "--job",
+        "daily_report_sync",
+        "--target-date",
+        "yesterday",
         "--enable-readonly",
     ]
 

@@ -83,6 +83,26 @@ def _allowed_account_ids(cfg: dict[str, Any]) -> set[str]:
     return allowed
 
 
+def _target_account_ids(cfg: dict[str, Any]) -> set[str] | None:
+    if "target_account_ids" not in cfg:
+        return None
+    raw = cfg.get("target_account_ids")
+    if isinstance(raw, str):
+        values = [item.strip() for item in raw.split(",") if item.strip()]
+    elif isinstance(raw, list):
+        values = []
+        for item in raw:
+            if isinstance(item, dict):
+                account_id = str(item.get("advertiser_id") or item.get("account_id") or "").strip()
+            else:
+                account_id = str(item or "").strip()
+            if account_id:
+                values.append(account_id)
+    else:
+        values = []
+    return set(values)
+
+
 def _split_by_allowlist(
     suggestions: list[dict[str, Any]],
     *,
@@ -93,11 +113,39 @@ def _split_by_allowlist(
     allowed: list[dict[str, Any]] = []
     blocked: list[dict[str, Any]] = []
     for suggestion in suggestions:
-        if str(suggestion.get("advertiser_id") or "") in allowed_account_ids:
+        if suggestion.get("allowlist_exception") is True or str(suggestion.get("advertiser_id") or "") in allowed_account_ids:
             allowed.append(suggestion)
         else:
             blocked.append({**suggestion, "blocked_reason": "target account is not in allowlist"})
     return allowed, blocked
+
+
+def _split_by_target_accounts(
+    suggestions: list[dict[str, Any]],
+    *,
+    target_account_ids: set[str] | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if target_account_ids is None:
+        return suggestions, []
+    allowed: list[dict[str, Any]] = []
+    blocked: list[dict[str, Any]] = []
+    for suggestion in suggestions:
+        if suggestion.get("allowlist_exception") is True or str(suggestion.get("advertiser_id") or "") in target_account_ids:
+            allowed.append(suggestion)
+        else:
+            blocked.append({**suggestion, "blocked_reason": "target account is not in today's patrol spent allowlist"})
+    return allowed, blocked
+
+
+def _suggestion_id(
+    *,
+    target_date: str,
+    suggestion_type: str,
+    advertiser_id: str,
+    entity_type: str,
+    entity_id: str,
+) -> str:
+    return f"{target_date}:{entity_type}:{advertiser_id}:{entity_id}:{suggestion_type}"
 
 
 def _scope_sql(product_keyword: str) -> tuple[str, dict[str, Any]]:
@@ -174,6 +222,7 @@ def _project_day_rows(
         SELECT
           mdm.advertiser_id,
           mdm.project_id,
+          COALESCE(MAX(NULLIF(mdm.project_name, '')), mdm.project_id) AS project_name,
           COUNT(DISTINCT mdm.promotion_id) AS promotion_count,
           COALESCE(SUM(mdm.stat_cost), 0) AS stat_cost,
           COALESCE(SUM(mdm.convert_cnt), 0) AS convert_cnt,
@@ -191,6 +240,114 @@ def _project_day_rows(
         """,
         params,
     ).fetchall()
+
+
+def _delete_project_closed_low_recent_suggestions(
+    conn: sqlite3.Connection,
+    *,
+    cfg: dict[str, Any],
+    target_date: str,
+) -> list[dict[str, Any]]:
+    rule_id = "delete_project_closed_low_recent"
+    rule = _rule(cfg, rule_id)
+    if not bool(rule.get("enabled", False)):
+        return []
+
+    lookback_days = max(int(rule.get("lookback_days") or 2), 1)
+    max_stat_cost = _number(rule.get("max_stat_cost"), 100)
+    max_convert_cnt = _number(rule.get("max_convert_cnt"), 0)
+    disabled_statuses = rule.get("disabled_statuses")
+    if not isinstance(disabled_statuses, list) or not disabled_statuses:
+        disabled_statuses = ["PROJECT_STATUS_DISABLE", "PROJECT_STATUS_DISABLED", "DISABLE", "DISABLED"]
+    start_date = (date.fromisoformat(target_date) - timedelta(days=lookback_days - 1)).isoformat()
+    where_sql, params = _account_pool_scope_sql("p.advertiser_id", str(cfg.get("product_keyword") or ""))
+    params.update(
+        {
+            "start_date": start_date,
+            "target_date": target_date,
+            "max_stat_cost": max_stat_cost,
+            "max_convert_cnt": max_convert_cnt,
+        }
+    )
+    status_placeholders: list[str] = []
+    for index, status in enumerate(disabled_statuses):
+        key = f"disabled_status_{index}"
+        status_placeholders.append(f":{key}")
+        params[key] = str(status)
+
+    rows = conn.execute(
+        f"""
+        SELECT
+          p.advertiser_id,
+          COALESCE(MAX(ap.account_name), '') AS account_name,
+          p.project_id,
+          COALESCE(NULLIF(p.name, ''), MAX(mdm.project_name), p.project_id) AS project_name,
+          p.status,
+          COALESCE(SUM(mdm.stat_cost), 0) AS stat_cost,
+          COALESCE(SUM(mdm.convert_cnt), 0) AS convert_cnt,
+          COUNT(DISTINCT mdm.metric_date) AS active_days
+        FROM projects p
+        LEFT JOIN material_daily_metrics mdm
+          ON mdm.advertiser_id = p.advertiser_id
+          AND mdm.project_id = p.project_id
+          AND mdm.metric_date BETWEEN :start_date AND :target_date
+        LEFT JOIN account_pool ap
+          ON ap.advertiser_id = p.advertiser_id
+        WHERE {where_sql}
+          AND p.project_id <> ''
+          AND p.status IN ({", ".join(status_placeholders)})
+        GROUP BY p.advertiser_id, p.project_id, p.name, p.status
+        HAVING COALESCE(SUM(mdm.stat_cost), 0) <= :max_stat_cost
+          AND COALESCE(SUM(mdm.convert_cnt), 0) <= :max_convert_cnt
+        ORDER BY stat_cost ASC, p.advertiser_id, p.project_id
+        """,
+        params,
+    ).fetchall()
+
+    suggestions: list[dict[str, Any]] = []
+    for row in rows:
+        advertiser_id = str(row["advertiser_id"] or "")
+        project_id = str(row["project_id"] or "")
+        suggestions.append(
+            {
+                "suggestion_id": _suggestion_id(
+                    target_date=target_date,
+                    suggestion_type="suggest_delete_project",
+                    advertiser_id=advertiser_id,
+                    entity_type="project",
+                    entity_id=project_id,
+                ),
+                "suggestion_type": "suggest_delete_project",
+                "suggested_action": "suggest_delete_project",
+                "rule_id": rule_id,
+                "target_date": target_date,
+                "advertiser_id": advertiser_id,
+                "account_name": str(row["account_name"] or ""),
+                "entity_type": "project",
+                "entity_id": project_id,
+                "project_id": project_id,
+                "entity_name": str(row["project_name"] or project_id),
+                "project_name": str(row["project_name"] or project_id),
+                "status": str(row["status"] or ""),
+                "reason": "项目已明确关闭，近两天低消耗且无转化，建议作为项目数量清理候选。",
+                "metrics": {
+                    "stat_cost": _rounded(float(row["stat_cost"] or 0)),
+                    "convert_cnt": _rounded(float(row["convert_cnt"] or 0)),
+                    "active_days": int(row["active_days"] or 0),
+                },
+                "thresholds": {
+                    "lookback_days": lookback_days,
+                    "max_stat_cost": _rounded(max_stat_cost),
+                    "max_convert_cnt": _rounded(max_convert_cnt),
+                    "disabled_statuses": list(disabled_statuses),
+                },
+                "execution": {
+                    "enabled": False,
+                    "note": "建议文件只供复核；不会调用删除项目接口。",
+                },
+            }
+        )
+    return suggestions
 
 
 def _pause_project_low_first_day_roi_suggestions(
@@ -221,6 +378,7 @@ def _pause_project_low_first_day_roi_suggestions(
         SELECT
           mdm.advertiser_id,
           mdm.project_id,
+          COALESCE(MAX(NULLIF(mdm.project_name, '')), mdm.project_id) AS project_name,
           COUNT(DISTINCT mdm.promotion_id) AS promotion_count,
           COALESCE(SUM(mdm.stat_cost), 0) AS stat_cost,
           COALESCE(SUM(mdm.convert_cnt), 0) AS convert_cnt,
@@ -246,6 +404,8 @@ def _pause_project_low_first_day_roi_suggestions(
     for row in rows:
         stat_cost = float(row["stat_cost"] or 0)
         roi_1day = float(row["roi_1day_weighted_sum"] or 0) / stat_cost if stat_cost > 0 else 0
+        project_id = str(row["project_id"] or "")
+        project_name = str(row["project_name"] or project_id)
         suggestions.append(
             {
                 "suggestion_type": "pause_project",
@@ -253,7 +413,10 @@ def _pause_project_low_first_day_roi_suggestions(
                 "target_date": target_date,
                 "advertiser_id": str(row["advertiser_id"]),
                 "entity_type": "project",
-                "entity_id": str(row["project_id"]),
+                "entity_id": project_id,
+                "project_id": project_id,
+                "entity_name": project_name,
+                "project_name": project_name,
                 "reason": "首日 ROI 低于阈值且消耗/转化达到观察门槛",
                 "metrics": {
                     "stat_cost": _rounded(stat_cost),
@@ -310,6 +473,8 @@ def _adjust_project_budget_low_roi_suggestions(
         stat_cost = float(row["stat_cost"] or 0)
         convert_cnt = float(row["convert_cnt"] or 0)
         roi_1day = float(row["roi_1day_weighted_sum"] or 0) / stat_cost if stat_cost > 0 else 0
+        project_id = str(row["project_id"] or "")
+        project_name = str(row["project_name"] or project_id)
         suggestions.append(
             {
                 "suggestion_type": "adjust_project_budget",
@@ -317,7 +482,10 @@ def _adjust_project_budget_low_roi_suggestions(
                 "target_date": target_date,
                 "advertiser_id": str(row["advertiser_id"]),
                 "entity_type": "project",
-                "entity_id": str(row["project_id"]),
+                "entity_id": project_id,
+                "project_id": project_id,
+                "entity_name": project_name,
+                "project_name": project_name,
                 "reason": "首日 ROI 低于预算调整阈值，建议按配置下调项目预算，不猜具体预算金额",
                 "metrics": {
                     "stat_cost": _rounded(stat_cost),
@@ -382,6 +550,8 @@ def _adjust_project_bid_high_cpa_suggestions(
         stat_cost = float(row["stat_cost"] or 0)
         convert_cnt = float(row["convert_cnt"] or 0)
         roi_1day = float(row["roi_1day_weighted_sum"] or 0) / stat_cost if stat_cost > 0 else 0
+        project_id = str(row["project_id"] or "")
+        project_name = str(row["project_name"] or project_id)
         suggestions.append(
             {
                 "suggestion_type": "adjust_project_bid",
@@ -389,7 +559,10 @@ def _adjust_project_bid_high_cpa_suggestions(
                 "target_date": target_date,
                 "advertiser_id": str(row["advertiser_id"]),
                 "entity_type": "project",
-                "entity_id": str(row["project_id"]),
+                "entity_id": project_id,
+                "project_id": project_id,
+                "entity_name": project_name,
+                "project_name": project_name,
                 "reason": "转化成本高于配置阈值，建议按配置下调项目出价，不猜当前出价",
                 "metrics": {
                     "stat_cost": _rounded(stat_cost),
@@ -523,6 +696,210 @@ def _schedule_hollow_low_realtime_hour_roi_suggestions(
             }
         )
     return suggestions, True, []
+
+
+def _material_reuse_risk_suggestions(
+    conn: sqlite3.Connection,
+    *,
+    cfg: dict[str, Any],
+    target_date: str,
+) -> list[dict[str, Any]]:
+    rule_id = "material_reuse_risk"
+    rule = _rule(cfg, rule_id)
+    if not bool(rule.get("enabled", False)):
+        return []
+
+    product_keyword = str(cfg.get("product_keyword") or "").strip()
+    window_key = str(rule.get("window_key") or "last_7d").strip()
+    min_account_count = int(rule.get("min_account_count") or 0)
+    min_project_count = int(rule.get("min_project_count") or 5)
+    min_promotion_count = int(rule.get("min_promotion_count") or 10)
+    min_stat_cost = _number(rule.get("min_stat_cost"), 1000)
+    max_roi_1day = _number(rule.get("max_roi_1day"), 0.05)
+    product_filter = "psmr.product <> ''"
+    params: dict[str, Any] = {
+        "window_key": window_key,
+        "target_date": target_date,
+        "min_account_count": min_account_count,
+        "min_project_count": min_project_count,
+        "min_promotion_count": min_promotion_count,
+        "min_stat_cost": min_stat_cost,
+        "max_roi_1day": max_roi_1day,
+    }
+    if product_keyword:
+        product_filter = "(psmr.product = :product_keyword OR psmr.product LIKE :product_keyword_like)"
+        params["product_keyword"] = product_keyword
+        params["product_keyword_like"] = f"%{product_keyword}%"
+
+    rows = conn.execute(
+        f"""
+        SELECT
+          psmr.product,
+          psmr.source_advertiser_id,
+          psmr.material_id,
+          psmr.name,
+          psmr.window_key,
+          psmr.period_start,
+          psmr.period_end,
+          psmr.account_count,
+          psmr.project_count,
+          psmr.promotion_count,
+          psmr.stat_cost,
+          psmr.convert_cnt,
+          psmr.roi_1day_cost_weighted
+        FROM product_source_material_metric_rollups psmr
+        WHERE {product_filter}
+          AND psmr.window_key = :window_key
+          AND psmr.period_end = (
+            SELECT MAX(inner_psmr.period_end)
+            FROM product_source_material_metric_rollups inner_psmr
+            WHERE inner_psmr.window_key = psmr.window_key
+              AND inner_psmr.product = psmr.product
+              AND inner_psmr.period_end <= :target_date
+          )
+          AND psmr.stat_cost >= :min_stat_cost
+          AND psmr.roi_1day_cost_weighted < :max_roi_1day
+          AND (
+            psmr.account_count >= :min_account_count
+            OR psmr.project_count >= :min_project_count
+            OR psmr.promotion_count >= :min_promotion_count
+          )
+        ORDER BY psmr.stat_cost DESC, psmr.project_count DESC, psmr.material_id
+        LIMIT 50
+        """,
+        params,
+    ).fetchall()
+
+    suggestions: list[dict[str, Any]] = []
+    for row in rows:
+        advertiser_id = str(row["source_advertiser_id"] or "")
+        material_id = str(row["material_id"] or "")
+        suggestions.append(
+            {
+                "suggestion_id": _suggestion_id(
+                    target_date=target_date,
+                    suggestion_type="material_reuse_risk",
+                    advertiser_id=advertiser_id,
+                    entity_type="material",
+                    entity_id=material_id,
+                ),
+                "suggestion_type": "material_reuse_risk",
+                "suggested_action": "material_reuse_risk",
+                "rule_id": rule_id,
+                "target_date": target_date,
+                "advertiser_id": advertiser_id,
+                "entity_type": "material",
+                "entity_id": material_id,
+                "entity_name": str(row["name"] or material_id),
+                "allowlist_exception": True,
+                "reason": "素材在多个账户、项目或单元中高频复用，但近 7 天 ROI 偏低，建议人工复核复用风险。",
+                "metrics": {
+                    "window_key": str(row["window_key"] or ""),
+                    "period_start": str(row["period_start"] or ""),
+                    "period_end": str(row["period_end"] or ""),
+                    "account_count": int(row["account_count"] or 0),
+                    "project_count": int(row["project_count"] or 0),
+                    "promotion_count": int(row["promotion_count"] or 0),
+                    "stat_cost": _rounded(float(row["stat_cost"] or 0)),
+                    "convert_cnt": _rounded(float(row["convert_cnt"] or 0)),
+                    "roi_1day": _rounded(float(row["roi_1day_cost_weighted"] or 0)),
+                },
+                "thresholds": {
+                    "window_key": window_key,
+                    "min_account_count": min_account_count,
+                    "min_project_count": min_project_count,
+                    "min_promotion_count": min_promotion_count,
+                    "min_stat_cost": _rounded(min_stat_cost),
+                    "max_roi_1day": _rounded(max_roi_1day),
+                },
+                "execution": {
+                    "enabled": False,
+                    "note": "素材复用风险只读展示，不生成项目动作配置。",
+                },
+            }
+        )
+    return suggestions
+
+
+def _account_spent_outside_allowlist_suggestions(
+    conn: sqlite3.Connection,
+    *,
+    cfg: dict[str, Any],
+    target_date: str,
+    allowed_account_ids: set[str],
+) -> list[dict[str, Any]]:
+    rule_id = "account_spent_outside_allowlist"
+    rule = _rule(cfg, rule_id)
+    if not bool(rule.get("enabled", False)) or not allowed_account_ids:
+        return []
+
+    min_stat_cost = _number(rule.get("min_stat_cost"), 100)
+    where_sql, params = _scope_sql(str(cfg.get("product_keyword") or ""))
+    params.update({"target_date": target_date, "min_stat_cost": min_stat_cost})
+    placeholders: list[str] = []
+    for index, account_id in enumerate(sorted(allowed_account_ids)):
+        key = f"allowed_account_{index}"
+        placeholders.append(f":{key}")
+        params[key] = account_id
+    rows = conn.execute(
+        f"""
+        SELECT
+          mdm.advertiser_id,
+          COALESCE(MAX(ap.account_name), '') AS account_name,
+          COALESCE(SUM(mdm.stat_cost), 0) AS stat_cost,
+          COALESCE(SUM(mdm.convert_cnt), 0) AS convert_cnt,
+          COUNT(DISTINCT mdm.project_id) AS project_count,
+          COUNT(DISTINCT mdm.promotion_id) AS promotion_count
+        FROM material_daily_metrics mdm
+        LEFT JOIN account_pool ap
+          ON ap.advertiser_id = mdm.advertiser_id
+        WHERE {where_sql}
+          AND mdm.metric_date = :target_date
+          AND mdm.advertiser_id NOT IN ({", ".join(placeholders)})
+        GROUP BY mdm.advertiser_id
+        HAVING COALESCE(SUM(mdm.stat_cost), 0) >= :min_stat_cost
+        ORDER BY stat_cost DESC, mdm.advertiser_id
+        """,
+        params,
+    ).fetchall()
+
+    suggestions: list[dict[str, Any]] = []
+    for row in rows:
+        advertiser_id = str(row["advertiser_id"] or "")
+        suggestions.append(
+            {
+                "suggestion_id": _suggestion_id(
+                    target_date=target_date,
+                    suggestion_type="account_spent_outside_allowlist",
+                    advertiser_id=advertiser_id,
+                    entity_type="account",
+                    entity_id=advertiser_id,
+                ),
+                "suggestion_type": "account_spent_outside_allowlist",
+                "suggested_action": "account_spent_outside_allowlist",
+                "rule_id": rule_id,
+                "target_date": target_date,
+                "advertiser_id": advertiser_id,
+                "account_name": str(row["account_name"] or ""),
+                "entity_type": "account",
+                "entity_id": advertiser_id,
+                "entity_name": str(row["account_name"] or advertiser_id),
+                "allowlist_exception": True,
+                "reason": "该账户在目标日期有消耗，但不在产品允许创建账户名单中，建议人工复核账户归属或名单配置。",
+                "metrics": {
+                    "stat_cost": _rounded(float(row["stat_cost"] or 0)),
+                    "convert_cnt": _rounded(float(row["convert_cnt"] or 0)),
+                    "project_count": int(row["project_count"] or 0),
+                    "promotion_count": int(row["promotion_count"] or 0),
+                },
+                "thresholds": {"min_stat_cost": _rounded(min_stat_cost)},
+                "execution": {
+                    "enabled": False,
+                    "note": "账户异常只读展示，不生成项目动作配置。",
+                },
+            }
+        )
+    return suggestions
 
 
 def _operation_evidence_enabled(cfg: dict[str, Any]) -> bool:
@@ -741,7 +1118,9 @@ def build_control_strategy_suggestions(db_path: str | Path, request: dict[str, A
     cfg = dict(request or {})
     target_date = _target_date(cfg)
     allowed_account_ids = _allowed_account_ids(cfg)
+    target_account_ids = _target_account_ids(cfg)
     with _connect(db_path) as conn:
+        delete_suggestions = _delete_project_closed_low_recent_suggestions(conn, cfg=cfg, target_date=target_date)
         pause_suggestions = _pause_project_low_first_day_roi_suggestions(conn, cfg=cfg, target_date=target_date)
         budget_suggestions = _adjust_project_budget_low_roi_suggestions(conn, cfg=cfg, target_date=target_date)
         bid_suggestions = _adjust_project_bid_high_cpa_suggestions(conn, cfg=cfg, target_date=target_date)
@@ -750,16 +1129,36 @@ def build_control_strategy_suggestions(db_path: str | Path, request: dict[str, A
             cfg=cfg,
             target_date=target_date,
         )
+        material_suggestions = _material_reuse_risk_suggestions(conn, cfg=cfg, target_date=target_date)
+        account_anomaly_suggestions = _account_spent_outside_allowlist_suggestions(
+            conn,
+            cfg=cfg,
+            target_date=target_date,
+            allowed_account_ids=allowed_account_ids,
+        )
         all_suggestions = _attach_historical_operation_evidence(
-            [*pause_suggestions, *budget_suggestions, *bid_suggestions, *schedule_suggestions],
+            [
+                *delete_suggestions,
+                *pause_suggestions,
+                *budget_suggestions,
+                *bid_suggestions,
+                *schedule_suggestions,
+                *material_suggestions,
+                *account_anomaly_suggestions,
+            ],
             conn=conn,
             cfg=cfg,
             target_date=target_date,
         )
-    suggestions, blocked = _split_by_allowlist(
+    target_filtered_suggestions, blocked_by_target = _split_by_target_accounts(
         all_suggestions,
+        target_account_ids=target_account_ids,
+    )
+    suggestions, blocked_by_allowlist = _split_by_allowlist(
+        target_filtered_suggestions,
         allowed_account_ids=allowed_account_ids,
     )
+    blocked = [*blocked_by_target, *blocked_by_allowlist]
     return {
         "ok": True,
         "workflow": "control_strategy_suggestions",
@@ -772,6 +1171,9 @@ def build_control_strategy_suggestions(db_path: str | Path, request: dict[str, A
             if str(cfg.get("product_keyword") or "").strip()
             else {},
             "suggestion_count": len(suggestions),
+            "suggest_delete_project_count": sum(
+                1 for item in suggestions if item.get("suggestion_type") == "suggest_delete_project"
+            ),
             "pause_project_suggestion_count": sum(
                 1 for item in suggestions if item.get("suggestion_type") == "pause_project"
             ),
@@ -789,7 +1191,15 @@ def build_control_strategy_suggestions(db_path: str | Path, request: dict[str, A
                 for item in suggestions
                 if int((item.get("historical_operation_evidence") or {}).get("operation_count") or 0) > 0
             ),
-            "blocked_by_allowlist_count": len(blocked),
+            "material_reuse_risk_count": sum(
+                1 for item in suggestions if item.get("suggestion_type") == "material_reuse_risk"
+            ),
+            "account_anomaly_count": sum(
+                1 for item in suggestions if item.get("suggestion_type") == "account_spent_outside_allowlist"
+            ),
+            "blocked_by_target_account_count": len(blocked_by_target),
+            "blocked_by_allowlist_count": len(blocked_by_allowlist),
+            "target_account_count": len(target_account_ids) if target_account_ids is not None else None,
             "allowed_account_count": len(allowed_account_ids),
             "realtime_hourly_data_ready": realtime_ready,
         },

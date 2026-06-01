@@ -167,8 +167,10 @@ def build_operation_log_detail_result(
 
 def _table_row(row: dict[str, Any]) -> dict[str, Any]:
     business_context = _business_context(row, {})
+    task_id = str(row.get("task_id") or "")
     return {
-        "关联任务": str(row.get("task_id") or ""),
+        "关联任务": task_id,
+        "任务 ID": task_id,
         "操作": operation_label(row.get("operation_type")),
         "业务内容": business_context,
         "状态": status_label(row.get("status")),

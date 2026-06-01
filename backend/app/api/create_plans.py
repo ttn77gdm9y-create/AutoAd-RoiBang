@@ -11,10 +11,13 @@ from pydantic import Field
 
 from backend.app.services.create_plans import build_create_plan_detail
 from backend.app.services.create_plans import build_create_plan_execute_preview
+from backend.app.services.create_plans import build_create_plan_execution_review_preview
 from backend.app.services.create_plans import build_create_plan_generate_preview
+from backend.app.services.create_plans import build_create_plan_suggestion_preview_detail
 from backend.app.services.create_plans import build_create_plan_template_detail
 from backend.app.services.create_plans import build_latest_create_plan_detail
 from backend.app.services.create_plans import list_create_plan_templates
+from backend.app.services.create_plans import list_create_plan_modes
 from backend.app.services.create_plans import start_create_plan_execute_task
 from backend.app.services.create_plans import start_create_plan_generate_task
 
@@ -37,6 +40,10 @@ class CreatePlanPreviewRequest(BaseModel):
 class CreatePlanDetailRequest(BaseModel):
     plan_path: str = ""
     plan_source: str = ""
+    source_suggestion_preview_path: str = ""
+    execution_review_artifact_path: str = ""
+    review_config_path: str = ""
+    operator: str = ""
 
 
 class CreatePlanExecutePreviewRequest(CreatePlanDetailRequest):
@@ -45,6 +52,13 @@ class CreatePlanExecutePreviewRequest(CreatePlanDetailRequest):
 
 class CreatePlanExecuteRequest(CreatePlanExecutePreviewRequest):
     confirmation: str
+
+
+class CreatePlanExecutionReviewRequest(CreatePlanDetailRequest):
+    create_plan_preview_path: str = ""
+    batch_name: str = ""
+    batch_sequence: str = ""
+    resume_existing_plan: bool = False
 
 
 @router.post("/create-plans/preview")
@@ -70,9 +84,30 @@ def latest_create_plan(request: Request) -> dict:
     )
 
 
+@router.get("/create-plans/suggestion-preview")
+def create_plan_suggestion_preview(request: Request, path: str = Query(default="")) -> dict:
+    return build_create_plan_suggestion_preview_detail(
+        path,
+        project_root=request.app.state.settings.project_root,
+    )
+
+
+@router.post("/create-plans/execution-review/preview")
+def create_plan_execution_review_preview(request: Request, body: CreatePlanExecutionReviewRequest) -> dict:
+    return build_create_plan_execution_review_preview(
+        body.model_dump(),
+        project_root=request.app.state.settings.project_root,
+    )
+
+
 @router.get("/create-plans/templates")
 def create_plan_templates(request: Request) -> dict:
     return list_create_plan_templates(project_root=request.app.state.settings.project_root)
+
+
+@router.get("/create-plans/modes")
+def create_plan_modes(request: Request, product_key: str = Query(default="")) -> dict:
+    return list_create_plan_modes(project_root=request.app.state.settings.project_root, product_key=product_key)
 
 
 @router.get("/create-plans/template-detail")

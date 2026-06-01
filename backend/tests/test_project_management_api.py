@@ -57,6 +57,54 @@ def _write_project_update(root: Path) -> str:
     return "configs/project-updates/delete-p2.local.json"
 
 
+def _write_suggestion_project_update(root: Path, *, patch: dict | None = None) -> str:
+    path = root / "configs" / "project-updates" / "suggestions-demo.local.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "中文摘要": "根据规则建议生成项目管理动作 JSON，涉及 1 个账户、2 个动作；只生成配置，不执行真实业务动作。",
+        "project_update_id": "suggestions-demo",
+        "operator": "运营A",
+        "product_key": "demo-game",
+        "product_name": "演示游戏",
+        "source_artifact": "data/runs/delivery_patrol_suggestions/20260528T100001Z.json",
+        "generated_at": "2026-05-29T10:00:00+00:00",
+        "accounts": [{"account_id": "1001", "account_name": "演示账户一"}],
+        "risk_summary": "包含删除项目 1 个、暂停项目 1 个；执行前必须人工核对账户、项目、动作和来源建议。",
+        "dry_run_required": True,
+        "execution_allowed": False,
+        "source": {"workflow": "delivery_patrol_suggestions", "artifact_path": "data/runs/delivery_patrol_suggestions/20260528T100001Z.json"},
+        "execution": {"enabled": False, "status": "planned_only"},
+        "actions": [
+            {
+                "action_type": "delete_project",
+                "中文动作": "删除项目",
+                "advertiser_id": "1001",
+                "account_name": "演示账户一",
+                "entity_type": "project",
+                "project_id": "p-delete",
+                "project_name": "演示游戏-旧项目",
+                "reason": "项目已关闭且两天无计费时间转化，建议删除。",
+            },
+            {
+                "action_type": "status_update",
+                "中文动作": "暂停项目",
+                "advertiser_id": "1001",
+                "account_name": "演示账户一",
+                "entity_type": "project",
+                "project_id": "p-close",
+                "project_name": "演示游戏-关闭候选",
+                "reason": "累计消耗达到阈值但计费时间转化为 0，建议暂停项目。",
+                "opt_status": "DISABLE",
+            },
+        ],
+        "restore_actions": [],
+    }
+    if patch:
+        payload.update(patch)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return "configs/project-updates/suggestions-demo.local.json"
+
+
 def test_project_management_config_preview_returns_chinese_summary(tmp_path):
     client = TestClient(create_app(project_root=tmp_path))
 
@@ -126,13 +174,80 @@ def test_project_management_config_preview_blocks_missing_required_choices(tmp_p
     assert payload["summary"]["status"] == "blocked"
     assert payload["summary"]["execution_enabled"] is False
     assert payload["summary"]["blocking_reasons"] == [
-        "必须明确填写配置 ID",
         "必须明确选择项目管理动作",
         "必须明确填写本次账户 ID",
-        "必须明确选择数据窗口",
-        "必须至少填写一个筛选条件",
-        "必须明确填写项目管理 JSON 输出路径",
     ]
+
+
+def test_project_management_config_preview_all_projects_without_metric_filters(tmp_path):
+    client = TestClient(create_app(project_root=tmp_path))
+
+    response = client.post(
+        "/api/project-management/config/preview",
+        json={
+            "project_update_id": "close-all-projects",
+            "advertiser_ids": "1001\n1002",
+            "action_type": "status_update",
+            "name_contains": "",
+            "spend_window": "",
+            "metric_filters": [{"field": "", "op": "", "value": ""}],
+            "opt_status": "DISABLE",
+            "output_path": "configs/project-updates/close-all-projects.local.json",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["status"] == "planned"
+    assert {"label": "数据窗口", "value": "未使用"} in payload["summary"]["items"]
+    assert {"label": "筛选条件", "value": "账户范围内全部可操作项目"} in payload["summary"]["items"]
+    assert payload["table"]["rows"][0]["数据窗口"] == "未使用"
+    assert payload["table"]["rows"][0]["筛选条件"] == "账户范围内全部可操作项目"
+    assert "--spend-window" not in payload["raw"]["command"]
+    assert "--metric-filter" not in payload["raw"]["command"]
+    assert "--opt-status" in payload["raw"]["command"]
+    assert "DISABLE" in payload["raw"]["command"]
+
+
+def test_project_management_config_preview_requires_window_only_for_metric_filters(tmp_path):
+    client = TestClient(create_app(project_root=tmp_path))
+
+    response = client.post(
+        "/api/project-management/config/preview",
+        json={
+            **_project_management_request(),
+            "spend_window": "",
+            "metric_filters": [{"field": "stat_cost", "op": "gt", "value": "1"}],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["status"] == "blocked"
+    assert payload["summary"]["blocking_reasons"] == ["使用数据筛选时必须明确选择数据窗口"]
+
+
+def test_project_management_config_preview_auto_fills_internal_id_and_output_path(tmp_path):
+    client = TestClient(create_app(project_root=tmp_path))
+
+    response = client.post(
+        "/api/project-management/config/preview",
+        json={
+            **_project_management_request(),
+            "project_update_id": "",
+            "output_path": "",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["status"] == "planned"
+    assert "必须明确填写配置 ID" not in payload["summary"]["blocking_reasons"]
+    assert "必须明确填写项目管理 JSON 输出路径" not in payload["summary"]["blocking_reasons"]
+    config_id = next(item["value"] for item in payload["summary"]["items"] if item["label"] == "配置 ID")
+    output_json = next(item["value"] for item in payload["summary"]["items"] if item["label"] == "输出 JSON")
+    assert config_id.startswith("project-update-")
+    assert output_json == f"configs/project-updates/{config_id}.local.json"
 
 
 def test_project_management_config_preview_supports_and_metric_filters(tmp_path):
@@ -270,6 +385,126 @@ def test_project_management_execute_preview_reads_project_update_summary(tmp_pat
     assert payload["raw"]["execute_command"][1] == "scripts/run_project_update_execute.py"
     assert "--execute" in payload["raw"]["execute_command"]
     assert "--yes" in payload["raw"]["execute_command"]
+
+
+def test_project_management_execute_preview_accepts_suggestion_json_with_chinese_summary_and_account_names(tmp_path):
+    project_update_path = _write_suggestion_project_update(tmp_path)
+    client = TestClient(create_app(project_root=tmp_path))
+
+    response = client.post(
+        "/api/project-management/execute/preview",
+        json={"project_update_path": project_update_path, "config_source": "suggestions_generated"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["title"] == "项目管理执行预览"
+    assert payload["summary"]["status"] == "ready"
+    assert payload["summary"]["execution_enabled"] is True
+    assert {"label": "配置来源", "value": "投放建议工作台生成的项目管理配置"} in payload["summary"]["items"]
+    assert {
+        "label": "中文摘要",
+        "value": "根据规则建议生成项目管理动作 JSON，涉及 1 个账户、2 个动作；只生成配置，不执行真实业务动作。",
+    } in payload["summary"]["items"]
+    assert {"label": "产品", "value": "演示游戏（demo-game）"} in payload["summary"]["items"]
+    assert {"label": "来源建议", "value": "data/runs/delivery_patrol_suggestions/20260528T100001Z.json"} in payload["summary"]["items"]
+    assert {
+        "label": "风险摘要",
+        "value": "包含删除项目 1 个、暂停项目 1 个；执行前必须人工核对账户、项目、动作和来源建议。",
+    } in payload["summary"]["items"]
+    assert {"label": "删除项目", "value": 1} in payload["summary"]["items"]
+    assert {"label": "暂停项目", "value": 1} in payload["summary"]["items"]
+    assert payload["table"]["rows"][1] == {
+        "账户 ID": "1001",
+        "账户名": "演示账户一",
+        "项目 ID": "p-close",
+        "项目名": "演示游戏-关闭候选",
+        "动作": "暂停项目",
+        "目标值": "关闭",
+    }
+    assert payload["raw"]["execute_command"][1] == "scripts/run_project_update_execute.py"
+    assert "--execute" in payload["raw"]["execute_command"]
+    assert "--yes" in payload["raw"]["execute_command"]
+
+
+def test_project_management_execute_preview_blocks_suggestion_json_missing_chinese_summary(tmp_path):
+    project_update_path = _write_suggestion_project_update(tmp_path, patch={"中文摘要": ""})
+    client = TestClient(create_app(project_root=tmp_path))
+
+    response = client.post(
+        "/api/project-management/execute/preview",
+        json={"project_update_path": project_update_path, "config_source": "suggestions_generated"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["status"] == "blocked"
+    assert payload["summary"]["execution_enabled"] is False
+    assert payload["summary"]["blocking_reasons"] == ["建议生成的项目管理 JSON 缺少中文摘要"]
+
+
+def test_project_management_execute_preview_blocks_suggestion_json_missing_account_name(tmp_path):
+    project_update_path = _write_suggestion_project_update(
+        tmp_path,
+        patch={
+            "accounts": [{"account_id": "1001", "account_name": ""}],
+            "actions": [
+                {
+                    "action_type": "delete_project",
+                    "advertiser_id": "1001",
+                    "entity_type": "project",
+                    "project_id": "p-delete",
+                    "project_name": "演示游戏-旧项目",
+                }
+            ],
+        },
+    )
+    client = TestClient(create_app(project_root=tmp_path))
+
+    response = client.post(
+        "/api/project-management/execute/preview",
+        json={"project_update_path": project_update_path, "config_source": "suggestions_generated"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["status"] == "blocked"
+    assert payload["summary"]["blocking_reasons"] == ["建议生成的项目管理 JSON 缺少账户名：1001"]
+
+
+def test_project_management_execute_preview_blocks_suggestion_json_marked_execution_allowed(tmp_path):
+    project_update_path = _write_suggestion_project_update(tmp_path, patch={"execution_allowed": True})
+    client = TestClient(create_app(project_root=tmp_path))
+
+    response = client.post(
+        "/api/project-management/execute/preview",
+        json={"project_update_path": project_update_path, "config_source": "suggestions_generated"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["status"] == "blocked"
+    assert payload["summary"]["blocking_reasons"] == ["建议生成的项目管理 JSON 必须保持 execution_allowed=false，由项目管理确认入口控制真实执行"]
+
+
+def test_project_management_execute_preview_blocks_suggestion_json_with_execution_enabled(tmp_path):
+    project_update_path = _write_suggestion_project_update(
+        tmp_path,
+        patch={"execution": {"enabled": True, "status": "planned_only"}},
+    )
+    client = TestClient(create_app(project_root=tmp_path))
+
+    response = client.post(
+        "/api/project-management/execute/preview",
+        json={"project_update_path": project_update_path, "config_source": "suggestions_generated"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["status"] == "blocked"
+    assert payload["summary"]["blocking_reasons"] == [
+        "建议生成的项目管理 JSON 必须保持 execution.enabled=false，由项目管理确认入口控制真实执行"
+    ]
 
 
 def test_project_management_execute_preview_blocks_missing_config(tmp_path):

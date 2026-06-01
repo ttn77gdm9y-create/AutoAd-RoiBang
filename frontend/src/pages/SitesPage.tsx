@@ -179,7 +179,7 @@ export function SitesPage() {
                         </Form.Item>
                       </Col>
                       <Col xs={24} lg={8}>
-                        <Form.Item label="目标状态">
+                        <Form.Item label="要改成的落地页状态">
                           <Select
                             allowClear
                             value={request.status || undefined}
@@ -190,7 +190,7 @@ export function SitesPage() {
                               { label: "发布", value: "published" },
                               { label: "恢复删除", value: "undeleted" },
                             ]}
-                            placeholder="请选择目标状态"
+                            placeholder="请选择要改成的落地页状态"
                           />
                         </Form.Item>
                       </Col>
@@ -359,7 +359,7 @@ export function SitesPage() {
                         </Form.Item>
                       </Col>
                       <Col xs={24} lg={8}>
-                        <Form.Item label="目标类型">
+                        <Form.Item label="处理方式">
                           <Select
                             allowClear
                             value={templateRequest.edit_existing === null ? undefined : templateRequest.edit_existing ? "edit" : "create"}
@@ -373,7 +373,7 @@ export function SitesPage() {
                               { label: "新建落地页", value: "create" },
                               { label: "修复现有落地页", value: "edit" },
                             ]}
-                            placeholder="请选择目标类型"
+                            placeholder="请选择处理方式"
                           />
                         </Form.Item>
                       </Col>

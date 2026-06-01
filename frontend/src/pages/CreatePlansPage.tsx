@@ -1,13 +1,15 @@
-import { FileSearchOutlined } from "@ant-design/icons";
+import { FileSearchOutlined, SafetyCertificateOutlined } from "@ant-design/icons";
 import { Alert, Button, Card, Col, Collapse, Form, Input, Modal, Row, Select, Space, Typography, message as antdMessage } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 
 import { apiGet, apiPost } from "../api/client";
 import { ConfirmExecutePanel } from "../components/ConfirmExecutePanel";
 import { SummaryPanel } from "../components/SummaryPanel";
 import { InlineTaskStatus, WorkflowSteps } from "../components/WorkflowScaffold";
 import type { ChineseResult, TaskDetailResponse } from "../types/api";
+import { isTaskActive, taskStatus } from "../utils/workflowState";
 
 type CreatePlanRequest = {
   mode: string;
@@ -41,7 +43,7 @@ const defaultRequest: CreatePlanRequest = {
   roi_coefficient: "",
 };
 
-const createModeOptions = [
+const fallbackCreateModeOptions = [
   { label: "每付男素材不限", value: "wx_pay_male_random_materials" },
   { label: "每付通投素材不限", value: "wx_pay_general_random_materials" },
   { label: "每付男测新", value: "wx_pay_male_test_new" },
@@ -131,22 +133,69 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 }
 
+function createPlanRequestFromSuggestionPreview(result?: ChineseResult): CreatePlanRequest | undefined {
+  const request = asRecord(result?.raw?.create_plan_request);
+  if (!request) {
+    return undefined;
+  }
+  return {
+    mode: String(request.mode ?? request.mode_key ?? ""),
+    advertiser_ids: String(request.advertiser_ids ?? ""),
+    owner: String(request.owner ?? ""),
+    product_key: String(request.product_key ?? ""),
+    product_name: String(request.product_name ?? request.product ?? ""),
+    target_date: String(request.target_date ?? ""),
+    template_catalog: String(request.template_catalog ?? request.template_catalog_path ?? ""),
+    cpa_bid: String(request.cpa_bid ?? ""),
+    roi_coefficient: String(request.roi_coefficient ?? ""),
+  };
+}
+
+function modeOptionsFromResult(result?: ChineseResult): Array<{ label: string; value: string }> {
+  const rows = result?.table.rows ?? [];
+  const options = rows
+    .map((row) => {
+      const modeKey = String(row["模式 Key"] ?? "").trim();
+      if (!modeKey) {
+        return undefined;
+      }
+      const name = String(row["创建模式"] ?? modeKey).trim();
+      const source = String(row["来源"] ?? "").trim();
+      const label = source === "产品专属" ? `${name}（产品专属）` : name;
+      return { label, value: modeKey };
+    })
+    .filter((item): item is { label: string; value: string } => Boolean(item));
+  return options.length ? options : fallbackCreateModeOptions;
+}
+
 export function CreatePlansPage() {
   const queryClient = useQueryClient();
+  const [searchParams] = useSearchParams();
+  const suggestionPreviewPath = searchParams.get("create_plan_preview_path") ?? "";
   const [request, setRequest] = useState<CreatePlanRequest>(defaultRequest);
   const [planPath, setPlanPath] = useState("");
   const [planSource, setPlanSource] = useState<"" | "current_generated" | "manual">("");
   const [previewResult, setPreviewResult] = useState<ChineseResult | undefined>();
   const [generateResult, setGenerateResult] = useState<TaskResponse | undefined>();
+  const [executionReviewResult, setExecutionReviewResult] = useState<ChineseResult | undefined>();
   const [executePreviewResult, setExecutePreviewResult] = useState<ChineseResult | undefined>();
   const [executeResult, setExecuteResult] = useState<TaskResponse | undefined>();
+  const [suggestionImportResult, setSuggestionImportResult] = useState<ChineseResult | undefined>();
   const [templateDetailOpen, setTemplateDetailOpen] = useState(false);
   const generateTaskId = generateResult?.task?.task_id ?? "";
   const executeTaskId = executeResult?.task?.task_id ?? "";
   const activeTaskId = executeTaskId || generateTaskId;
-  const currentStep = executeResult ? 3 : executePreviewResult ? 2 : previewResult || generateResult ? 1 : 0;
+  const executionReviewStatus = executionReviewResult?.summary.status ?? "";
+  const executionReviewPassed = executionReviewStatus === "ready_for_confirmation" || executionReviewStatus === "warning_only";
+  const currentStep = executeResult ? 4 : executePreviewResult ? 3 : executionReviewResult ? 2 : previewResult || generateResult ? 1 : 0;
   const executePath = useMemo(() => `/create-plans/${planIdFromPath(planPath)}/execute`, [planPath]);
-  const executeRequest = { plan_path: planPath, plan_source: planSource };
+  const executeRequest = {
+    plan_path: planPath,
+    plan_source: planSource,
+    source_suggestion_preview_path: suggestionPreviewPath,
+    execution_review_artifact_path: executionReviewResult?.artifact_path ?? "",
+    operator: request.owner,
+  };
   const generateTaskDetail = useQuery({
     queryKey: ["tasks", generateTaskId],
     queryFn: () => apiGet<TaskDetailResponse>(`/tasks/${generateTaskId}`),
@@ -158,6 +207,11 @@ export function CreatePlansPage() {
     queryFn: () => apiGet<TaskDetailResponse>(`/tasks/${executeTaskId}`),
     enabled: Boolean(executeTaskId),
     refetchInterval: 3000,
+  });
+  const suggestionPreview = useQuery({
+    queryKey: ["create-plans", "suggestion-preview", suggestionPreviewPath],
+    queryFn: () => apiGet<ChineseResult>(`/create-plans/suggestion-preview?path=${encodeURIComponent(suggestionPreviewPath)}`),
+    enabled: Boolean(suggestionPreviewPath),
   });
   const productsQuery = useQuery({
     queryKey: ["accounts", "create-plan", "products"],
@@ -171,6 +225,10 @@ export function CreatePlansPage() {
   const templatesQuery = useQuery({
     queryKey: ["create-plans", "templates"],
     queryFn: () => apiGet<ChineseResult>("/create-plans/templates"),
+  });
+  const modesQuery = useQuery({
+    queryKey: ["create-plans", "modes", request.product_key],
+    queryFn: () => apiGet<ChineseResult>(`/create-plans/modes?product_key=${encodeURIComponent(request.product_key)}`),
   });
   const templateDetailQuery = useQuery({
     queryKey: ["create-plans", "template-detail", request.template_catalog],
@@ -189,6 +247,7 @@ export function CreatePlansPage() {
       })),
     [templatesQuery.data],
   );
+  const createModeOptions = useMemo(() => modeOptionsFromResult(modesQuery.data), [modesQuery.data]);
   const productOptions = useMemo(() => {
     const grouped = new Map<string, { productName: string; count: number }>();
     for (const row of productsQuery.data?.table.rows ?? []) {
@@ -210,8 +269,11 @@ export function CreatePlansPage() {
       }));
   }, [productsQuery.data]);
   const is7rSelected = is7rMode(request.mode);
+  const planGenerationStatus = taskStatus(generateTaskDetail.data, generateResult);
+  const planGenerationActive = Boolean(generateTaskId) && isTaskActive(planGenerationStatus);
   const canGenerate = previewResult?.summary.status === "planned";
-  const canReadPlan = Boolean(planPath.trim());
+  const canReviewExecution = Boolean(planPath.trim()) && !planGenerationActive;
+  const canReadPlan = Boolean(planPath.trim()) && !planGenerationActive && executionReviewPassed;
   const canExecuteCurrentPlan = planSource === "current_generated";
   const existingPlanBlock = useMemo(
     () => existingPlanBlockFromResult(executeTaskDetail.data ?? executeResult),
@@ -223,14 +285,32 @@ export function CreatePlansPage() {
     if (generatedPlanPath && generatedPlanPath !== planPath) {
       setPlanPath(generatedPlanPath);
       setPlanSource("current_generated");
+      setExecutionReviewResult(undefined);
       setExecutePreviewResult(undefined);
       setExecuteResult(undefined);
     }
   }, [generateTaskDetail.data, planPath]);
 
   useEffect(() => {
+    const importedRequest = createPlanRequestFromSuggestionPreview(suggestionPreview.data);
+    if (!importedRequest) {
+      return;
+    }
+    setRequest(importedRequest);
+    setSuggestionImportResult(suggestionPreview.data);
+    setPlanPath("");
+    setPlanSource("");
     setPreviewResult(undefined);
     setGenerateResult(undefined);
+    setExecutionReviewResult(undefined);
+    setExecutePreviewResult(undefined);
+    setExecuteResult(undefined);
+  }, [suggestionPreview.data]);
+
+  useEffect(() => {
+    setPreviewResult(undefined);
+    setGenerateResult(undefined);
+    setExecutionReviewResult(undefined);
     setExecutePreviewResult(undefined);
     setExecuteResult(undefined);
     setPlanPath("");
@@ -248,6 +328,7 @@ export function CreatePlansPage() {
       setGenerateResult(undefined);
       setPlanPath("");
       setPlanSource("");
+      setExecutionReviewResult(undefined);
       setExecutePreviewResult(undefined);
       setExecuteResult(undefined);
     },
@@ -258,10 +339,23 @@ export function CreatePlansPage() {
       setGenerateResult(result);
       setPlanPath("");
       setPlanSource("");
+      setExecutionReviewResult(undefined);
       setExecutePreviewResult(undefined);
       setExecuteResult(undefined);
       await queryClient.invalidateQueries({ queryKey: ["tasks"] });
       antdMessage.success("创建计划正在生成，本页会显示进度");
+    },
+  });
+  const executionReview = useMutation({
+    mutationFn: () =>
+      apiPost<ChineseResult>("/create-plans/execution-review/preview", {
+        ...executeRequest,
+        review_config_path: "configs/create-plan-reviews/example.json",
+      }),
+    onSuccess: (result) => {
+      setExecutionReviewResult(result);
+      setExecutePreviewResult(undefined);
+      setExecuteResult(undefined);
     },
   });
   const executePreview = useMutation({
@@ -281,6 +375,10 @@ export function CreatePlansPage() {
   });
   const readPlanPending = executePreview.isPending;
   function readPlanPreview() {
+    if (!executionReviewPassed) {
+      antdMessage.warning("请先完成执行前复核；复核通过或仅有警告后，才能进入真实创建确认。");
+      return;
+    }
     if (planPath.trim()) {
       executePreview.mutate();
       return;
@@ -296,12 +394,17 @@ export function CreatePlansPage() {
     <main className="page">
       <Space direction="vertical" size="large" className="full-width">
         <Typography.Title level={2}>创建计划</Typography.Title>
-        <WorkflowSteps current={currentStep} />
+        <WorkflowSteps current={currentStep} items={["配置", "生成计划", "执行前复核", "确认执行", "结果"]} />
         <Alert
           type="info"
           showIcon
           message="先检查要创建的账户和项目，再生成计划文件并确认创建；进度和结果会直接显示在本页。"
         />
+        {suggestionPreview.error ? <Alert type="error" showIcon message={(suggestionPreview.error as Error).message} /> : null}
+        {suggestionPreview.isLoading ? <Alert type="info" showIcon message="正在读取创建建议预览并填入表单。" /> : null}
+        {suggestionImportResult ? (
+          <SummaryPanel result={suggestionImportResult} detailsCollapsed showArtifactPath showRawJson={false} />
+        ) : null}
 
         <Card size="small" title="第一步：填写并检查创建计划">
           <Form layout="vertical" className="filter-bar">
@@ -310,6 +413,9 @@ export function CreatePlansPage() {
                 <Form.Item label="固定创建模式">
                   <Select
                     allowClear
+                    showSearch
+                    loading={modesQuery.isLoading}
+                    optionFilterProp="label"
                     value={request.mode || undefined}
                     onChange={(value) => {
                       const nextMode = value ?? "";
@@ -350,7 +456,7 @@ export function CreatePlansPage() {
                 </Form.Item>
               </Col>
               <Col xs={24} lg={8}>
-                <Form.Item label="目标日期">
+                <Form.Item label="计划日期">
                   <Input
                     value={request.target_date}
                     onChange={(event) => setRequest({ ...request, target_date: event.target.value })}
@@ -451,6 +557,7 @@ export function CreatePlansPage() {
                 {productsQuery.error ? <Alert type="error" showIcon message={(productsQuery.error as Error).message} /> : null}
                 {accountsQuery.error ? <Alert type="error" showIcon message={(accountsQuery.error as Error).message} /> : null}
                 {templatesQuery.error ? <Alert type="error" showIcon message={(templatesQuery.error as Error).message} /> : null}
+                {modesQuery.error ? <Alert type="error" showIcon message={(modesQuery.error as Error).message} /> : null}
               </Col>
               <Col xs={24}>
                 <Space wrap>
@@ -469,14 +576,16 @@ export function CreatePlansPage() {
           {generate.error ? <Alert type="error" showIcon message={(generate.error as Error).message} /> : null}
         </Card>
 
-        <Card size="small" title="第二步：核对后真实创建">
+        <Card size="small" title="第二步：执行前复核和真实创建">
           <Space direction="vertical" size="middle" className="full-width">
             <Alert
               type="info"
               showIcon
               message="这里不会重新生成计划；主路径只执行本页刚生成的新计划，避免误拿历史 artifact 创建。"
             />
-            {planSource === "current_generated" ? (
+            {planGenerationActive ? (
+              <Alert type="info" showIcon message="创建计划正在生成，完成后再核对计划明细。" />
+            ) : planSource === "current_generated" ? (
               <Alert
                 type="success"
                 showIcon
@@ -521,6 +630,7 @@ export function CreatePlansPage() {
                           const nextPath = event.target.value;
                           setPlanPath(nextPath);
                           setPlanSource(nextPath.trim() ? "manual" : "");
+                          setExecutionReviewResult(undefined);
                           setExecutePreviewResult(undefined);
                           setExecuteResult(undefined);
                         }}
@@ -531,9 +641,30 @@ export function CreatePlansPage() {
                 },
               ]}
             />
-            <Button icon={<FileSearchOutlined />} disabled={!canReadPlan} onClick={readPlanPreview} loading={readPlanPending}>
-              {canExecuteCurrentPlan ? "核对本次计划明细" : "查看手动计划明细"}
-            </Button>
+            <Space wrap>
+              <Button
+                icon={<SafetyCertificateOutlined />}
+                disabled={!canReviewExecution}
+                onClick={() => executionReview.mutate()}
+                loading={executionReview.isPending}
+              >
+                执行前复核
+              </Button>
+              <Button icon={<FileSearchOutlined />} disabled={!canReadPlan} onClick={readPlanPreview} loading={readPlanPending}>
+                {planGenerationActive ? "等待计划生成完成" : canExecuteCurrentPlan ? "核对本次计划明细" : "查看手动计划明细"}
+              </Button>
+            </Space>
+            {!executionReviewPassed && planPath.trim() && !planGenerationActive ? (
+              <Alert type="info" showIcon message="必须先通过执行前复核，才会开放真实创建确认。" />
+            ) : null}
+            {executionReview.error ? <Alert type="error" showIcon message={(executionReview.error as Error).message} /> : null}
+            <SummaryPanel
+              result={executionReviewResult}
+              loading={executionReview.isPending}
+              detailsCollapsed
+              showArtifactPath
+              showRawJson={false}
+            />
             {executePreview.error ? <Alert type="error" showIcon message={(executePreview.error as Error).message} /> : null}
             <SummaryPanel
               result={executePreviewResult}
@@ -542,7 +673,7 @@ export function CreatePlansPage() {
               showArtifactPath={false}
               showRawJson={false}
               footer={
-                executePreviewResult?.summary.execution_enabled && canExecuteCurrentPlan ? (
+                executePreviewResult?.summary.execution_enabled && canExecuteCurrentPlan && executionReviewPassed ? (
                   <ConfirmExecutePanel
                     buttonText="确认并创建"
                     disabled={execute.isPending}

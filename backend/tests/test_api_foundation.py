@@ -79,7 +79,7 @@ def test_settings_readiness_endpoint_returns_replacement_acceptance_checklist(tm
     assert payload["table"]["rows"][0] == {
         "验收项": "主要页面不依赖 Streamlit",
         "状态": "ready",
-        "说明": "首页、账户库、创建计划、项目管理、落地页、账户备注、任务、操作日志和结果中心均由 React 路由承载。",
+        "说明": "首页、账户库、投放建议工作台、创建计划、项目管理、落地页、账户备注、任务、操作日志、结果中心、产品自动化配置和系统设置均由 React 路由承载。",
     }
     readiness_text = json.dumps(payload["table"]["rows"], ensure_ascii=False)
     assert "任务中心展示业务进度和高级日志" in readiness_text

@@ -252,6 +252,7 @@ def _draft_mode(
     *,
     draft_key: str,
     draft_name: str,
+    product: str,
     base_mode: dict[str, Any],
     draft_type: str,
     material_selection: dict[str, Any],
@@ -273,7 +274,7 @@ def _draft_mode(
         "proposed_create_mode": {
             "mode_key": draft_key,
             "display_name": draft_name,
-            "product": "勇者突进",
+            "product": product,
             "platform": "WECHAT_GAME",
             "template_key": str(base_mode.get("template_key") or ""),
             "template_name_suffix": f"AI{draft_name}",
@@ -296,6 +297,7 @@ def _draft_mode(
 
 def _build_drafts(
     *,
+    product: str,
     manual_modes: list[dict[str, Any]],
     pools: dict[str, Any],
     max_drafts: int,
@@ -319,6 +321,7 @@ def _build_drafts(
             _draft_mode(
                 draft_key="ai_wx_pay_general_recent_scale_cost500_v1",
                 draft_name="AI 每付通投近期放量 消耗500草稿",
+                product=product,
                 base_mode=recent_base,
                 draft_type="scale",
                 material_selection={**base_selection, "min_stat_cost": 500, "lookback_days": 7, "selection_type": "high_spend"},
@@ -336,6 +339,7 @@ def _build_drafts(
             _draft_mode(
                 draft_key="ai_wx_pay_general_history_scale_30d_stable_v1",
                 draft_name="AI 每付通投历史放量 稳定池草稿",
+                product=product,
                 base_mode=history_base,
                 draft_type="scale",
                 material_selection={**base_selection, "lookback_days": 30, "min_stat_cost": 1000, "selection_type": "high_spend"},
@@ -353,6 +357,7 @@ def _build_drafts(
             _draft_mode(
                 draft_key="ai_wx_pay_general_test_new_recent_first_seen_v1",
                 draft_name="AI 每付通投测新 近7天新素材草稿",
+                product=product,
                 base_mode=test_new_base,
                 draft_type="test_new",
                 material_selection={
@@ -375,6 +380,7 @@ def _build_drafts(
             _draft_mode(
                 draft_key="ai_wx_pay_general_low_conversion_retest_v1",
                 draft_name="AI 每付通投低转化复测草稿",
+                product=product,
                 base_mode=test_new_base,
                 draft_type="retest_low_conversion",
                 material_selection={
@@ -399,6 +405,7 @@ def _build_drafts(
             _draft_mode(
                 draft_key="ai_wx_pay_general_no_conversion_retest_v1",
                 draft_name="AI 每付通投无转化复测草稿",
+                product=product,
                 base_mode=test_new_base,
                 draft_type="retest_no_conversion",
                 material_selection={
@@ -445,7 +452,7 @@ def run_ai_create_template_drafts_request(
                 blocking_reasons.append("missing product_source_material_metric_rollups table")
             else:
                 pools = _material_pool_evidence(conn, product=product, source_advertiser_id=source_advertiser_id)
-    drafts = [] if blocking_reasons else _build_drafts(manual_modes=manual_modes, pools=pools, max_drafts=max_drafts)
+    drafts = [] if blocking_reasons else _build_drafts(product=product, manual_modes=manual_modes, pools=pools, max_drafts=max_drafts)
     status = "blocked" if blocking_reasons else ("drafted" if drafts else "no_drafts")
     payload = {
         "ok": not blocking_reasons,

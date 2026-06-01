@@ -130,6 +130,34 @@ def test_running_task_progress_is_parsed_from_stdout(tmp_path: Path):
     assert {"label": "当前进度", "value": "创建项目 5/20"} in detail["summary"]["items"]
 
 
+def test_project_config_task_uses_request_action_before_result_file_exists(tmp_path: Path):
+    runs_dir = tmp_path / "data" / "runs"
+    task_dir = runs_dir / "frontend_tasks"
+    task_dir.mkdir(parents=True)
+    (task_dir / "frontend-project-generate.json").write_text(
+        json.dumps(
+            {
+                "task_id": "frontend-project-generate",
+                "operation_type": "project_management_config_generate",
+                "status": "running",
+                "created_at": "2026-05-29T21:00:07+08:00",
+                "updated_at": "2026-05-29T21:00:07+08:00",
+                "return_code": None,
+                "request": {"action_type": "delete_project", "output_path": "configs/project-updates/new.local.json"},
+                "result": {},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    rows = list_tasks(runs_dir, tmp_path / "configs")
+    detail = load_task_detail(runs_dir, "frontend-project-generate", tmp_path / "configs")
+
+    assert rows[0]["business_context"] == "项目管理动作：删除项目"
+    assert {"label": "项目管理动作", "value": "删除项目"} in detail["summary"]["items"]
+
+
 def test_failed_create_task_summary_includes_api_failure_reason(tmp_path: Path):
     runs_dir = tmp_path / "data" / "runs"
     task_dir = runs_dir / "frontend_tasks"

@@ -45,6 +45,8 @@ def _create_rollup_table(db_path: Path) -> None:
 def _insert_rollup(
     db_path: Path,
     *,
+    product: str = "勇者突进",
+    source_advertiser_id: str = "1856647522964490",
     window_key: str,
     period_start: str,
     period_end: str,
@@ -66,8 +68,8 @@ def _insert_rollup(
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                "勇者突进",
-                "1856647522964490",
+                product,
+                source_advertiser_id,
                 window_key,
                 period_start,
                 period_end,
@@ -261,6 +263,42 @@ def test_ai_create_template_drafts_blocks_without_source_account(tmp_path):
     assert result["status"] == "blocked"
     assert result["drafts"] == []
     assert "missing source_advertiser_id" in result["blocking_reasons"]
+
+
+def test_ai_create_template_drafts_uses_requested_product_in_draft_mode(tmp_path):
+    db_path = tmp_path / "db.sqlite3"
+    runs_dir = tmp_path / "runs"
+    mode_dir = _manual_mode_dir(tmp_path)
+    _create_rollup_table(db_path)
+    for index in range(35):
+        _insert_rollup(
+            db_path,
+            product="点点英雄",
+            source_advertiser_id="source-diandian",
+            window_key="last_7d",
+            period_start="2026-05-09",
+            period_end="2026-05-15",
+            index=index,
+            stat_cost=600,
+            convert_cnt=2,
+            effective_create_date="2026-05-15",
+        )
+
+    result = run_ai_create_template_drafts_request(
+        {
+            "ai_create_template_drafts": {
+                "product": "点点英雄",
+                "source_advertiser_id": "source-diandian",
+                "manual_mode_dir": str(mode_dir),
+                "max_drafts": 1,
+            }
+        },
+        db_path=db_path,
+        runs_dir=runs_dir,
+    )
+
+    assert result["ok"] is True
+    assert result["drafts"][0]["proposed_create_mode"]["product"] == "点点英雄"
 
 
 def test_run_ai_create_template_drafts_script_uses_readonly_runtime(tmp_path, capsys):

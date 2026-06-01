@@ -1,13 +1,15 @@
 import { DeleteOutlined, FileSearchOutlined, PlusOutlined } from "@ant-design/icons";
 import { Alert, Button, Card, Col, Collapse, Form, Input, Row, Select, Space, Typography, message as antdMessage } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 
 import { apiGet, apiPost } from "../api/client";
 import { ConfirmExecutePanel } from "../components/ConfirmExecutePanel";
 import { SummaryPanel } from "../components/SummaryPanel";
 import { InlineTaskStatus, WorkflowSteps } from "../components/WorkflowScaffold";
 import type { ChineseResult, TaskDetailResponse } from "../types/api";
+import { isTaskActive, isTaskCompleted, summaryItemNumber, taskStatus } from "../utils/workflowState";
 
 type ProjectManagementRequest = {
   project_update_id: string;
@@ -61,9 +63,11 @@ function projectUpdatePathFromTask(detail?: TaskDetailResponse): string {
 
 export function ProjectManagementPage() {
   const queryClient = useQueryClient();
+  const [searchParams] = useSearchParams();
+  const requestInitialized = useRef(false);
   const [request, setRequest] = useState<ProjectManagementRequest>(defaultRequest);
   const [configPath, setConfigPath] = useState("");
-  const [configSource, setConfigSource] = useState<"" | "current_generated" | "manual">("");
+  const [configSource, setConfigSource] = useState<"" | "current_generated" | "manual" | "suggestions_generated">("");
   const [previewResult, setPreviewResult] = useState<ChineseResult | undefined>();
   const [generateResult, setGenerateResult] = useState<TaskResponse | undefined>();
   const [executePreviewResult, setExecutePreviewResult] = useState<ChineseResult | undefined>();
@@ -85,9 +89,27 @@ export function ProjectManagementPage() {
     enabled: Boolean(executeTaskId),
     refetchInterval: 3000,
   });
+  const configGenerationStatus = taskStatus(generateTaskDetail.data, generateResult);
+  const configGenerationActive = Boolean(generateTaskId) && isTaskActive(configGenerationStatus);
+  const generatedActionCount = summaryItemNumber(generateTaskDetail.data, "动作数");
+  const generatedNoActions =
+    Boolean(generateTaskId) && isTaskCompleted(configGenerationStatus) && configSource === "current_generated" && generatedActionCount === 0;
   const canGenerate = previewResult?.summary.status === "planned";
-  const canReadConfig = Boolean(configPath.trim());
-  const canExecuteCurrentConfig = configSource === "current_generated";
+  const canReadConfig = Boolean(configPath.trim()) && !configGenerationActive && !generatedNoActions;
+  const canExecuteSelectedConfig = configSource === "current_generated" || configSource === "suggestions_generated";
+  const usesMetricFilters = request.metric_filters.some((filter) => filter.field || filter.op || filter.value);
+
+  useEffect(() => {
+    const path = searchParams.get("project_update_path")?.trim() ?? "";
+    const source = searchParams.get("config_source")?.trim() ?? "";
+    if (!path) {
+      return;
+    }
+    setConfigPath(path);
+    setConfigSource(source === "suggestions_generated" ? "suggestions_generated" : "manual");
+    setExecutePreviewResult(undefined);
+    setExecuteResult(undefined);
+  }, [searchParams]);
 
   useEffect(() => {
     const generatedConfigPath = projectUpdatePathFromTask(generateTaskDetail.data);
@@ -100,13 +122,20 @@ export function ProjectManagementPage() {
   }, [generateTaskDetail.data, configPath]);
 
   useEffect(() => {
+    if (!requestInitialized.current) {
+      requestInitialized.current = true;
+      return;
+    }
+    if (searchParams.get("project_update_path")?.trim()) {
+      return;
+    }
     setPreviewResult(undefined);
     setGenerateResult(undefined);
     setExecutePreviewResult(undefined);
     setExecuteResult(undefined);
     setConfigPath("");
     setConfigSource("");
-  }, [request]);
+  }, [request, searchParams]);
 
   const preview = useMutation({
     mutationFn: () => apiPost<ChineseResult>("/project-management/config/preview", request),
@@ -125,8 +154,8 @@ export function ProjectManagementPage() {
       setGenerateResult(result);
       setExecutePreviewResult(undefined);
       setExecuteResult(undefined);
-      setConfigPath(request.output_path);
-      setConfigSource("current_generated");
+      setConfigPath("");
+      setConfigSource("");
       await queryClient.invalidateQueries({ queryKey: ["tasks"] });
       antdMessage.success("项目动作配置正在生成，本页会显示进度");
     },
@@ -201,9 +230,10 @@ export function ProjectManagementPage() {
                 </Form.Item>
               </Col>
               <Col xs={24} lg={8}>
-                <Form.Item label="数据窗口">
+                <Form.Item label="数据窗口（仅使用数据筛选时必选）">
                   <Select
                     allowClear
+                    placeholder={usesMetricFilters ? "请选择数据窗口" : "不按数据筛选时可不选"}
                     value={request.spend_window || undefined}
                     onChange={(value) => setRequest({ ...request, spend_window: value ?? "" })}
                     options={[
@@ -215,8 +245,15 @@ export function ProjectManagementPage() {
                 </Form.Item>
               </Col>
               <Col xs={24}>
-                <Form.Item label="筛选条件（且）">
+                <Form.Item label="筛选条件（可选，且）">
                   <Space direction="vertical" size="small" className="full-width">
+                    {!usesMetricFilters ? (
+                      <Alert
+                        type="info"
+                        showIcon
+                        message="不填写数据筛选时，会对所选账户下全部可操作项目生成动作；真实执行前仍会展示项目明细供人工核对。"
+                      />
+                    ) : null}
                     {request.metric_filters.map((filter, index) => (
                       <Row gutter={[12, 8]} key={`metric-filter-${index}`}>
                         <Col xs={24} lg={8}>
@@ -274,7 +311,7 @@ export function ProjectManagementPage() {
               </Col>
               {request.action_type === "status_update" ? (
                 <Col xs={24} lg={8}>
-                  <Form.Item label="目标状态">
+                  <Form.Item label="要改成的项目状态">
                     <Select
                       allowClear
                       value={request.opt_status || undefined}
@@ -283,28 +320,28 @@ export function ProjectManagementPage() {
                         { label: "关闭", value: "DISABLE" },
                         { label: "开启", value: "ENABLE" },
                       ]}
-                      placeholder="请选择目标状态"
+                      placeholder="请选择要改成的项目状态"
                     />
                   </Form.Item>
                 </Col>
               ) : null}
               {request.action_type === "budget_update" ? (
                 <Col xs={24} lg={8}>
-                  <Form.Item label="预算">
+                  <Form.Item label="要改成的预算">
                     <Input value={request.budget} onChange={(event) => setRequest({ ...request, budget: event.target.value })} />
                   </Form.Item>
                 </Col>
               ) : null}
               {request.action_type === "bid_update" ? (
                 <Col xs={24} lg={8}>
-                  <Form.Item label="项目出价">
+                  <Form.Item label="要改成的项目出价">
                     <Input value={request.cpa_bid} onChange={(event) => setRequest({ ...request, cpa_bid: event.target.value })} />
                   </Form.Item>
                 </Col>
               ) : null}
               {request.action_type === "roi_coeff_update" ? (
                 <Col xs={24} lg={8}>
-                  <Form.Item label="ROI 系数">
+                  <Form.Item label="要改成的 ROI 系数">
                     <Input value={request.roi_goal} onChange={(event) => setRequest({ ...request, roi_goal: event.target.value })} />
                   </Form.Item>
                 </Col>
@@ -325,22 +362,24 @@ export function ProjectManagementPage() {
                   items={[
                     {
                       key: "advanced",
-                      label: "高级信息：配置编号和文件路径",
+                      label: "高级信息：本次动作配置文件",
                       children: (
                         <Row gutter={[16, 0]}>
                           <Col xs={24} lg={8}>
-                            <Form.Item label="配置 ID">
+                            <Form.Item label="动作配置 ID（可空，系统自动生成）">
                               <Input
                                 value={request.project_update_id}
                                 onChange={(event) => setRequest({ ...request, project_update_id: event.target.value })}
+                                placeholder="不填则自动生成"
                               />
                             </Form.Item>
                           </Col>
                           <Col xs={24} lg={16}>
-                            <Form.Item label="配置保存路径">
+                            <Form.Item label="动作配置 JSON 路径（可空，系统自动生成）">
                               <Input
                                 value={request.output_path}
                                 onChange={(event) => setRequest({ ...request, output_path: event.target.value })}
+                                placeholder="不填则保存到 configs/project-updates/"
                               />
                             </Form.Item>
                           </Col>
@@ -374,8 +413,19 @@ export function ProjectManagementPage() {
               showIcon
               message="这里不会重新筛选项目；主路径只执行本页刚生成的新配置，避免误拿历史 JSON 执行。"
             />
-            {configSource === "current_generated" ? (
+            {configGenerationActive ? (
+              <Alert type="info" showIcon message="项目管理配置正在生成，完成后再核对执行明细。" />
+            ) : generatedNoActions ? (
+              <Alert type="success" showIcon message="本次筛选没有命中项目，不需要执行。" description={configPath} />
+            ) : configSource === "current_generated" ? (
               <Alert type="success" showIcon message="当前配置来源：本页刚生成的新配置" description={configPath} />
+            ) : configSource === "suggestions_generated" ? (
+              <Alert
+                type="warning"
+                showIcon
+                message="当前配置来源：投放建议工作台生成的项目管理配置"
+                description={`请先核对来源建议、中文风险摘要、账户名、项目名和动作明细；真实执行仍必须在本页输入“确认执行”。${configPath}`}
+              />
             ) : configSource === "manual" ? (
               <Alert
                 type="warning"
@@ -409,7 +459,7 @@ export function ProjectManagementPage() {
               ]}
             />
             <Button icon={<FileSearchOutlined />} disabled={!canReadConfig} onClick={() => executePreview.mutate()} loading={executePreview.isPending}>
-              {canExecuteCurrentConfig ? "核对本次执行明细" : "查看手动配置明细"}
+              {configGenerationActive ? "等待配置生成完成" : generatedNoActions ? "无命中项目，无需执行" : canExecuteSelectedConfig ? "核对本次执行明细" : "查看手动配置明细"}
             </Button>
             {executePreview.error ? <Alert type="error" showIcon message={(executePreview.error as Error).message} /> : null}
             <SummaryPanel
@@ -419,12 +469,21 @@ export function ProjectManagementPage() {
               showArtifactPath={false}
               showRawJson={false}
               footer={
-                executePreviewResult?.summary.execution_enabled && canExecuteCurrentConfig ? (
-                  <ConfirmExecutePanel
-                    buttonText="确认并执行项目动作"
-                    disabled={execute.isPending}
-                    onConfirm={() => execute.mutate()}
-                  />
+                executePreviewResult?.summary.execution_enabled && canExecuteSelectedConfig ? (
+                  <Space direction="vertical" size="middle" className="full-width">
+                    {configSource === "suggestions_generated" ? (
+                      <Alert
+                        type="warning"
+                        showIcon
+                        message="这是规则建议生成的高风险动作配置；确认前请逐行核对账户、项目、动作和目标值。"
+                      />
+                    ) : null}
+                    <ConfirmExecutePanel
+                      buttonText="确认并执行项目动作"
+                      disabled={execute.isPending}
+                      onConfirm={() => execute.mutate()}
+                    />
+                  </Space>
                 ) : executePreviewResult?.summary.execution_enabled && configSource === "manual" ? (
                   <Alert
                     type="warning"

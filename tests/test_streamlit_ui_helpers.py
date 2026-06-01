@@ -470,8 +470,33 @@ def test_build_project_filter_command_adds_action_specific_fields():
     assert command[:2] == [sys.executable, "scripts/run_project_realtime_filter_config.py"]
     assert command[command.index("--config") + 1] == "configs/project-update-execute.local.json"
     assert command.count("--advertiser-id") == 3
+    assert "--spend-window" in command
     assert "--metric-filter" in command
     assert "stat_cost:lt:100" in command
+    assert "--opt-status" in command
+    assert "DISABLE" in command
+    assert "--execute" not in command
+    assert "--yes" not in command
+
+
+def test_build_project_filter_command_can_target_all_projects_without_metric_filter():
+    command = build_project_filter_command(
+        project_update_id="close-all",
+        advertiser_ids="1851,1852",
+        action_type="status_update",
+        name_contains="",
+        spend_window="",
+        metric_field="",
+        metric_op="",
+        metric_value="",
+        output_path="configs/project-updates/close-all.local.json",
+        opt_status="DISABLE",
+    )
+
+    assert command[:2] == [sys.executable, "scripts/run_project_realtime_filter_config.py"]
+    assert command.count("--advertiser-id") == 2
+    assert "--spend-window" not in command
+    assert "--metric-filter" not in command
     assert "--opt-status" in command
     assert "DISABLE" in command
     assert "--execute" not in command

@@ -14,10 +14,14 @@ from roibang_v2.ui.script_runner import build_create_live_execute_report_command
 from roibang_v2.ui.script_runner import build_create_plan_command
 from roibang_v2.workflows.frontend_operation_log import create_operation_details_from_plan
 from roibang_v2.workflows.frontend_operation_log import record_frontend_operation
+from roibang_v2.workflows.review_create_plan_execution import run_create_plan_execution_review_request
 
 from backend.app.services.artifacts import find_latest_artifact
+from backend.app.services.artifacts import read_json
 from backend.app.services.account_names import account_name_for
 from backend.app.services.account_names import load_account_name_map
+from backend.app.services.accounts_store import load_accounts
+from backend.app.services.ui_labels import CREATE_MODE_LABELS
 from backend.app.services.ui_labels import create_mode_label
 
 
@@ -27,6 +31,7 @@ def build_create_plan_generate_preview(request: dict[str, Any], *, project_root:
     target_date = _text(request.get("target_date"))
     product_key = _text(request.get("product_key"))
     product_name = _resolve_product_name(request, product_key, project_root=project_root)
+    mode_metadata = _resolve_create_mode_metadata(project_root=project_root, mode=mode, product_key=product_key)
     template_catalog = _text(request.get("template_catalog"))
     cpa_bid = _text(request.get("cpa_bid"))
     roi_coefficient = _text(request.get("roi_coefficient"))
@@ -85,6 +90,9 @@ def build_create_plan_generate_preview(request: dict[str, Any], *, project_root:
             "execution_enabled": False,
             "items": [
                 {"label": "创建模式", "value": mode},
+                {"label": "模式名称", "value": mode_metadata["name"]},
+                {"label": "模式来源", "value": mode_metadata["source"]},
+                {"label": "模式文件", "value": mode_metadata["path"]},
                 {"label": "产品", "value": product_name},
                 {"label": "账户数", "value": len(advertiser_ids)},
                 {"label": "账户来源", "value": _account_source_label(account_source)},
@@ -110,6 +118,7 @@ def build_create_plan_generate_preview(request: dict[str, Any], *, project_root:
             "account_source": account_source,
             "product": product_name,
             "product_key": product_key,
+            "mode_metadata": mode_metadata,
         },
     }
 
@@ -192,6 +201,70 @@ def build_latest_create_plan_detail(*, project_root: str | Path) -> dict[str, An
     return result
 
 
+def build_create_plan_suggestion_preview_detail(path: str, *, project_root: str | Path) -> dict[str, Any]:
+    root = Path(project_root)
+    if not _text(path):
+        return _blocked_suggestion_preview("未填写创建建议预览路径", path)
+    preview_path = _resolve_plan_path(root, path)
+    display_path = _relative_plan_path(root, preview_path)
+    if not preview_path.is_file():
+        return _blocked_suggestion_preview(f"创建建议预览不存在：{path}", display_path)
+
+    payload = read_json(preview_path)
+    create_plan_request = payload.get("create_plan_request") if isinstance(payload.get("create_plan_request"), dict) else {}
+    if not create_plan_request:
+        return _blocked_suggestion_preview("创建建议预览缺少 create_plan_request，不能填入创建计划页。", display_path)
+
+    generate_preview = build_create_plan_generate_preview(create_plan_request, project_root=root)
+    generate_summary = generate_preview.get("summary") if isinstance(generate_preview.get("summary"), dict) else {}
+    workflow_reasons = [str(item) for item in payload.get("blocking_reasons") or [] if str(item)]
+    generate_reasons = [str(item) for item in generate_summary.get("blocking_reasons") or [] if str(item)]
+    status = "blocked" if workflow_reasons or generate_reasons else _text(generate_summary.get("status")) or "loaded"
+    table = generate_preview.get("table") if isinstance(generate_preview.get("table"), dict) else {
+        "columns": ["账户 ID", "账户名", "创建模式", "产品", "负责人", "目标日期", "出价", "ROI 系数"],
+        "rows": [],
+    }
+    return {
+        "summary": {
+            "title": "创建建议预览导入",
+            "status": status,
+            "risk_level": "medium",
+            "execution_enabled": False,
+            "items": [
+                {"label": "来源建议", "value": int(payload.get("summary", {}).get("source_suggestion_count") or 0)},
+                {"label": "账户数", "value": int(payload.get("summary", {}).get("account_count") or 0)},
+                {"label": "产品", "value": _text(create_plan_request.get("product_name"))},
+                {"label": "推荐模式", "value": _text(create_plan_request.get("mode"))},
+                {"label": "来源策略", "value": _source_strategy_text(payload)},
+                {"label": "创建预览", "value": display_path},
+            ],
+            "warnings": [
+                "已从创建建议预览填入创建计划表单；仍需在本页检查、生成计划并人工确认真实创建。",
+                *[str(item) for item in generate_summary.get("warnings") or [] if str(item)],
+            ],
+            "blocking_reasons": [*workflow_reasons, *generate_reasons],
+        },
+        "table": table,
+        "sections": _suggestion_preview_sections(payload),
+        "artifact_path": display_path,
+        "raw": {
+            "create_plan_request": create_plan_request,
+            "create_plan_from_suggestions": payload,
+            "generate_preview": generate_preview,
+        },
+    }
+
+
+def build_create_plan_execution_review_preview(request: dict[str, Any], *, project_root: str | Path) -> dict[str, Any]:
+    root = Path(project_root)
+    review = run_create_plan_execution_review_request(
+        request,
+        runs_dir=root / "data" / "runs",
+        project_root=root,
+    )
+    return _execution_review_result(review)
+
+
 def list_create_plan_templates(*, project_root: str | Path) -> dict[str, Any]:
     root = Path(project_root)
     template_root = root / "configs" / "create-templates"
@@ -227,6 +300,82 @@ def list_create_plan_templates(*, project_root: str | Path) -> dict[str, Any]:
         "table": {"columns": ["模板", "产品", "产品 Key", "平台", "模板数", "路径"], "rows": rows},
         "artifact_path": str(template_root),
         "raw": {"templates": rows},
+    }
+
+
+def list_create_plan_modes(*, project_root: str | Path, product_key: str = "") -> dict[str, Any]:
+    root = Path(project_root)
+    product_key_text = _text(product_key)
+    mode_root = root / "configs" / "create-modes"
+    rows_by_key: dict[str, dict[str, Any]] = {}
+    for mode_key, label in CREATE_MODE_LABELS.items():
+        rows_by_key[mode_key] = {
+            "创建模式": label,
+            "模式 Key": mode_key,
+            "产品": "通用",
+            "产品 Key": "",
+            "来源": "固定内置",
+            "路径": "",
+            "模板 Key": "",
+        }
+
+    if mode_root.exists():
+        for path in sorted(mode_root.glob("*.json")):
+            row = _create_mode_row(root, path, source="固定配置", product_key="")
+            if row:
+                rows_by_key[row["模式 Key"]] = row
+
+    product_rows: list[dict[str, Any]] = []
+    if product_key_text and mode_root.exists():
+        product_mode_dir = mode_root / product_key_text
+        for path in sorted(product_mode_dir.glob("*.json")):
+            row = _create_mode_row(root, path, source="产品专属", product_key=product_key_text)
+            if row:
+                rows_by_key[row["模式 Key"]] = row
+                product_rows.append(row)
+
+    rows = sorted(
+        rows_by_key.values(),
+        key=lambda row: (
+            0 if row["来源"] == "产品专属" else 1,
+            str(row["创建模式"]),
+            str(row["模式 Key"]),
+        ),
+    )
+    warnings = [] if product_key_text else ["选择产品后会显示该产品专属创建模式。"]
+    return {
+        "summary": {
+            "title": "创建模式列表",
+            "status": "loaded",
+            "risk_level": "low",
+            "execution_enabled": False,
+            "items": [
+                {"label": "模式数", "value": len(rows)},
+                {"label": "产品专属模式", "value": len(product_rows)},
+                {"label": "产品 Key", "value": product_key_text or "未选择"},
+            ],
+            "warnings": warnings,
+            "blocking_reasons": [],
+        },
+        "table": {
+            "columns": ["创建模式", "模式 Key", "产品", "产品 Key", "来源", "路径", "模板 Key"],
+            "rows": rows,
+        },
+        "artifact_path": str(mode_root),
+        "raw": {
+            "modes": [
+                {
+                    "label": f"{row['创建模式']}（{row['模式 Key']}）",
+                    "value": row["模式 Key"],
+                    "product_key": row["产品 Key"],
+                    "product": row["产品"],
+                    "source": row["来源"],
+                    "path": row["路径"],
+                    "template_key": row["模板 Key"],
+                }
+                for row in rows
+            ]
+        },
     }
 
 
@@ -314,6 +463,20 @@ def start_create_plan_execute_task(plan_id: str, request: dict[str, Any], *, pro
 
     root = Path(project_root)
     runs_dir = root / "data" / "runs"
+    execution_review = run_create_plan_execution_review_request(
+        {
+            **request,
+            "plan_path": preview.get("artifact_path") or request.get("plan_path"),
+            "operator": request.get("operator") or request.get("owner") or "local-ui",
+        },
+        runs_dir=runs_dir,
+        project_root=root,
+    )
+    if execution_review.get("status") == "blocked":
+        result = _execution_review_result(execution_review)
+        result["summary"]["title"] = "创建计划执行被复核阻断"
+        return result
+
     task = build_task_record(
         runs_dir=runs_dir,
         operation_type="create_live_execute",
@@ -326,7 +489,7 @@ def start_create_plan_execute_task(plan_id: str, request: dict[str, Any], *, pro
     pid = start_runner(build_runner_command(task_path), cwd=root)
     task["pid"] = pid
     write_task_record(runs_dir, task)
-    operation_log = _record_execute_operation(runs_dir, task, request, preview)
+    operation_log = _record_execute_operation(runs_dir, task, request, preview, execution_review=execution_review)
 
     return {
         "summary": {
@@ -336,16 +499,21 @@ def start_create_plan_execute_task(plan_id: str, request: dict[str, Any], *, pro
             "execution_enabled": True,
             "items": [
                 *preview["summary"]["items"],
+                {"label": "执行前复核", "value": _text(execution_review.get("status"))},
+                {"label": "复核文件", "value": _text(execution_review.get("artifact_path"))},
                 {"label": "任务 ID", "value": task["task_id"]},
                 {"label": "任务状态", "value": task["status"]},
             ],
-            "warnings": ["真实创建任务已提交；可在当前页面或任务中心查看中文进度和执行报告。"],
+            "warnings": [
+                *[str(item) for item in execution_review.get("warnings") or [] if str(item)],
+                "真实创建任务已提交；可在当前页面或任务中心查看中文进度和执行报告。",
+            ],
             "blocking_reasons": [],
         },
         "table": preview["table"],
         "artifact_path": str(task_path),
         "task": task,
-        "raw": {"preview": preview, "task": task, "operation_log": operation_log},
+        "raw": {"preview": preview, "execution_review": execution_review, "task": task, "operation_log": operation_log},
     }
 
 
@@ -496,6 +664,270 @@ def _blocked_plan_preview(
     }
 
 
+def _blocked_suggestion_preview(reason: str, path: str) -> dict[str, Any]:
+    return {
+        "summary": {
+            "title": "创建建议预览导入",
+            "status": "blocked",
+            "risk_level": "medium",
+            "execution_enabled": False,
+            "items": [{"label": "创建预览", "value": path}],
+            "warnings": [],
+            "blocking_reasons": [reason],
+        },
+        "table": {"columns": ["账户 ID", "账户名", "创建模式", "产品", "负责人", "目标日期", "出价", "ROI 系数"], "rows": []},
+        "artifact_path": path,
+        "raw": {},
+    }
+
+
+def _execution_review_result(review: dict[str, Any]) -> dict[str, Any]:
+    summary = review.get("summary") if isinstance(review.get("summary"), dict) else {}
+    status = _text(review.get("status") or summary.get("status"))
+    checks = [dict(row) for row in review.get("checks") or [] if isinstance(row, dict)]
+    rows = [
+        {
+            "检查项": _text(check.get("title")),
+            "结果": _review_check_status_label(check.get("status")),
+            "等级": _review_severity_label(check.get("severity")),
+            "说明": _text(check.get("message")),
+            "证据": _compact_json(check.get("evidence")),
+        }
+        for check in checks
+    ]
+    warnings = [str(item) for item in review.get("warnings") or [] if str(item)]
+    blocking_reasons = [str(item) for item in review.get("blocking_reasons") or [] if str(item)]
+    if status in {"ready_for_confirmation", "warning_only"}:
+        warnings = [
+            *warnings,
+            "执行前复核只生成只读复核产物；真实创建仍需要你在创建计划页人工确认。",
+        ]
+    return {
+        "summary": {
+            "title": "创建计划执行前复核",
+            "status": status,
+            "risk_level": "high" if status == "blocked" else ("medium" if status == "warning_only" else "low"),
+            "execution_enabled": False,
+            "items": [
+                {"label": "批次名称", "value": _text(summary.get("batch_name"))},
+                {"label": "计划 ID", "value": _text(summary.get("plan_id"))},
+                {"label": "产品", "value": _text(summary.get("product"))},
+                {"label": "产品 Key", "value": _text(summary.get("product_key"))},
+                {"label": "固定模式", "value": _text(summary.get("mode_key"))},
+                {"label": "账户数", "value": _int(summary.get("account_count"))},
+                {"label": "项目数", "value": _int(summary.get("planned_project_count"))},
+                {"label": "单元数", "value": _int(summary.get("planned_unit_count"))},
+                {"label": "候选素材数", "value": _int(summary.get("source_material_count"))},
+                {"label": "唯一素材数", "value": _int(summary.get("unique_material_count"))},
+                {"label": "通过", "value": _int(summary.get("passed_check_count"))},
+                {"label": "警告", "value": _int(summary.get("warning_count"))},
+                {"label": "阻断", "value": _int(summary.get("blocking_reason_count"))},
+                {"label": "来源策略", "value": "、".join(str(item) for item in summary.get("source_strategy_ids") or [] if str(item))},
+            ],
+            "warnings": warnings,
+            "blocking_reasons": blocking_reasons,
+        },
+        "table": {
+            "columns": ["检查项", "结果", "等级", "说明", "证据"],
+            "rows": rows,
+        },
+        "sections": _execution_review_sections(review),
+        "artifact_path": _text(review.get("artifact_path")),
+        "raw": review,
+    }
+
+
+def _execution_review_sections(review: dict[str, Any]) -> list[dict[str, Any]]:
+    sections: list[dict[str, Any]] = []
+    operation_record = review.get("operation_record") if isinstance(review.get("operation_record"), dict) else {}
+    if operation_record:
+        rows = [
+            {"字段": "操作类型", "内容": _text(operation_record.get("operation_type"))},
+            {"字段": "批次名称", "内容": _text(operation_record.get("batch_name"))},
+            {"字段": "复核状态", "内容": _text(operation_record.get("status"))},
+            {"字段": "触发人", "内容": _text(operation_record.get("operator"))},
+            {"字段": "计划 ID", "内容": _text(operation_record.get("plan_id"))},
+            {"字段": "创建计划 JSON", "内容": _text(operation_record.get("plan_path"))},
+            {"字段": "来源建议预览", "内容": _text(operation_record.get("source_suggestion_preview_path"))},
+            {
+                "字段": "来源建议",
+                "内容": "、".join(_text(item) for item in operation_record.get("source_suggestion_ids") or [] if _text(item)),
+            },
+            {
+                "字段": "来源策略",
+                "内容": "、".join(_text(item) for item in operation_record.get("source_strategy_ids") or [] if _text(item)),
+            },
+        ]
+        sections.append(
+            {
+                "title": "运营记录",
+                "table": {"columns": ["字段", "内容"], "rows": [row for row in rows if row["内容"]]},
+            }
+        )
+    manifest = review.get("execution_manifest") if isinstance(review.get("execution_manifest"), dict) else {}
+    account_rows = [
+        {
+            "账户 ID": _text(row.get("advertiser_id")),
+            "项目数": _int(row.get("project_count")),
+            "单元数": _int(row.get("unit_count")),
+            "唯一素材数": _int(row.get("unique_material_count")),
+        }
+        for row in manifest.get("accounts") or []
+        if isinstance(row, dict)
+    ]
+    if account_rows:
+        sections.append(
+            {
+                "title": "确认执行清单",
+                "table": {
+                    "columns": ["账户 ID", "项目数", "单元数", "唯一素材数"],
+                    "rows": account_rows,
+                },
+            }
+        )
+    source = review.get("source_suggestion_evidence") if isinstance(review.get("source_suggestion_evidence"), dict) else {}
+    source_rows = [
+        {
+            "建议 ID": _text(row.get("suggestion_id")),
+            "账户 ID": _text(row.get("advertiser_id")),
+            "账户名": _text(row.get("account_name")),
+            "命中策略": _text(row.get("strategy_id")),
+            "项目容量": row.get("project_capacity") or 0,
+            "合格素材": row.get("qualified_material_count") or 0,
+            "ROI": row.get("roi_1day") or 0,
+            "转化": row.get("convert_cnt") or 0,
+            "推荐原因": _text(row.get("reason")),
+        }
+        for row in source.get("rows") or []
+        if isinstance(row, dict)
+    ]
+    if source_rows:
+        sections.append(
+            {
+                "title": "来源建议证据",
+                "table": {
+                    "columns": ["建议 ID", "账户 ID", "账户名", "命中策略", "项目容量", "合格素材", "ROI", "转化", "推荐原因"],
+                    "rows": source_rows,
+                },
+            }
+        )
+    return sections
+
+
+def _review_check_status_label(value: Any) -> str:
+    labels = {"passed": "通过", "warning": "警告", "blocked": "阻断"}
+    text = _text(value)
+    return labels.get(text, text)
+
+
+def _review_severity_label(value: Any) -> str:
+    labels = {"low": "低", "medium": "中", "high": "高"}
+    text = _text(value)
+    return labels.get(text, text)
+
+
+def _compact_json(value: Any) -> str:
+    if not value:
+        return ""
+    try:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _suggestion_preview_sections(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    sections: list[dict[str, Any]] = []
+    group_rows = _suggestion_group_rows(payload)
+    if group_rows:
+        sections.append(
+            {
+                "title": "创建建议批次",
+                "table": {
+                    "columns": ["批次", "产品", "推荐模式", "账户数", "来源建议", "命中策略", "模板", "证据"],
+                    "rows": group_rows,
+                },
+            }
+        )
+    evidence_rows = _suggestion_evidence_rows(payload)
+    if evidence_rows:
+        sections.append(
+            {
+                "title": "来源建议证据",
+                "table": {
+                    "columns": ["建议 ID", "账户 ID", "账户名", "命中策略", "项目容量", "合格素材", "推荐原因"],
+                    "rows": evidence_rows,
+                },
+            }
+        )
+    return sections
+
+
+def _suggestion_group_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for group in payload.get("suggestion_groups") or []:
+        if not isinstance(group, dict):
+            continue
+        rows.append(
+            {
+                "批次": _text(group.get("group_id")),
+                "产品": _text(group.get("product_name") or group.get("product_key")),
+                "推荐模式": _text(group.get("mode_key")),
+                "账户数": _int(group.get("account_count")),
+                "来源建议": _int(group.get("source_suggestion_count")),
+                "命中策略": "、".join(_text(item) for item in group.get("strategy_ids") or [] if _text(item)),
+                "模板": _text(group.get("template_catalog")),
+                "证据": _suggestion_group_evidence_text(group.get("evidence_summary")),
+            }
+        )
+    return rows
+
+
+def _suggestion_evidence_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for suggestion in payload.get("source_suggestions") or []:
+        if not isinstance(suggestion, dict):
+            continue
+        metrics = suggestion.get("metrics") if isinstance(suggestion.get("metrics"), dict) else {}
+        evidence = suggestion.get("evidence") if isinstance(suggestion.get("evidence"), dict) else {}
+        rows.append(
+            {
+                "建议 ID": _text(suggestion.get("suggestion_id")),
+                "账户 ID": _text(suggestion.get("advertiser_id")),
+                "账户名": _text(suggestion.get("account_name") or suggestion.get("advertiser_name")),
+                "命中策略": _text(suggestion.get("strategy_id") or suggestion.get("rule_id")),
+                "项目容量": _text(metrics.get("project_capacity") or evidence.get("project_capacity")),
+                "合格素材": _text(metrics.get("qualified_material_count") or evidence.get("qualified_material_count")),
+                "推荐原因": _text(suggestion.get("reason") or suggestion.get("message")),
+            }
+        )
+    return rows
+
+
+def _source_strategy_text(payload: dict[str, Any]) -> str:
+    strategy_ids: list[str] = []
+    for group in payload.get("suggestion_groups") or []:
+        if not isinstance(group, dict):
+            continue
+        strategy_ids.extend(_text(item) for item in group.get("strategy_ids") or [] if _text(item))
+    if not strategy_ids:
+        for suggestion in payload.get("source_suggestions") or []:
+            if isinstance(suggestion, dict):
+                strategy_ids.append(_text(suggestion.get("strategy_id") or suggestion.get("rule_id")))
+    return "、".join(_unique_account_ids(strategy_ids))
+
+
+def _suggestion_group_evidence_text(value: Any) -> str:
+    evidence = value if isinstance(value, dict) else {}
+    parts = []
+    if "min_project_capacity" in evidence:
+        parts.append(f"最小容量 {evidence.get('min_project_capacity')}")
+    if "min_qualified_material_count" in evidence:
+        parts.append(f"最少合格素材 {evidence.get('min_qualified_material_count')}")
+    if "max_current_project_count" in evidence:
+        parts.append(f"当前项目最多 {evidence.get('max_current_project_count')}")
+    return "，".join(parts)
+
+
 def _unit_row(row: dict[str, Any], account_names: dict[str, str]) -> dict[str, Any]:
     advertiser_id = _text(row.get("advertiser_id"))
     return {
@@ -549,11 +981,23 @@ def _record_execute_operation(
     task: dict[str, Any],
     request: dict[str, Any],
     preview: dict[str, Any],
+    *,
+    execution_review: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     raw = preview.get("raw") if isinstance(preview.get("raw"), dict) else {}
     plan = raw.get("plan") if isinstance(raw.get("plan"), dict) else {}
     details = create_operation_details_from_plan(plan) if plan else {}
     details["review"] = _operation_review_from_preview(preview)
+    if isinstance(execution_review, dict):
+        operation_record = execution_review.get("operation_record") if isinstance(execution_review.get("operation_record"), dict) else {}
+        details["execution_review"] = execution_review
+        details["execution_review_artifact_path"] = _text(execution_review.get("artifact_path"))
+        details["source_suggestion_ids"] = [
+            _text(item) for item in operation_record.get("source_suggestion_ids") or [] if _text(item)
+        ]
+        details["source_strategy_ids"] = [
+            _text(item) for item in operation_record.get("source_strategy_ids") or [] if _text(item)
+        ]
     return record_frontend_operation(
         runs_dir=runs_dir,
         operation_type="create_live_execute",
@@ -702,6 +1146,56 @@ def _blocked_template_detail(reason: str, path: str) -> dict[str, Any]:
         "artifact_path": path,
         "raw": {"path": path},
     }
+
+
+def _create_mode_row(root: Path, path: Path, *, source: str, product_key: str) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    mode_key = _text(payload.get("mode_key")) or _derive_mode_key(path)
+    if not mode_key:
+        return None
+    mode_product_key = _text(payload.get("product_key")) or product_key
+    product = _text(payload.get("product")) or ("通用" if not mode_product_key else mode_product_key)
+    return {
+        "创建模式": _text(payload.get("display_name")) or create_mode_label(mode_key),
+        "模式 Key": mode_key,
+        "产品": product,
+        "产品 Key": mode_product_key,
+        "来源": source,
+        "路径": _relative_plan_path(root, path),
+        "模板 Key": _text(payload.get("template_key")),
+    }
+
+
+def _resolve_create_mode_metadata(*, project_root: str | Path, mode: str, product_key: str) -> dict[str, str]:
+    root = Path(project_root)
+    rows = list_create_plan_modes(project_root=root, product_key=product_key)["raw"]["modes"]
+    for row in rows:
+        if _text(row.get("value")) == mode:
+            return {
+                "name": _text(row.get("label")).split("（", 1)[0] or create_mode_label(mode),
+                "source": _text(row.get("source")),
+                "path": _text(row.get("path")),
+                "template_key": _text(row.get("template_key")),
+            }
+    return {
+        "name": create_mode_label(mode),
+        "source": "未匹配",
+        "path": "",
+        "template_key": "",
+    }
+
+
+def _derive_mode_key(path: Path) -> str:
+    name = path.name
+    for suffix in (".local.json", ".example.json", ".json"):
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return path.stem
 
 
 def _format_accounts(value: Any, account_names: dict[str, str]) -> str:

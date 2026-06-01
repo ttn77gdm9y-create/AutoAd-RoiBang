@@ -254,6 +254,7 @@ PROGRESS_OPERATION_LABELS = {
     "bind_material": "绑定素材",
     "lookup_target_material": "查询素材",
     "precheck_existing_target_material": "检查素材",
+    "suggestions_refresh": "同步并重算建议",
 }
 
 
@@ -349,6 +350,7 @@ PROJECT_OPERATION_TYPES = {
 ACCOUNT_REMARK_OPERATION_TYPES = {"account_remark_config_generate", "account_remark_update"}
 SITE_STATUS_OPERATION_TYPES = {"site_status_update"}
 SITE_TEMPLATE_OPERATION_TYPES = {"site_template_foundation"}
+SUGGESTIONS_REFRESH_OPERATION_TYPES = {"suggestions_refresh"}
 
 
 def _task_business_context(
@@ -378,7 +380,29 @@ def _task_context_items(
         return _site_status_task_context_items(payload, result, artifact)
     if operation_type in SITE_TEMPLATE_OPERATION_TYPES:
         return _site_template_task_context_items(payload, result, artifact)
+    if operation_type in SUGGESTIONS_REFRESH_OPERATION_TYPES:
+        return _suggestions_refresh_task_context_items(payload, result, artifact)
     return []
+
+
+def _suggestions_refresh_task_context_items(
+    payload: dict[str, Any],
+    result: dict[str, Any],
+    artifact: dict[str, Any],
+) -> list[dict[str, Any]]:
+    request = _dict(payload.get("request"))
+    summary = _dict(artifact.get("summary")) or _dict(result.get("summary"))
+    items = [
+        {"label": "产品", "value": str(request.get("product_key") or summary.get("product_key") or "全部产品")},
+        {"label": "目标日期", "value": str(request.get("target_date") or summary.get("target_date") or "")},
+    ]
+    business_data_date = str(summary.get("business_data_date") or "").strip()
+    suggestion_count = summary.get("suggestion_count")
+    if business_data_date:
+        items.append({"label": "业务数据日期", "value": business_data_date})
+    if suggestion_count is not None:
+        items.append({"label": "建议事项", "value": suggestion_count})
+    return items
 
 
 def _account_remark_task_context_items(
@@ -494,6 +518,7 @@ def _project_task_action_text(
     artifact: dict[str, Any],
 ) -> str:
     action_types: list[str] = []
+    request = _dict(payload.get("request"))
     project_payload = artifact if artifact else {}
     if not _project_action_candidates(project_payload):
         project_payload = _read_first_json(runs_dir, _project_update_path_candidates(payload, result, artifact))
@@ -502,7 +527,14 @@ def _project_task_action_text(
             action_type = str(row.get("action_type") or row.get("operation") or "").strip()
             if action_type:
                 action_types.append(project_action_label(action_type))
-    direct_action = str(project_payload.get("action_type") or result.get("action_type") or "").strip()
+    summary = _dict(project_payload.get("summary")) or _dict(result.get("summary")) or _dict(artifact.get("summary"))
+    direct_action = str(
+        project_payload.get("action_type")
+        or result.get("action_type")
+        or summary.get("action_type")
+        or request.get("action_type")
+        or ""
+    ).strip()
     if direct_action:
         action_types.append(project_action_label(direct_action))
     output = []

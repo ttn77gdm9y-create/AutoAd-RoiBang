@@ -126,7 +126,13 @@ def _insert_operation_log(
     )
 
 
-def _insert_account_pool(conn: sqlite3.Connection, advertiser_id: str) -> None:
+def _insert_account_pool(
+    conn: sqlite3.Connection,
+    advertiser_id: str,
+    *,
+    account_name: str = "黑旗-勇者突进-微小-傲星-1",
+    product: str = "勇者突进",
+) -> None:
     conn.execute(
         """
         INSERT INTO account_pool (
@@ -135,9 +141,83 @@ def _insert_account_pool(conn: sqlite3.Connection, advertiser_id: str) -> None:
         """,
         (
             advertiser_id,
-            "黑旗-勇者突进-微小-傲星-1",
-            "勇者突进",
+            account_name,
+            product,
             "WECHAT_GAME",
+            "unit_test",
+            "2026-05-11T00:00:00+08:00",
+        ),
+    )
+
+
+def _insert_project_state(
+    conn: sqlite3.Connection,
+    *,
+    advertiser_id: str,
+    project_id: str,
+    name: str,
+    status: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO projects (project_id, advertiser_id, name, status, source, synced_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (project_id, advertiser_id, name, status, "unit_test", "2026-05-11T00:00:00+08:00"),
+    )
+
+
+def _insert_source_material_rollup(
+    conn: sqlite3.Connection,
+    *,
+    product: str,
+    source_advertiser_id: str,
+    material_id: str,
+    name: str,
+    project_count: int,
+    promotion_count: int,
+    stat_cost: float,
+    roi_1day: float,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO product_source_material_metric_rollups (
+          product, source_advertiser_id, organization_id, window_key, window_days,
+          period_start, period_end, material_id, material_type, source_video_id,
+          name, review_status, signature, duration, file_size, create_time,
+          tag_ids_json, account_count, project_count, promotion_count, stat_cost,
+          show_cnt, click_cnt, convert_cnt, active_register, roi_1day_cost_weighted,
+          roi_7days_cost_weighted, source, synced_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            product,
+            source_advertiser_id,
+            "org-1",
+            "last_7d",
+            7,
+            "2026-05-05",
+            "2026-05-11",
+            material_id,
+            "video",
+            f"video-{material_id}",
+            name,
+            "审核通过",
+            "",
+            0,
+            0,
+            "",
+            "[]",
+            4,
+            project_count,
+            promotion_count,
+            stat_cost,
+            stat_cost * 10,
+            stat_cost,
+            0,
+            0,
+            roi_1day,
+            roi_1day,
             "unit_test",
             "2026-05-11T00:00:00+08:00",
         ),
@@ -200,6 +280,9 @@ def test_control_strategy_suggests_pause_for_low_first_day_roi_project(tmp_path:
             "advertiser_id": "a1",
             "entity_type": "project",
             "entity_id": "project-low-roi",
+            "project_id": "project-low-roi",
+            "entity_name": "project-low-roi-name",
+            "project_name": "project-low-roi-name",
             "reason": "首日 ROI 低于阈值且消耗/转化达到观察门槛",
             "metrics": {
                 "stat_cost": 600,
@@ -385,6 +468,9 @@ def test_control_strategy_suggests_budget_decrease_without_guessing_budget_amoun
     suggestion = result["suggestions"][0]
     assert suggestion["suggestion_type"] == "adjust_project_budget"
     assert suggestion["entity_id"] == "project-budget-down"
+    assert suggestion["project_id"] == "project-budget-down"
+    assert suggestion["project_name"] == "project-budget-down-name"
+    assert suggestion["entity_name"] == "project-budget-down-name"
     assert suggestion["adjustment"] == {
         "field": "budget",
         "direction": "decrease",
@@ -430,6 +516,9 @@ def test_control_strategy_suggests_bid_decrease_from_configured_cpa_threshold(tm
 
     suggestion = result["suggestions"][0]
     assert suggestion["suggestion_type"] == "adjust_project_bid"
+    assert suggestion["project_id"] == "project-bid-down"
+    assert suggestion["project_name"] == "project-bid-down-name"
+    assert suggestion["entity_name"] == "project-bid-down-name"
     assert suggestion["metrics"]["cpa"] == 400
     assert suggestion["adjustment"] == {
         "field": "bid",
@@ -439,6 +528,116 @@ def test_control_strategy_suggests_bid_decrease_from_configured_cpa_threshold(tm
         "suggested_bid": None,
     }
     assert result["summary"]["adjust_project_bid_suggestion_count"] == 1
+
+
+def test_control_strategy_adds_delete_material_reuse_and_account_anomaly_suggestions(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    allowlist_path = tmp_path / "allowed.json"
+    bootstrap_database(db_path)
+    allowlist_path.write_text(
+        """
+        {
+          "allowed_target_accounts": [
+            {"advertiser_id": "allowed-account", "enable": true, "product": "勇者突进", "channel": "wx"}
+          ]
+        }
+        """,
+        encoding="utf-8",
+    )
+    with sqlite3.connect(db_path) as conn:
+        _insert_account_pool(conn, "allowed-account", account_name="允许账户")
+        _insert_account_pool(conn, "outside-account", account_name="名单外账户")
+        _insert_project_state(
+            conn,
+            advertiser_id="allowed-account",
+            project_id="closed-project",
+            name="已关闭低消耗项目",
+            status="PROJECT_STATUS_DISABLE",
+        )
+        _insert_project_metric(
+            conn,
+            metric_date="2026-05-10",
+            advertiser_id="allowed-account",
+            project_id="closed-project",
+            promotion_id="promotion-1",
+            cost=20,
+            conversions=0,
+            roi_1day=0,
+        )
+        _insert_project_metric(
+            conn,
+            metric_date="2026-05-11",
+            advertiser_id="allowed-account",
+            project_id="closed-project",
+            promotion_id="promotion-1",
+            cost=10,
+            conversions=0,
+            roi_1day=0,
+        )
+        _insert_project_metric(
+            conn,
+            metric_date="2026-05-11",
+            advertiser_id="outside-account",
+            project_id="outside-project",
+            promotion_id="promotion-2",
+            cost=300,
+            conversions=0,
+            roi_1day=0,
+        )
+        _insert_source_material_rollup(
+            conn,
+            product="勇者突进",
+            source_advertiser_id="source-account",
+            material_id="material-reused",
+            name="高频低效素材",
+            project_count=8,
+            promotion_count=12,
+            stat_cost=1500,
+            roi_1day=0.01,
+        )
+
+    result = build_control_strategy_suggestions(
+        db_path,
+        {
+            "product_keyword": "勇者突进",
+            "target_date": "2026-05-11",
+            "allowed_target_accounts_path": str(allowlist_path),
+            "rules": {
+                "delete_project_closed_low_recent": {
+                    "enabled": True,
+                    "lookback_days": 2,
+                    "max_stat_cost": 100,
+                    "max_convert_cnt": 0,
+                },
+                "material_reuse_risk": {
+                    "enabled": True,
+                    "window_key": "last_7d",
+                    "min_project_count": 5,
+                    "min_promotion_count": 10,
+                    "min_stat_cost": 1000,
+                    "max_roi_1day": 0.05,
+                },
+                "account_spent_outside_allowlist": {
+                    "enabled": True,
+                    "min_stat_cost": 100,
+                },
+            },
+        },
+    )
+
+    actions = {item["suggestion_type"]: item for item in result["suggestions"]}
+    assert result["summary"]["suggest_delete_project_count"] == 1
+    assert result["summary"]["material_reuse_risk_count"] == 1
+    assert result["summary"]["account_anomaly_count"] == 1
+    assert result["summary"]["blocked_by_allowlist_count"] == 0
+    assert actions["suggest_delete_project"]["entity_id"] == "closed-project"
+    assert actions["suggest_delete_project"]["entity_name"] == "已关闭低消耗项目"
+    assert actions["material_reuse_risk"]["entity_type"] == "material"
+    assert actions["material_reuse_risk"]["entity_name"] == "高频低效素材"
+    assert actions["material_reuse_risk"]["allowlist_exception"] is True
+    assert actions["account_spent_outside_allowlist"]["advertiser_id"] == "outside-account"
+    assert actions["account_spent_outside_allowlist"]["account_name"] == "名单外账户"
+    assert actions["account_spent_outside_allowlist"]["allowlist_exception"] is True
 
 
 def test_run_control_strategy_suggestions_request_writes_artifact(tmp_path: Path):

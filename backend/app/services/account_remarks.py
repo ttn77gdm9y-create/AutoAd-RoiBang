@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 import json
 from pathlib import Path
 from typing import Any
@@ -17,10 +18,10 @@ from backend.app.services.account_names import load_account_name_map
 
 
 def build_account_remark_config_preview(request: dict[str, Any], *, project_root: str | Path) -> dict[str, Any]:
-    update_id = _text(request.get("update_id"))
+    update_id = _text(request.get("update_id")) or _default_update_id()
     remark = _text(request.get("remark"))
     advertiser_ids = _split_account_ids(request.get("advertiser_ids"))
-    output_path = _text(request.get("output_path"))
+    output_path = _text(request.get("output_path")) or _default_output_path(update_id)
 
     validation_reasons = _config_validation_reasons(
         update_id=update_id,
@@ -359,14 +360,10 @@ def _config_validation_reasons(
     output_path: str,
 ) -> list[str]:
     reasons: list[str] = []
-    if not update_id:
-        reasons.append("必须明确填写配置 ID")
     if not remark:
         reasons.append("必须明确填写目标备注")
     if not advertiser_ids:
         reasons.append("必须明确填写本次账户 ID")
-    if not output_path:
-        reasons.append("必须明确填写账户备注 JSON 输出路径")
     return reasons
 
 
@@ -380,6 +377,14 @@ def _split_account_ids(value: Any) -> list[str]:
 
 def _text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _default_update_id() -> str:
+    return f"account-remark-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+
+
+def _default_output_path(update_id: str) -> str:
+    return f"configs/account-updates/{update_id}.local.json"
 
 
 def _config_source_label(value: Any) -> str:

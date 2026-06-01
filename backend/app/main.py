@@ -15,6 +15,7 @@ from backend.app.api import operations
 from backend.app.api import product_automation
 from backend.app.api import project_management
 from backend.app.api import sites
+from backend.app.api import suggestions
 from backend.app.api import tasks
 from backend.app.api import workflows
 from backend.app.services.settings import build_settings
@@ -49,6 +50,7 @@ def create_app(project_root: str | Path | None = None) -> FastAPI:
     app.include_router(dashboard.router, prefix="/api")
     app.include_router(operations.router, prefix="/api")
     app.include_router(product_automation.router, prefix="/api")
+    app.include_router(suggestions.router, prefix="/api")
     app.include_router(create_plans.router, prefix="/api")
     app.include_router(project_management.router, prefix="/api")
     app.include_router(account_remarks.router, prefix="/api")
