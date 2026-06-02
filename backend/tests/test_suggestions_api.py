@@ -605,6 +605,228 @@ def test_suggestions_list_returns_chinese_rows_with_account_names_and_action_jso
     assert rows[2]["可转动作 JSON"] == "观察建议，不生成动作配置"
 
 
+def test_suggestions_list_uses_guojing_realtime_scope_not_product_all_scope(tmp_path: Path):
+    _write_json(
+        tmp_path / "configs" / "accounts" / "product-accounts.local.json",
+        {
+            "accounts": [
+                {
+                    "product_key": "diandian-hero",
+                    "product_name": "点点英雄",
+                    "advertiser_id": "guojing-1",
+                    "advertiser_name": "黑旗-点点英雄-微小-郭靖-1",
+                    "status": "active",
+                },
+                {
+                    "product_key": "diandian-hero",
+                    "product_name": "点点英雄",
+                    "advertiser_id": "other-hero-1",
+                    "advertiser_name": "黑旗-点点英雄-微小-杨过-1",
+                    "status": "active",
+                },
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "configs" / "products" / "diandian-hero.local.json",
+        {
+            "product_key": "diandian-hero",
+            "product": "点点英雄",
+            "automation": {
+                "enabled": True,
+                "delivery_patrol": {
+                    "enabled": True,
+                    "account_scopes": [
+                        {
+                            "scope_id": "diandian-hero-guojing",
+                            "title": "点点英雄-微小-郭靖",
+                            "account_remark_equals": "点点英雄-微小-郭靖",
+                        },
+                        {
+                            "scope_id": "diandian-hero-all",
+                            "title": "点点英雄全量账户",
+                            "account_name_contains": "点点英雄",
+                        },
+                    ],
+                },
+            },
+        },
+    )
+    guojing_suggestions = tmp_path / "data" / "runs" / "delivery_patrol_suggestions" / "20260530T220001Z-guojing.json"
+    all_suggestions = tmp_path / "data" / "runs" / "delivery_patrol_suggestions" / "20260530T230001Z-all.json"
+    _write_json(
+        guojing_suggestions,
+        {
+            "workflow": "delivery_patrol_suggestions",
+            "summary": {"target_date": "2026-05-30", "suggestion_count": 1},
+            "suggestions": [
+                {
+                    "suggestion_id": "guojing-close",
+                    "suggested_action": "suggest_close_project",
+                    "suggestion_type": "suggest_close_project",
+                    "target_date": "2026-05-30",
+                    "advertiser_id": "guojing-1",
+                    "account_name": "黑旗-点点英雄-微小-郭靖-1",
+                    "entity_type": "project",
+                    "project_id": "p-guojing",
+                    "entity_name": "郭靖低效项目",
+                    "reason": "郭靖账户实时低效，建议暂停。",
+                }
+            ],
+        },
+    )
+    _write_json(
+        all_suggestions,
+        {
+            "workflow": "delivery_patrol_suggestions",
+            "summary": {"target_date": "2026-05-30", "suggestion_count": 1},
+            "suggestions": [
+                {
+                    "suggestion_id": "other-close",
+                    "suggested_action": "suggest_close_project",
+                    "suggestion_type": "suggest_close_project",
+                    "target_date": "2026-05-30",
+                    "advertiser_id": "other-hero-1",
+                    "account_name": "黑旗-点点英雄-微小-杨过-1",
+                    "entity_type": "project",
+                    "project_id": "p-other",
+                    "entity_name": "非郭靖低效项目",
+                    "reason": "非郭靖账户建议不应进入建议列表。",
+                }
+            ],
+        },
+    )
+    _write_json(
+        tmp_path / "data" / "runs" / "delivery_patrol" / "20260530T220000Z-guojing.json",
+        {
+            "workflow": "delivery_patrol",
+            "summary": {
+                "target_date": "2026-05-30",
+                "account_scope": {"account_remark_equals": "点点英雄-微小-郭靖"},
+                "suggestion_artifact_path": str(guojing_suggestions),
+            },
+            "accounts": [
+                {
+                    "advertiser_id": "guojing-1",
+                    "account_name": "黑旗-点点英雄-微小-郭靖-1",
+                    "metrics": {"today": {"stat_cost": 100}},
+                }
+            ],
+            "projects": [],
+            "promotions": [],
+        },
+    )
+    _write_json(
+        tmp_path / "data" / "runs" / "delivery_patrol" / "20260530T230000Z-all.json",
+        {
+            "workflow": "delivery_patrol",
+            "summary": {
+                "target_date": "2026-05-30",
+                "account_scope": {"account_name_contains": "点点英雄"},
+                "suggestion_artifact_path": str(all_suggestions),
+            },
+            "accounts": [
+                {
+                    "advertiser_id": "other-hero-1",
+                    "account_name": "黑旗-点点英雄-微小-杨过-1",
+                    "metrics": {"today": {"stat_cost": 200}},
+                }
+            ],
+            "projects": [],
+            "promotions": [],
+        },
+    )
+    client = _client(tmp_path)
+
+    response = client.get("/api/suggestions", params={"product_key": "diandian-hero"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    rows = payload["table"]["rows"]
+    assert [row["建议 ID"] for row in rows] == ["guojing-close"]
+    assert rows[0]["账户 ID"] == "guojing-1"
+    assert rows[0]["账户名"] == "黑旗-点点英雄-微小-郭靖-1"
+    assert payload["artifact_path"] == str(guojing_suggestions)
+
+
+def test_project_update_preview_blocks_suggestions_outside_guojing_realtime_scope(tmp_path: Path):
+    _write_json(
+        tmp_path / "configs" / "products" / "diandian-hero.local.json",
+        {
+            "product_key": "diandian-hero",
+            "product": "点点英雄",
+            "automation": {
+                "enabled": True,
+                "delivery_patrol": {
+                    "enabled": True,
+                    "account_scopes": [
+                        {
+                            "scope_id": "diandian-hero-guojing",
+                            "title": "点点英雄-微小-郭靖",
+                            "account_remark_equals": "点点英雄-微小-郭靖",
+                        }
+                    ],
+                },
+            },
+        },
+    )
+    _write_json(
+        tmp_path / "data" / "runs" / "delivery_patrol" / "20260530T220000Z-guojing.json",
+        {
+            "workflow": "delivery_patrol",
+            "summary": {"target_date": "2026-05-30", "account_scope": {"account_remark_equals": "点点英雄-微小-郭靖"}},
+            "accounts": [
+                {
+                    "advertiser_id": "guojing-1",
+                    "account_name": "黑旗-点点英雄-微小-郭靖-1",
+                    "metrics": {"today": {"stat_cost": 100}},
+                }
+            ],
+            "projects": [],
+            "promotions": [],
+        },
+    )
+    suggestions_path = tmp_path / "data" / "runs" / "rule_suggestions" / "outside-guojing.json"
+    _write_json(
+        suggestions_path,
+        {
+            "workflow": "rule_suggestions",
+            "summary": {"target_date": "2026-05-30", "suggestion_count": 1},
+            "suggestions": [
+                {
+                    "suggestion_id": "other-close",
+                    "suggested_action": "suggest_close_project",
+                    "suggestion_type": "suggest_close_project",
+                    "target_date": "2026-05-30",
+                    "product_key": "diandian-hero",
+                    "product_name": "点点英雄",
+                    "advertiser_id": "other-hero-1",
+                    "account_name": "黑旗-点点英雄-微小-杨过-1",
+                    "entity_type": "project",
+                    "project_id": "p-other",
+                    "entity_name": "非郭靖项目",
+                    "reason": "非郭靖账户不应生成项目管理配置。",
+                }
+            ],
+        },
+    )
+    client = _client(tmp_path)
+
+    response = client.post(
+        "/api/suggestions/project-update/preview",
+        json={
+            "suggestions_artifact_path": str(suggestions_path),
+            "selected_suggestion_ids": ["other-close"],
+            "product_key": "diandian-hero",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["status"] == "blocked"
+    assert "不属于当前建议实时范围" in "；".join(payload["summary"]["blocking_reasons"])
+
+
 def test_suggestions_list_includes_readonly_create_project_suggestions(tmp_path: Path):
     _write_suggestion_fixture(tmp_path)
     _write_local_db_suggestions_fixture(tmp_path)

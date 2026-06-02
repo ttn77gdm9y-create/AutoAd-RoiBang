@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from backend.app.services.atomic_write import write_json_atomic
+
 ACCOUNT_FIELDS = [
     "product_key",
     "product_name",
@@ -51,10 +53,8 @@ def load_accounts(configs_dir: str | Path) -> list[dict[str, str]]:
 
 def save_accounts(configs_dir: str | Path, accounts: list[dict[str, str]]) -> Path:
     path = account_store_path(configs_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"accounts": sorted(accounts, key=lambda row: (row["product_key"], row["advertiser_id"]))}
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    return path
+    return write_json_atomic(path, payload)
 
 
 def parse_paste_text(text: str) -> list[dict[str, str]]:

@@ -20,8 +20,8 @@ import {
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { apiGet, apiPost } from "../api/client";
 import { InlineTaskStatus, WorkflowSteps } from "../components/WorkflowScaffold";
@@ -251,9 +251,13 @@ function suggestionNextStepColor(nextStep: string): string {
 
 export function SuggestionsPage() {
   const queryClient = useQueryClient();
-  const [productKey, setProductKey] = useState("");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const suggestionListRef = useRef<HTMLDivElement>(null);
+  const [productKey, setProductKey] = useState(searchParams.get("product_key")?.trim() ?? "");
   const [lifecycleFilter, setLifecycleFilter] = useState("");
-  const [suggestionTypeFilter, setSuggestionTypeFilter] = useState<SuggestionTypeFilter | "">("");
+  const [suggestionTypeFilter, setSuggestionTypeFilter] = useState<SuggestionTypeFilter | "">(
+    parseSuggestionType(searchParams.get("suggestion_type")) ?? "",
+  );
   const [projectUpdateRequest, setProjectUpdateRequest] = useState<ProjectUpdateRequest>(emptyProjectUpdateRequest);
   const [createPlanRequest, setCreatePlanRequest] = useState<CreatePlanFromSuggestionRequest>(emptyCreatePlanRequest);
   const [previewResult, setPreviewResult] = useState<ChineseResult | undefined>();
@@ -471,6 +475,54 @@ export function SuggestionsPage() {
   const createPlanPreviewReady = createPlanPreviewResult?.summary.status === "planned" && Boolean(createPlanPreviewPath);
   const createPlanGroups = useMemo(() => createPlanGroupsFromResult(createPlanPreviewResult), [createPlanPreviewResult]);
 
+  function updateSuggestionSearch(patch: Record<string, string | null>) {
+    const next = new URLSearchParams(searchParams);
+    Object.entries(patch).forEach(([key, value]) => {
+      if (value) {
+        next.set(key, value);
+      } else {
+        next.delete(key);
+      }
+    });
+    setSearchParams(next);
+  }
+
+  useEffect(() => {
+    const nextProductKey = searchParams.get("product_key")?.trim() ?? "";
+    if (nextProductKey && nextProductKey !== productKey) {
+      setProductKey(nextProductKey);
+    }
+    const nextSuggestionType = parseSuggestionType(searchParams.get("suggestion_type"));
+    if (nextSuggestionType && nextSuggestionType !== suggestionTypeFilter) {
+      setSuggestionTypeFilter(nextSuggestionType);
+    }
+  }, [searchParams, productKey, suggestionTypeFilter]);
+
+  useEffect(() => {
+    const option = productOptions.find((item) => item.value === productKey);
+    const productName = option?.label ?? "";
+    setProjectUpdateRequest((current) =>
+      current.product_key === productKey && current.product_name === productName
+        ? current
+        : { ...current, product_key: productKey, product_name: productName },
+    );
+    setCreatePlanRequest((current) =>
+      current.product_key === productKey && current.product_name === productName
+        ? current
+        : { ...current, product_key: productKey, product_name: productName },
+    );
+  }, [productKey, productOptions]);
+
+  useEffect(() => {
+    if (searchParams.get("focus") !== "list") {
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      suggestionListRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [searchParams, suggestions.isLoading]);
+
   useEffect(() => {
     const artifactPath = suggestions.data?.artifact_path ?? "";
     if (artifactPath && artifactPath !== projectUpdateRequest.suggestions_artifact_path) {
@@ -636,6 +688,7 @@ export function SuggestionsPage() {
                 const nextProductKey = value ?? "";
                 const option = productOptions.find((item) => item.value === nextProductKey);
                 setProductKey(nextProductKey);
+                updateSuggestionSearch({ product_key: nextProductKey || null });
                 setLifecycleFilter("");
                 setSuggestionTypeFilter("");
                 setProjectUpdateRequest((current) => ({
@@ -760,6 +813,7 @@ export function SuggestionsPage() {
         {suggestions.error ? <Alert type="error" showIcon message={(suggestions.error as Error).message} /> : null}
         <SummaryPanel result={suggestions.data} loading={suggestions.isLoading} detailsCollapsed showArtifactPath={false} showRawJson={false} />
 
+        <div ref={suggestionListRef}>
         <Card size="small" title="建议列表与下一步">
           <Space direction="vertical" size="middle" className="full-width">
             <Alert
@@ -774,6 +828,7 @@ export function SuggestionsPage() {
                 options={suggestionTypeOptions}
                 onChange={(value) => {
                   setSuggestionTypeFilter(value as SuggestionTypeFilter);
+                  updateSuggestionSearch({ suggestion_type: String(value) });
                   updateCreatePlanRequest({ selected_suggestion_ids: [] });
                   updateProjectRequest({ selected_suggestion_ids: [] });
                 }}
@@ -844,9 +899,10 @@ export function SuggestionsPage() {
                     showIcon
                     message={
                       selectedCreateRows.length
-                        ? `已选 ${selectedCreateRows.length} 条扩量机会；这里只生成创建计划预览，不真实创建项目。`
-                        : "选择“扩量机会”后，先生成创建计划预览，再去创建计划页人工确认。"
+                        ? `已选 ${selectedCreateRows.length} 条扩量机会；这里只把策略建议转成创建计划预览，不真实创建项目。`
+                        : "选择“扩量机会”后，先检查创建计划，再去创建计划页人工确认。"
                     }
+                    description="扩量门槛、素材资格、预算、项目数和单元数来自创建建议策略与固定创建模式；页面只负责选择建议、填写负责人和发起预览。"
                   />
                   <Form layout="vertical" className="filter-bar">
                     <Row gutter={[16, 0]}>
@@ -877,21 +933,43 @@ export function SuggestionsPage() {
                           />
                         </Form.Item>
                       </Col>
-                      <Col xs={24} lg={12}>
-                        <Form.Item label="本次项目出价（可空）">
-                          <Input
-                            value={createPlanRequest.cpa_bid}
-                            onChange={(event) => updateCreatePlanRequest({ cpa_bid: event.target.value })}
-                          />
-                        </Form.Item>
-                      </Col>
-                      <Col xs={24} lg={12}>
-                        <Form.Item label="本次 ROI 系数（可空）">
-                          <Input
-                            value={createPlanRequest.roi_coefficient}
-                            onChange={(event) => updateCreatePlanRequest({ roi_coefficient: event.target.value })}
-                          />
-                        </Form.Item>
+                      <Col xs={24}>
+                        <Collapse
+                          className="advanced-fields"
+                          items={[
+                            {
+                              key: "create-plan-overrides",
+                              label: "高级信息：人工覆盖出价和 ROI 系数",
+                              children: (
+                                <Row gutter={[16, 0]}>
+                                  <Col xs={24}>
+                                    <Alert
+                                      type="warning"
+                                      showIcon
+                                      message="默认不要填写这里；只有人工已经确认本次要覆盖固定创建模式时才填写。"
+                                    />
+                                  </Col>
+                                  <Col xs={24} lg={12}>
+                                    <Form.Item label="本次项目出价（可空）">
+                                      <Input
+                                        value={createPlanRequest.cpa_bid}
+                                        onChange={(event) => updateCreatePlanRequest({ cpa_bid: event.target.value })}
+                                      />
+                                    </Form.Item>
+                                  </Col>
+                                  <Col xs={24} lg={12}>
+                                    <Form.Item label="本次 ROI 系数（可空）">
+                                      <Input
+                                        value={createPlanRequest.roi_coefficient}
+                                        onChange={(event) => updateCreatePlanRequest({ roi_coefficient: event.target.value })}
+                                      />
+                                    </Form.Item>
+                                  </Col>
+                                </Row>
+                              ),
+                            },
+                          ]}
+                        />
                       </Col>
                     </Row>
                   </Form>
@@ -929,24 +1007,11 @@ export function SuggestionsPage() {
                     showIcon
                     message={
                       selectedProjectUpdateRows.length
-                        ? `已选 ${selectedProjectUpdateRows.length} 条项目管理建议；这里只生成配置，再去项目管理页确认执行。`
+                        ? `已选 ${selectedProjectUpdateRows.length} 条项目管理建议；这里只生成项目管理配置，再去项目管理页确认执行。`
                         : "选择删除、暂停、调预算、调出价等项目管理建议后，先检查配置，再去项目管理页确认。"
                     }
+                    description="只读诊断和扩量机会不会进入项目管理配置；删除、暂停、预算、出价和时段动作仍必须在项目管理页预览并输入确认。"
                   />
-                  <Space wrap className="workflow-actions">
-                    <Button
-                      icon={<FileSearchOutlined />}
-                      loading={aiDraft.isPending}
-                      onClick={() => aiDraft.mutate()}
-                      disabled={!projectUpdateRequest.suggestions_artifact_path}
-                    >
-                      生成 AI 建议草稿
-                    </Button>
-                  </Space>
-                  {aiDraft.error ? <Alert type="error" showIcon message={(aiDraft.error as Error).message} /> : null}
-                  {aiDraftResult || aiDraft.isPending ? (
-                    <SummaryPanel result={aiDraftResult} loading={aiDraft.isPending} detailsCollapsed showArtifactPath showRawJson />
-                  ) : null}
                   <Form layout="vertical" className="filter-bar">
                     <Row gutter={[16, 0]}>
                       <Col xs={24} lg={12}>
@@ -958,15 +1023,26 @@ export function SuggestionsPage() {
                         </Form.Item>
                       </Col>
                       <Col xs={24} lg={12}>
-                        <Form.Item label="批量生成动作类型（未选建议时必选）">
-                          <Select
-                            mode="multiple"
-                            allowClear
-                            value={projectUpdateRequest.suggested_actions}
-                            onChange={(values) => updateProjectRequest({ suggested_actions: values })}
-                            options={actionOptions}
-                          />
-                        </Form.Item>
+                        <Collapse
+                          className="advanced-fields"
+                          items={[
+                            {
+                              key: "project-update-batch-actions",
+                              label: "高级信息：未选建议时按动作批量生成",
+                              children: (
+                                <Form.Item label="批量生成动作类型">
+                                  <Select
+                                    mode="multiple"
+                                    allowClear
+                                    value={projectUpdateRequest.suggested_actions}
+                                    onChange={(values) => updateProjectRequest({ suggested_actions: values })}
+                                    options={actionOptions}
+                                  />
+                                </Form.Item>
+                              ),
+                            },
+                          ]}
+                        />
                       </Col>
                       <Col xs={24}>
                         <Collapse
@@ -1034,6 +1110,36 @@ export function SuggestionsPage() {
                       生成项目管理配置
                     </Button>
                   </Space>
+                  <Collapse
+                    className="advanced-fields"
+                    items={[
+                      {
+                        key: "ai-draft",
+                        label: "辅助复核：生成 AI 建议草稿",
+                        children: (
+                          <Space direction="vertical" size="small" className="full-width">
+                            <Alert
+                              type="info"
+                              showIcon
+                              message="AI 草稿只整理解释和复核点，不执行真实业务动作，也不替代项目管理页确认。"
+                            />
+                            <Button
+                              icon={<FileSearchOutlined />}
+                              loading={aiDraft.isPending}
+                              onClick={() => aiDraft.mutate()}
+                              disabled={!projectUpdateRequest.suggestions_artifact_path}
+                            >
+                              生成 AI 建议草稿
+                            </Button>
+                            {aiDraft.error ? <Alert type="error" showIcon message={(aiDraft.error as Error).message} /> : null}
+                            {aiDraftResult || aiDraft.isPending ? (
+                              <SummaryPanel result={aiDraftResult} loading={aiDraft.isPending} detailsCollapsed showArtifactPath showRawJson />
+                            ) : null}
+                          </Space>
+                        ),
+                      },
+                    ]}
+                  />
                   {preview.error ? <Alert type="error" showIcon message={(preview.error as Error).message} /> : null}
                   {generate.error ? <Alert type="error" showIcon message={(generate.error as Error).message} /> : null}
                   <SummaryPanel result={previewResult} loading={preview.isPending} detailsCollapsed showArtifactPath={false} showRawJson={false} />
@@ -1063,6 +1169,7 @@ export function SuggestionsPage() {
             ) : null}
           </Space>
         </Card>
+        </div>
 
         <InlineTaskStatus
           title="项目管理配置生成结果"
@@ -1150,4 +1257,11 @@ function rowsToProductOptions(result?: ChineseResult) {
       label: String(row["显示名称"] ?? row["值"] ?? ""),
       value: String(row["值"] ?? ""),
     }));
+}
+
+function parseSuggestionType(value: string | null): SuggestionTypeFilter | "" {
+  if (value === "扩量机会" || value === "项目管理建议" || value === "只读诊断" || value === "全部") {
+    return value;
+  }
+  return "";
 }

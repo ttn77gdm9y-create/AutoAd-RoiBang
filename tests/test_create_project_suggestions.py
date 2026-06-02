@@ -166,6 +166,25 @@ def test_create_project_suggestions_generate_readonly_suggestion_and_block_full_
     assert "已达到策略上限" in "；".join(blocked["blocking_reasons"])
 
 
+def test_create_project_suggestions_limits_candidates_to_realtime_target_accounts(tmp_path: Path):
+    paths = _seed_project(tmp_path)
+
+    result = build_create_project_suggestions(
+        db_path=paths["db_path"],
+        project_root=tmp_path,
+        products_dir=tmp_path / "configs" / "products",
+        mode_dir=tmp_path / "configs" / "create-modes",
+        strategy_dir=tmp_path / "configs" / "create-suggestion-strategies",
+        product_key="demo-game",
+        target_account_ids=["1001"],
+        target_account_names={"1001": "演示账户一"},
+    )
+
+    assert result["summary"]["realtime_target_account_count"] == 1
+    assert [suggestion["advertiser_id"] for suggestion in result["suggestions"]] == ["1001"]
+    assert result["blocked_suggestions"] == []
+
+
 def test_create_project_suggestions_filters_recent_spend_candidates_and_applies_limit(tmp_path: Path):
     paths = _seed_project(tmp_path)
     _write_json(

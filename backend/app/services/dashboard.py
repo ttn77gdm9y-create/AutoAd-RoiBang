@@ -9,6 +9,10 @@ from typing import Any
 from backend.app.services.accounts_store import load_accounts
 from backend.app.services.artifacts import find_latest_artifact
 from backend.app.services.artifacts import read_json
+from backend.app.services.realtime_snapshots import default_realtime_product_key
+from backend.app.services.realtime_snapshots import find_realtime_patrol_snapshot
+from backend.app.services.realtime_snapshots import linked_suggestions_artifact
+from roibang_v2.workflows.product_automation_job import load_product_configs
 
 HEALTHY_PROJECT_STATUSES = {
     "",
@@ -30,6 +34,12 @@ def build_dashboard_filters(configs_dir: str | Path) -> dict[str, Any]:
         if product_key and product_key not in product_seen:
             rows.append({"类型": "产品", "显示名称": str(account.get("product_name") or product_key), "值": product_key})
             product_seen.add(product_key)
+    default_product_key = default_realtime_product_key(configs_dir, purpose="dashboard")
+    if default_product_key and default_product_key not in product_seen:
+        products = load_product_configs(Path(configs_dir) / "products", product_key=default_product_key)
+        product_name = str((products[0] if products else {}).get("product") or default_product_key)
+        rows.insert(0, {"类型": "产品", "显示名称": product_name, "值": default_product_key})
+        product_seen.add(default_product_key)
     rows.extend(_filter_rows(accounts, "渠道", "channel"))
     rows.extend(_filter_rows(accounts, "负责人", "owner"))
     rows.extend(
@@ -54,7 +64,7 @@ def build_dashboard_filters(configs_dir: str | Path) -> dict[str, Any]:
         },
         "table": {"columns": ["类型", "显示名称", "值"], "rows": rows},
         "artifact_path": "",
-        "raw": {"filters": rows},
+        "raw": {"filters": rows, "default_product_key": default_product_key},
     }
 
 
@@ -84,12 +94,14 @@ def build_dashboard_overview(
     products = _build_product_rows(context)
     metric_totals = _sum_product_rows(products)
     active_accounts = sum(1 for account in context["accounts"] if account.get("status") == "active")
+    if context.get("realtime_snapshot_required"):
+        active_accounts = len(context["patrol_accounts"])
     if not context["accounts"]:
         active_accounts = _int(context["patrol"].get("summary", {}).get("account_count"))
 
     abnormal_projects = sum(1 for project in context["projects"] if _is_abnormal_project(project))
     suggestion_count = _suggestion_count(context["suggestions_payload"], context["suggestions"])
-    warnings = []
+    warnings = list(context.get("realtime_warnings") or [])
     if context["patrol_path"] is None:
         warnings.append("未找到最近巡检结果，首页只展示账户库中的静态信息。")
 
@@ -284,6 +296,7 @@ def build_dashboard_projects(
                 "状态": str(project.get("business_status") or project.get("status") or ""),
                 "消耗": _round(_num(metrics.get("stat_cost"))),
                 "计费转化": _round(_num(metrics.get("billing_convert_cnt"))),
+                "是否异常": "是" if _is_abnormal_project(project) else "否",
                 "异常原因": suggestion_reasons.get((advertiser_id, project_id), _project_status_reason(project)),
             }
         )
@@ -303,7 +316,7 @@ def build_dashboard_projects(
             "blocking_reasons": [],
         },
         "table": {
-            "columns": ["产品", "账户 ID", "项目 ID", "项目名", "状态", "消耗", "计费转化", "异常原因"],
+            "columns": ["产品", "账户 ID", "项目 ID", "项目名", "状态", "消耗", "计费转化", "是否异常", "异常原因"],
             "rows": rows,
         },
         "artifact_path": str(context["patrol_path"] or ""),
@@ -775,22 +788,42 @@ def _load_dashboard_context(
         start_date=start_date,
         end_date=end_date,
     )
+    has_date_filter = bool(resolved_start_date or resolved_end_date)
+    default_product_key = ""
+    effective_product_key = product_key
+    if not effective_product_key and not any([channel, owner, status, has_date_filter]):
+        default_product_key = default_realtime_product_key(configs_dir, purpose="dashboard")
+        effective_product_key = default_product_key
     accounts = [
         account
         for account in load_accounts(configs_dir)
-        if _account_matches(account, product_key=product_key, channel=channel, owner=owner, status=status)
+        if _account_matches(account, product_key=effective_product_key, channel=channel, owner=owner, status=status)
     ]
-    has_filters = bool(product_key or channel or owner or status)
+    has_filters = bool(effective_product_key or channel or owner or status)
     account_scope_ids = {str(account.get("advertiser_id") or "") for account in accounts if account.get("advertiser_id")}
-    patrol_path = _find_dashboard_patrol_artifact(
-        runs_dir,
-        start_date=resolved_start_date,
-        end_date=resolved_end_date,
-        account_scope_ids=account_scope_ids,
+    realtime_snapshot = find_realtime_patrol_snapshot(
+        project_root=Path(runs_dir).parent.parent,
+        configs_dir=configs_dir,
+        runs_dir=runs_dir,
+        product_key=effective_product_key,
+        purpose="dashboard",
     )
-    has_date_filter = bool(resolved_start_date or resolved_end_date)
-    patrol = read_json(patrol_path) if patrol_path else {}
-    suggestions_path = _linked_suggestions_artifact_path(runs_dir, patrol)
+    realtime_warnings = list(realtime_snapshot.warnings)
+    if realtime_snapshot.required:
+        patrol_path = realtime_snapshot.path
+    else:
+        patrol_path = _find_dashboard_patrol_artifact(
+            runs_dir,
+            start_date=resolved_start_date,
+            end_date=resolved_end_date,
+            account_scope_ids=account_scope_ids,
+        )
+    patrol = realtime_snapshot.payload if realtime_snapshot.required else (read_json(patrol_path) if patrol_path else {})
+    suggestions_path = (
+        linked_suggestions_artifact(Path(runs_dir).parent.parent, patrol)
+        if realtime_snapshot.required
+        else _linked_suggestions_artifact_path(runs_dir, patrol)
+    )
     suggestions_payload = read_json(suggestions_path) if suggestions_path else {}
     if not suggestions_payload and isinstance(patrol.get("delivery_patrol_suggestions"), dict):
         suggestions_payload = dict(patrol["delivery_patrol_suggestions"])
@@ -820,10 +853,8 @@ def _load_dashboard_context(
         scoped_advertiser_ids = {str(account.get("advertiser_id") or "") for account in accounts}
     if not scoped_advertiser_ids and not has_filters:
         scoped_advertiser_ids = fact_advertiser_ids
-    product_by_advertiser = {
-        str(account.get("advertiser_id") or ""): str(account.get("product_name") or "未命名产品")
-        for account in accounts
-    }
+    if realtime_snapshot.required:
+        scoped_advertiser_ids = fact_advertiser_ids
     patrol_accounts = [
         account for account in _list(patrol.get("accounts")) if _in_scope(account, scoped_advertiser_ids)
     ]
@@ -832,6 +863,40 @@ def _load_dashboard_context(
     suggestions = [
         suggestion for suggestion in _list(suggestions_payload.get("suggestions")) if _in_scope(suggestion, scoped_advertiser_ids)
     ]
+    if realtime_snapshot.required and effective_product_key and patrol:
+        realtime_ids = {
+            str(account.get("advertiser_id") or account.get("account_id") or "")
+            for account in _list(patrol.get("accounts"))
+            if account.get("advertiser_id") or account.get("account_id")
+        }
+        accounts_by_id = {str(account.get("advertiser_id") or ""): dict(account) for account in accounts}
+        products = load_product_configs(Path(configs_dir) / "products", product_key=effective_product_key)
+        product_name = str((products[0] if products else {}).get("product") or effective_product_key)
+        for account in _list(patrol.get("accounts")):
+            advertiser_id = str(account.get("advertiser_id") or account.get("account_id") or "")
+            if not advertiser_id:
+                continue
+            accounts_by_id.setdefault(
+                advertiser_id,
+                {
+                    "product_key": effective_product_key,
+                    "product_name": product_name,
+                    "advertiser_id": advertiser_id,
+                    "advertiser_name": str(account.get("account_name") or account.get("advertiser_name") or ""),
+                    "status": "active",
+                },
+            )
+        accounts = [account for advertiser_id, account in sorted(accounts_by_id.items()) if advertiser_id in realtime_ids]
+    product_by_advertiser = {
+        str(account.get("advertiser_id") or ""): str(account.get("product_name") or "未命名产品")
+        for account in accounts
+    }
+    if realtime_snapshot.required and effective_product_key:
+        product_name = next(iter(product_by_advertiser.values()), "")
+        for account in _list(patrol.get("accounts")):
+            advertiser_id = str(account.get("advertiser_id") or account.get("account_id") or "")
+            if advertiser_id and product_name:
+                product_by_advertiser.setdefault(advertiser_id, product_name)
     return {
         "patrol_path": patrol_path,
         "suggestions_path": suggestions_path,
@@ -845,6 +910,11 @@ def _load_dashboard_context(
         "product_by_advertiser": product_by_advertiser,
         "start_date": resolved_start_date,
         "end_date": resolved_end_date,
+        "realtime_snapshot_required": realtime_snapshot.required,
+        "realtime_warnings": realtime_warnings,
+        "realtime_scope": realtime_snapshot.scope,
+        "default_product_key": default_product_key,
+        "effective_product_key": effective_product_key,
     }
 
 
@@ -1243,8 +1313,8 @@ def _find_dashboard_patrol_artifact(
     best_index = 0
     best_score: tuple[float, ...] | None = None
     for index, (_path, payload) in enumerate(payloads):
-        business_score, *activity_score = _dashboard_patrol_score(payload, account_scope_ids)
-        score = (business_score, float(index), *activity_score)
+        business_score, scope_score, *activity_score = _dashboard_patrol_score(payload, account_scope_ids)
+        score = (business_score, scope_score, float(index), *activity_score)
         if best_score is None or score > best_score:
             best_score = score
             best_index = index
@@ -1282,6 +1352,13 @@ def _dashboard_patrol_score(payload: dict[str, Any], account_scope_ids: set[str]
     if not isinstance(summary, dict):
         summary = {}
     today_metrics = _today_metrics(summary)
+    scope = summary.get("account_scope") if isinstance(summary.get("account_scope"), dict) else {}
+    if str(scope.get("account_name_contains") or "").strip():
+        scope_score = 2.0
+    elif str(scope.get("account_remark_equals") or "").strip():
+        scope_score = 0.0
+    else:
+        scope_score = 1.0
     account_count = max(_int(summary.get("account_count")), len(_list(payload.get("accounts"))))
     project_count = max(_int(summary.get("project_count")), len(_list(payload.get("projects"))))
     promotion_count = max(_int(summary.get("promotion_count")), len(_list(payload.get("promotions"))))
@@ -1289,6 +1366,7 @@ def _dashboard_patrol_score(payload: dict[str, Any], account_scope_ids: set[str]
     has_business_data = bool(account_count or project_count or promotion_count or stat_cost)
     return (
         1.0 if has_business_data else 0.0,
+        scope_score,
         float(project_count + promotion_count + account_count),
         stat_cost,
     )

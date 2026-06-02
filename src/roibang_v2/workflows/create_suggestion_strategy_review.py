@@ -178,6 +178,8 @@ def _review_strategy_product(
     strategy: dict[str, Any],
     product: dict[str, Any],
     resolved_target_date: str,
+    target_account_ids: list[str] | None = None,
+    target_account_names: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     enabled = _bool(strategy.get("enabled"), False)
     config_path = _text(strategy.get("_config_path"))
@@ -230,6 +232,8 @@ def _review_strategy_product(
             product=product,
             strategy=strategy,
             target_date=resolved_target_date,
+            target_account_ids=target_account_ids,
+            target_account_names=target_account_names,
         )
         candidate_account_count = len(candidates)
         qualified_materials, material_reasons = _qualified_materials(conn, product=product, strategy=strategy)
@@ -307,6 +311,7 @@ def _review_strategy_product(
         "allowed_account_count": allowed_account_count,
         "account_pool_count": account_pool_count,
         "candidate_account_count": candidate_account_count,
+        "realtime_target_account_count": len(target_account_ids) if target_account_ids is not None else None,
         "qualified_material_count": qualified_material_count,
         "estimated_suggestion_count": estimated_suggestion_count,
         "raw_suggestion_count": raw_suggestion_count,
@@ -331,6 +336,8 @@ def build_create_suggestion_strategy_review(
     product_key: str = "",
     target_date: str = "",
     include_examples: bool = True,
+    target_account_ids: list[str] | None = None,
+    target_account_names: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     requested_product_key = _text(product_key)
     paths = [Path(path) for path in strategy_paths or [] if _text(path)]
@@ -356,6 +363,8 @@ def build_create_suggestion_strategy_review(
                             strategy=strategy,
                             product=product,
                             resolved_target_date=resolved_target_date,
+                            target_account_ids=target_account_ids,
+                            target_account_names=target_account_names,
                         )
                     )
     else:
@@ -371,6 +380,8 @@ def build_create_suggestion_strategy_review(
                         strategy=strategy,
                         product=product,
                         resolved_target_date=resolved_target_date,
+                        target_account_ids=target_account_ids,
+                        target_account_names=target_account_names,
                     )
                 )
 
@@ -401,6 +412,7 @@ def build_create_suggestion_strategy_review(
             "estimated_candidate_account_count": sum(int(review.get("candidate_account_count") or 0) for review in reviews),
             "estimated_suggestion_count": sum(int(review.get("estimated_suggestion_count") or 0) for review in reviews),
             "blocked_candidate_count": sum(int(review.get("blocked_candidate_count") or 0) for review in reviews),
+            "realtime_target_account_count": len(target_account_ids) if target_account_ids is not None else None,
         },
         "source": {
             "db_path": str(db_path),
@@ -422,6 +434,7 @@ def build_create_suggestion_strategy_review(
 
 
 def run_create_suggestion_strategy_review_request(request: dict[str, Any], *, runs_dir: str | Path) -> dict[str, Any]:
+    raw_target_account_ids = request.get("target_account_ids")
     result = build_create_suggestion_strategy_review(
         db_path=request.get("db_path") or request.get("database_path") or "data/roibang_v2.sqlite3",
         project_root=request.get("project_root") or ".",
@@ -435,6 +448,16 @@ def run_create_suggestion_strategy_review_request(request: dict[str, Any], *, ru
         product_key=_text(request.get("product_key")),
         target_date=_text(request.get("target_date")),
         include_examples=_bool(request.get("include_examples"), True),
+        target_account_ids=[_text(item) for item in raw_target_account_ids if _text(item)]
+        if isinstance(raw_target_account_ids, list)
+        else None,
+        target_account_names={
+            _text(key): _text(value)
+            for key, value in (request.get("target_account_names") or {}).items()
+            if _text(key) and _text(value)
+        }
+        if isinstance(request.get("target_account_names"), dict)
+        else None,
     )
     result["artifact_path"] = str(write_run_artifact(runs_dir, WORKFLOW, result))
     return result

@@ -2,7 +2,8 @@ import { Alert, Col, DatePicker, Drawer, Form, Row, Select, Statistic, Tabs, Typ
 import { useQuery } from "@tanstack/react-query";
 import dayjs from "dayjs";
 import type { Dayjs } from "dayjs";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { apiGet } from "../api/client";
 import { SummaryPanel } from "../components/SummaryPanel";
@@ -19,16 +20,21 @@ const metrics = [
   "建议事项",
 ];
 
+const dashboardTabKeys = new Set(["products", "accounts", "projects", "materials", "suggestions"]);
+
 export function DashboardPage() {
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [filters, setFilters] = useState({
-    product_key: "",
-    channel: "",
-    owner: "",
-    status: "",
-    date_range: "",
-    start_date: "",
-    end_date: "",
+    product_key: searchParams.get("product_key") ?? "",
+    channel: searchParams.get("channel") ?? "",
+    owner: searchParams.get("owner") ?? "",
+    status: searchParams.get("status") ?? "",
+    date_range: searchParams.get("date_range") ?? "",
+    start_date: searchParams.get("start_date") ?? "",
+    end_date: searchParams.get("end_date") ?? "",
   });
+  const defaultProductApplied = useRef(false);
   const [selectedAdvertiserId, setSelectedAdvertiserId] = useState("");
   const [selectedAdvertiserLabel, setSelectedAdvertiserLabel] = useState("");
   const [selectedProductKey, setSelectedProductKey] = useState("");
@@ -104,6 +110,63 @@ export function DashboardPage() {
   });
   const summaryValues = new Map(data?.summary.items.map((item) => [item.label, item.value]) ?? []);
   const filterOptions = buildFilterOptions(filterCatalog.data);
+  const defaultProductKey = getDefaultProductKey(filterCatalog.data);
+  const activeDashboardTab = validDashboardTab(searchParams.get("tab"));
+  const projectScope = searchParams.get("project_scope") === "abnormal" ? "abnormal" : "";
+  const scopedProjects = useMemo(() => withProjectScope(projects.data, projectScope), [projects.data, projectScope]);
+
+  useEffect(() => {
+    if (!defaultProductKey || defaultProductApplied.current) {
+      return;
+    }
+    defaultProductApplied.current = true;
+    setFilters((current) => (current.product_key ? current : { ...current, product_key: defaultProductKey }));
+  }, [defaultProductKey]);
+
+  function updateDashboardSearch(patch: Record<string, string | null>) {
+    const next = new URLSearchParams(searchParams);
+    Object.entries(patch).forEach(([key, value]) => {
+      if (value) {
+        next.set(key, value);
+      } else {
+        next.delete(key);
+      }
+    });
+    setSearchParams(next);
+  }
+
+  function currentProductKey(): string {
+    return filters.product_key || defaultProductKey;
+  }
+
+  function openAbnormalProjects() {
+    updateDashboardSearch({
+      product_key: currentProductKey(),
+      tab: "projects",
+      project_scope: "abnormal",
+    });
+  }
+
+  function openSuggestionsWorkbench() {
+    const params = new URLSearchParams();
+    const productKey = currentProductKey();
+    if (productKey) {
+      params.set("product_key", productKey);
+    }
+    params.set("suggestion_type", "全部");
+    params.set("focus", "list");
+    navigate(`/suggestions?${params.toString()}`);
+  }
+
+  function metricAction(label: string): (() => void) | undefined {
+    if (label === "异常项目") {
+      return openAbnormalProjects;
+    }
+    if (label === "建议事项") {
+      return openSuggestionsWorkbench;
+    }
+    return undefined;
+  }
 
   return (
     <main className="page">
@@ -122,7 +185,11 @@ export function DashboardPage() {
             className="dashboard-filter-select"
             loading={filterCatalog.isLoading}
             value={filters.product_key || undefined}
-            onChange={(value) => setFilters({ ...filters, product_key: value ?? "" })}
+            onChange={(value) => {
+              const nextProductKey = value ?? "";
+              setFilters({ ...filters, product_key: nextProductKey });
+              updateDashboardSearch({ product_key: nextProductKey || null });
+            }}
             options={filterOptions.products}
           />
         </Form.Item>
@@ -190,15 +257,31 @@ export function DashboardPage() {
         </Form.Item>
       </Form>
       <Row gutter={[16, 16]} className="metric-grid">
-        {metrics.map((label) => (
-          <Col xs={24} sm={12} lg={6} key={label}>
-            <div className="metric-tile">
-              <Statistic title={label} value={formatMetricValue(summaryValues.get(label))} loading={isLoading} />
-            </div>
-          </Col>
-        ))}
+        {metrics.map((label) => {
+          const action = metricAction(label);
+          const content = <Statistic title={label} value={formatMetricValue(summaryValues.get(label))} loading={isLoading} />;
+          return (
+            <Col xs={24} sm={12} lg={6} key={label}>
+              {action ? (
+                <button type="button" className="metric-tile metric-tile-clickable" onClick={action}>
+                  {content}
+                </button>
+              ) : (
+                <div className="metric-tile">{content}</div>
+              )}
+            </Col>
+          );
+        })}
       </Row>
       <Tabs
+        activeKey={activeDashboardTab}
+        onChange={(key) => {
+          updateDashboardSearch({
+            product_key: currentProductKey(),
+            tab: key,
+            project_scope: key === "projects" ? projectScope || null : null,
+          });
+        }}
         items={[
           {
             key: "products",
@@ -227,6 +310,8 @@ export function DashboardPage() {
               <SummaryPanel
                 result={accounts.data}
                 loading={accounts.isLoading}
+                sortableColumns={["消耗"]}
+                defaultSort={{ column: "消耗", order: "descend" }}
                 onRowClick={(row) => {
                   const advertiserId = String(row["账户 ID"] ?? "");
                   if (advertiserId) {
@@ -241,11 +326,13 @@ export function DashboardPage() {
           },
           {
             key: "projects",
-            label: "项目明细",
+            label: projectScope === "abnormal" ? "异常项目" : "项目明细",
             children: (
               <SummaryPanel
-                result={projects.data}
+                result={scopedProjects}
                 loading={projects.isLoading}
+                sortableColumns={["消耗"]}
+                defaultSort={{ column: "消耗", order: "descend" }}
                 onRowClick={(row) => {
                   const projectId = String(row["项目 ID"] ?? "");
                   if (projectId) {
@@ -265,6 +352,8 @@ export function DashboardPage() {
               <SummaryPanel
                 result={materials.data}
                 loading={materials.isLoading}
+                sortableColumns={["消耗"]}
+                defaultSort={{ column: "消耗", order: "descend" }}
                 onRowClick={(row) => {
                   const materialId = String(row["单元 ID"] ?? "");
                   if (materialId) {
@@ -379,6 +468,39 @@ function buildFilterOptions(result?: ChineseResult) {
     products: rowsToOptions(rows, "产品"),
     channels: rowsToOptions(rows, "渠道"),
     owners: rowsToOptions(rows, "负责人"),
+  };
+}
+
+function getDefaultProductKey(result?: ChineseResult): string {
+  const value = result?.raw?.default_product_key;
+  return typeof value === "string" ? value : "";
+}
+
+function validDashboardTab(value: string | null): string {
+  return value && dashboardTabKeys.has(value) ? value : "products";
+}
+
+function withProjectScope(result: ChineseResult | undefined, scope: string): ChineseResult | undefined {
+  if (!result || scope !== "abnormal") {
+    return result;
+  }
+  const rows = result.table.rows.filter((row) => row["是否异常"] === true || row["是否异常"] === "是");
+  return {
+    ...result,
+    summary: {
+      ...result.summary,
+      title: "异常项目明细",
+      items: result.summary.items.map((item) => {
+        if (item.label === "项目数" || item.label === "异常项目") {
+          return { ...item, value: rows.length };
+        }
+        return item;
+      }),
+    },
+    table: {
+      ...result.table,
+      rows,
+    },
   };
 }
 

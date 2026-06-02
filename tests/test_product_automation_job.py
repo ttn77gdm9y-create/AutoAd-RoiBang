@@ -136,6 +136,53 @@ def test_build_product_job_commands_writes_request_and_command(tmp_path: Path):
     assert commands[0].command[-2:] == ["--execute", "--yes"]
 
 
+def test_build_product_job_commands_writes_scoped_delivery_patrol_requests(tmp_path: Path):
+    products_dir = tmp_path / "products"
+    products_dir.mkdir()
+    product = _product(tmp_path)
+    product["automation"]["delivery_patrol"]["account_scopes"] = [
+        {
+            "scope_id": "diandian-hero-guojing",
+            "account_remark_equals": "点点英雄-微小-郭靖",
+            "workbench_keyword": "点点英雄",
+        },
+        {
+            "scope_id": "diandian-hero-all",
+            "account_name_contains": "点点英雄",
+            "workbench_keyword": "点点英雄",
+        },
+    ]
+    (products_dir / "diandian-hero.local.json").write_text(
+        json.dumps(product, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    commands = build_product_job_commands(
+        job="delivery_patrol",
+        products_dir=products_dir,
+        request_dir=tmp_path / "requests",
+        product_key="diandian-hero",
+        target_date="2026-05-30",
+    )
+
+    assert [command.scope_id for command in commands] == ["diandian-hero-guojing", "diandian-hero-all"]
+    assert all(Path(command.request_path).exists() for command in commands)
+    assert "diandian-hero-guojing-delivery_patrol" in Path(commands[0].request_path).name
+    assert "diandian-hero-all-delivery_patrol" in Path(commands[1].request_path).name
+
+    guojing = json.loads(Path(commands[0].request_path).read_text(encoding="utf-8"))["delivery_patrol"]
+    all_accounts = json.loads(Path(commands[1].request_path).read_text(encoding="utf-8"))["delivery_patrol"]
+
+    assert guojing["account_scope"]["account_remark_equals"] == "点点英雄-微小-郭靖"
+    assert "account_name_contains" not in guojing["account_scope"]
+    assert all_accounts["account_scope"]["account_name_contains"] == "点点英雄"
+    assert "account_remark_equals" not in all_accounts["account_scope"]
+    assert guojing["active_account_discovery"]["workbench"]["keyword"] == "点点英雄"
+    assert all_accounts["active_account_discovery"]["workbench"]["keyword"] == "点点英雄"
+    assert guojing["openapi_http"]["response_audit_dir"].endswith("diandian-hero-guojing-delivery-patrol")
+    assert all_accounts["openapi_http"]["response_audit_dir"].endswith("diandian-hero-all-delivery-patrol")
+
+
 def test_product_automation_artifact_is_namespaced_by_job(tmp_path: Path):
     products_dir = tmp_path / "products"
     products_dir.mkdir()

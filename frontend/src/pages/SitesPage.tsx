@@ -7,6 +7,7 @@ import { apiGet, apiPost } from "../api/client";
 import { ConfirmExecutePanel } from "../components/ConfirmExecutePanel";
 import { SummaryPanel } from "../components/SummaryPanel";
 import { InlineTaskStatus, WorkflowSteps } from "../components/WorkflowScaffold";
+import { EXECUTE_CONFIRMATION_PHRASE } from "../constants/safety";
 import type { ChineseResult, TaskDetailResponse } from "../types/api";
 
 type SiteStatusRequest = {
@@ -112,7 +113,7 @@ export function SitesPage() {
       if (!reviewedStatusRequest) {
         throw new Error("请先检查并核对落地页动作");
       }
-      return apiPost<TaskResponse>("/sites/status/execute", { ...reviewedStatusRequest, confirmation: "确认执行" });
+      return apiPost<TaskResponse>("/sites/status/execute", { ...reviewedStatusRequest, confirmation: EXECUTE_CONFIRMATION_PHRASE });
     },
     onSuccess: async (result) => {
       setExecuteResult(result);
@@ -140,7 +141,7 @@ export function SitesPage() {
       if (!reviewedTemplateRequest) {
         throw new Error("请先检查并核对模板建站动作");
       }
-      return apiPost<TaskResponse>("/sites/template-foundation/execute", { ...reviewedTemplateRequest, confirmation: "确认执行" });
+      return apiPost<TaskResponse>("/sites/template-foundation/execute", { ...reviewedTemplateRequest, confirmation: EXECUTE_CONFIRMATION_PHRASE });
     },
     onSuccess: async (result) => {
       setTemplateExecuteResult(result);

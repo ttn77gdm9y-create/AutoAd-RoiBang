@@ -367,6 +367,8 @@ def _candidate_accounts(
     product: dict[str, Any],
     strategy: dict[str, Any],
     target_date: str = "",
+    target_account_ids: list[str] | None = None,
+    target_account_names: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     product_name = _text(product.get("product") or product.get("product_name"))
     account_cfg = strategy.get("account") if isinstance(strategy.get("account"), dict) else {}
@@ -397,7 +399,15 @@ def _candidate_accounts(
             item["account_name"] = _text(row.get("account_name"))
         item["product"] = _text(row.get("product"))
         item["platform"] = _text(row.get("platform"))
+    if target_account_names:
+        for advertiser_id, account_name in target_account_names.items():
+            account_id = _text(advertiser_id)
+            if account_id and _text(account_name) and account_id in candidates:
+                candidates[account_id]["account_name"] = _text(account_name)
     rows = list(candidates.values())
+    if target_account_ids is not None:
+        target_ids = {_text(item) for item in target_account_ids if _text(item)}
+        rows = [row for row in rows if _text(row.get("advertiser_id")) in target_ids]
     if candidate_scope == "allowed_accounts_with_recent_spend":
         window_days = _int(account_cfg.get("recent_window_days"), 1)
         min_recent_stat_cost = _number(account_cfg.get("min_recent_stat_cost"), 0)
@@ -622,6 +632,8 @@ def build_create_project_suggestions(
     strategy_dir: str | Path | None = "configs/create-suggestion-strategies",
     product_key: str = "",
     target_date: str = "",
+    target_account_ids: list[str] | None = None,
+    target_account_names: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     strategies = _load_strategies(strategy_paths or [], strategy_dir)
     enabled_strategies = [strategy for strategy in strategies if _bool(strategy.get("enabled"), False)]
@@ -659,6 +671,8 @@ def build_create_project_suggestions(
                     product=product,
                     strategy=strategy,
                     target_date=resolved_target_date,
+                    target_account_ids=target_account_ids,
+                    target_account_names=target_account_names,
                 )
                 max_suggestions = _strategy_max_suggestions(strategy)
                 strategy_suggestion_count = 0
@@ -710,6 +724,7 @@ def build_create_project_suggestions(
             "suggestion_count": len(suggestions),
             "blocked_suggestion_count": len(blocked_suggestions),
             "action_counts": action_counts,
+            "realtime_target_account_count": len(target_account_ids) if target_account_ids is not None else None,
         },
         "source": {
             "workflow": WORKFLOW,
@@ -730,6 +745,7 @@ def build_create_project_suggestions(
 
 
 def run_create_project_suggestions_request(request: dict[str, Any], *, runs_dir: str | Path) -> dict[str, Any]:
+    raw_target_account_ids = request.get("target_account_ids")
     result = build_create_project_suggestions(
         db_path=request.get("db_path") or request.get("database_path") or "data/roibang_v2.sqlite3",
         project_root=request.get("project_root") or ".",
@@ -741,6 +757,16 @@ def run_create_project_suggestions_request(request: dict[str, Any], *, runs_dir:
         strategy_dir=request.get("strategy_dir") or "configs/create-suggestion-strategies",
         product_key=_text(request.get("product_key")),
         target_date=_text(request.get("target_date")),
+        target_account_ids=[_text(item) for item in raw_target_account_ids if _text(item)]
+        if isinstance(raw_target_account_ids, list)
+        else None,
+        target_account_names={
+            _text(key): _text(value)
+            for key, value in (request.get("target_account_names") or {}).items()
+            if _text(key) and _text(value)
+        }
+        if isinstance(request.get("target_account_names"), dict)
+        else None,
     )
     result["artifact_path"] = str(write_run_artifact(runs_dir, WORKFLOW, result))
     return result

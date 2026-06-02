@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from backend.app.api import account_remarks
 from backend.app.api import accounts
 from backend.app.api import actions
+from backend.app.api import automation_health
 from backend.app.api import create_plans
 from backend.app.api import dashboard
 from backend.app.api import health
@@ -19,6 +24,12 @@ from backend.app.api import suggestions
 from backend.app.api import tasks
 from backend.app.api import workflows
 from backend.app.services.settings import build_settings
+
+logger = logging.getLogger(__name__)
+
+
+def _detail_message(detail: object) -> str:
+    return detail if isinstance(detail, str) else "请求失败"
 
 
 def create_app(project_root: str | Path | None = None) -> FastAPI:
@@ -42,9 +53,36 @@ def create_app(project_root: str | Path | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.exception_handler(StarletteHTTPException)
+    async def http_exception_handler(_request: Request, exc: StarletteHTTPException) -> JSONResponse:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                "detail": exc.detail,
+                "error_code": "http_error",
+                "message": _detail_message(exc.detail),
+            },
+            headers=exc.headers,
+        )
+
+    @app.exception_handler(Exception)
+    async def unhandled_exception_handler(request: Request, _exc: Exception) -> JSONResponse:
+        logger.exception("Unhandled API exception: %s %s", request.method, request.url.path)
+        message = "本地服务异常，请查看后端日志"
+        return JSONResponse(
+            status_code=500,
+            content={
+                "detail": message,
+                "error_code": "internal_server_error",
+                "message": message,
+            },
+        )
+
     app.include_router(health.router, prefix="/api")
     app.include_router(workflows.router, prefix="/api")
     app.include_router(tasks.router, prefix="/api")
+    app.include_router(automation_health.router, prefix="/api")
     app.include_router(actions.router, prefix="/api")
     app.include_router(accounts.router, prefix="/api")
     app.include_router(dashboard.router, prefix="/api")

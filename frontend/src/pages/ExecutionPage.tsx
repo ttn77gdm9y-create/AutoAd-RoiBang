@@ -7,6 +7,7 @@ import { apiGet, apiPost } from "../api/client";
 import { ConfirmExecutePanel } from "../components/ConfirmExecutePanel";
 import { SummaryPanel } from "../components/SummaryPanel";
 import { InlineTaskStatus, WorkflowSteps } from "../components/WorkflowScaffold";
+import { EXECUTE_CONFIRMATION_PHRASE } from "../constants/safety";
 import type { ChineseResult, TaskDetailResponse } from "../types/api";
 
 type ActionResponse = ChineseResult & {
@@ -45,7 +46,7 @@ export function ExecutionPage() {
     },
   });
   const execute = useMutation({
-    mutationFn: () => apiPost<ActionResponse>(`/actions/${action}/execute`, { confirmation: "确认执行", request }),
+    mutationFn: () => apiPost<ActionResponse>(`/actions/${action}/execute`, { confirmation: EXECUTE_CONFIRMATION_PHRASE, request }),
     onSuccess: async (result) => {
       setExecuteResult(result);
       await queryClient.invalidateQueries({ queryKey: ["tasks"] });

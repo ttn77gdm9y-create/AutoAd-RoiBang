@@ -76,6 +76,50 @@ def _suggestions() -> dict:
     }
 
 
+def _scoped_patrol(
+    *,
+    target_date: str,
+    account_count: int,
+    project_count: int,
+    cost: float,
+    account_remark_equals: str = "",
+    account_name_contains: str = "",
+    account_names: list[str] | None = None,
+) -> dict:
+    scope: dict[str, object] = {"source": "workbench_account_list"}
+    if account_remark_equals:
+        scope["account_remark_equals"] = account_remark_equals
+    if account_name_contains:
+        scope["account_name_contains"] = account_name_contains
+    accounts = [
+        {
+            "advertiser_id": f"adv-{index + 1}",
+            "account_name": name,
+            "metrics": {"today": {"stat_cost": cost / max(len(account_names or []), 1)}},
+        }
+        for index, name in enumerate(account_names or [])
+    ]
+    return {
+        "ok": True,
+        "workflow": "delivery_patrol",
+        "summary": {
+            "target_date": target_date,
+            "account_count": account_count,
+            "project_count": project_count,
+            "promotion_count": project_count,
+            "attention_count": 0,
+            "account_scope": scope,
+            "overall_metrics": {
+                "today": {"stat_cost": cost, "billing_convert_cnt": 1, "billing_1day_pay_roi": 0.05},
+                "yesterday": {"stat_cost": max(cost - 100, 0), "billing_convert_cnt": 1, "billing_1day_pay_roi": 0.04},
+            },
+        },
+        "accounts": accounts,
+        "projects": [],
+        "promotions": [],
+    }
+
+
 def _load_script():
     script_path = Path("scripts/run_delivery_readonly_report_chain.py")
     spec = importlib.util.spec_from_file_location("run_delivery_readonly_report_chain", script_path)
@@ -191,3 +235,87 @@ def test_delivery_readonly_report_chain_cli_accepts_request_file(tmp_path: Path,
     assert output["external_api_calls"] == 0
     assert output["summary"]["create_batch_review"]["batch_count"] == 1
     assert output["delivery"]["feishu"]["attempted"] is False
+
+
+def test_delivery_readonly_report_chain_supports_multiple_scopes_without_using_overwritten_latest(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    runs_dir = tmp_path / "runs"
+    patrol_dir = runs_dir / "delivery_patrol"
+    suggestions_dir = runs_dir / "delivery_patrol_suggestions"
+    _init_db(db_path)
+    patrol_dir.mkdir(parents=True)
+    suggestions_dir.mkdir(parents=True)
+    guojing_suggestions = suggestions_dir / "guojing.json"
+    all_suggestions = suggestions_dir / "all.json"
+    other_suggestions = suggestions_dir / "other.json"
+    guojing_suggestions.write_text(json.dumps(_suggestions(), ensure_ascii=False), encoding="utf-8")
+    all_suggestions.write_text(json.dumps(_suggestions(), ensure_ascii=False), encoding="utf-8")
+    other_suggestions.write_text(json.dumps(_suggestions(), ensure_ascii=False), encoding="utf-8")
+
+    guojing_patrol = _scoped_patrol(
+        target_date="2026-05-30",
+        account_count=5,
+        project_count=37,
+        cost=11064.49,
+        account_remark_equals="点点英雄-微小-郭靖",
+        account_names=["点点英雄-郭靖-1", "点点英雄-郭靖-2"],
+    )
+    guojing_patrol["summary"]["suggestion_artifact_path"] = str(guojing_suggestions)
+    all_patrol = _scoped_patrol(
+        target_date="2026-05-30",
+        account_count=12,
+        project_count=88,
+        cost=22345.67,
+        account_name_contains="点点英雄",
+        account_names=["点点英雄-郭靖-1", "点点英雄-其他-1"],
+    )
+    all_patrol["summary"]["suggestion_artifact_path"] = str(all_suggestions)
+    other_patrol = _scoped_patrol(
+        target_date="2026-05-30",
+        account_count=0,
+        project_count=0,
+        cost=0,
+        account_remark_equals="勇者突进-微小-郭靖",
+    )
+    other_patrol["summary"]["suggestion_artifact_path"] = str(other_suggestions)
+    (patrol_dir / "20260530T153113Z.json").write_text(json.dumps(guojing_patrol, ensure_ascii=False), encoding="utf-8")
+    (patrol_dir / "20260530T153120Z.json").write_text(json.dumps(all_patrol, ensure_ascii=False), encoding="utf-8")
+    (patrol_dir / "20260530T153122Z.json").write_text(json.dumps(other_patrol, ensure_ascii=False), encoding="utf-8")
+    (patrol_dir / "latest.json").write_text(json.dumps(other_patrol, ensure_ascii=False), encoding="utf-8")
+
+    result = run_delivery_readonly_report_chain_request(
+        {
+            "db_path": str(db_path),
+            "target_date": "2026-05-30",
+            "report_scopes": [
+                {
+                    "scope_id": "diandian-hero-guojing",
+                    "title": "点点英雄-微小-郭靖",
+                    "account_remark_equals": "点点英雄-微小-郭靖",
+                },
+                {
+                    "scope_id": "diandian-hero-all",
+                    "title": "点点英雄全量账户",
+                    "account_name_contains": "点点英雄",
+                },
+            ],
+            "recent_days": 1,
+            "project_name_contains": "郭靖",
+        },
+        runs_dir=runs_dir,
+    )
+
+    assert result["ok"] is True
+    assert result["summary"]["scope_count"] == 2
+    scope_summaries = {item["scope_id"]: item for item in result["summary"]["scopes"]}
+    assert scope_summaries["diandian-hero-guojing"]["business_report"]["account_count"] == 5
+    assert scope_summaries["diandian-hero-all"]["business_report"]["account_count"] == 12
+    artifact_scopes = {item["scope_id"]: item for item in result["artifacts"]["scopes"]}
+    assert artifact_scopes["diandian-hero-guojing"]["patrol_artifact_path"].endswith("20260530T153113Z.json")
+    assert artifact_scopes["diandian-hero-all"]["patrol_artifact_path"].endswith("20260530T153120Z.json")
+    assert Path(result["artifacts"]["business_report_artifact_path"]).exists()
+    assert Path(result["artifacts"]["business_report_latest_artifact_path"]).exists()
+    assert "点点英雄-微小-郭靖" in result["message"]
+    assert "点点英雄全量账户" in result["message"]
+    assert "11064.49" in result["message"]
+    assert "22345.67" in result["message"]

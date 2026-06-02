@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import {
   AppstoreOutlined,
   BarChartOutlined,
+  ClockCircleOutlined,
   ClusterOutlined,
   DatabaseOutlined,
   EditOutlined,
@@ -17,6 +18,7 @@ import {
 
 import { AccountRemarksPage } from "../pages/AccountRemarksPage";
 import { AccountsPage } from "../pages/AccountsPage";
+import { AutomationHealthPage } from "../pages/AutomationHealthPage";
 import { CreatePlansPage } from "../pages/CreatePlansPage";
 import { DashboardPage } from "../pages/DashboardPage";
 import { ExecutionPage } from "../pages/ExecutionPage";
@@ -37,6 +39,7 @@ export const routeItems = [
   { key: "/project-management", label: "项目管理", group: "核心业务", icon: <ToolOutlined />, element: <ProjectManagementPage /> },
   { key: "/account-remarks", label: "账户备注", group: "核心业务", icon: <EditOutlined />, element: <AccountRemarksPage /> },
   { key: "/sites", label: "落地页管理", group: "核心业务", icon: <LinkOutlined />, element: <SitesPage /> },
+  { key: "/automation-health", label: "每日自动化健康看板", group: "系统记录", icon: <ClockCircleOutlined />, element: <AutomationHealthPage /> },
   { key: "/tasks", label: "任务中心", group: "系统记录", icon: <ClusterOutlined />, element: <TasksPage /> },
   { key: "/operations", label: "操作日志", group: "系统记录", icon: <HistoryOutlined />, element: <OperationsPage /> },
   { key: "/results", label: "结果中心", group: "系统记录", icon: <ProfileOutlined />, element: <ResultsPage /> },

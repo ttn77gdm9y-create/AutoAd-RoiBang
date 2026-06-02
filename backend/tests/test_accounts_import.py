@@ -3,9 +3,12 @@ import io
 import json
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
+from backend.app.services import atomic_write
 from backend.app.main import create_app
+from backend.app.services.accounts_store import save_accounts
 
 
 def _client(tmp_path: Path) -> TestClient:
@@ -468,3 +471,50 @@ def test_history_backfill_repairs_id_account_names_from_config_sources(tmp_path)
     account = saved["accounts"][0]
     assert account["advertiser_name"] == "点点英雄-微小-郭靖-002"
     assert account["channel"] == "微信"
+
+
+def test_save_accounts_atomic_failure_preserves_existing_store(tmp_path, monkeypatch):
+    store = tmp_path / "configs" / "accounts" / "product-accounts.local.json"
+    store.parent.mkdir(parents=True)
+    original_payload = {
+        "accounts": [
+            {
+                "product_key": "old",
+                "product_name": "旧产品",
+                "advertiser_id": "1001",
+                "advertiser_name": "旧账户",
+                "channel": "微信",
+                "owner": "",
+                "account_remark": "",
+                "status": "active",
+                "notes": "",
+            }
+        ]
+    }
+    store.write_text(json.dumps(original_payload, ensure_ascii=False), encoding="utf-8")
+
+    def fail_replace(_source: Path, _target: Path) -> None:
+        raise RuntimeError("replace failed")
+
+    monkeypatch.setattr(atomic_write.os, "replace", fail_replace)
+
+    with pytest.raises(RuntimeError, match="replace failed"):
+        save_accounts(
+            tmp_path / "configs",
+            [
+                {
+                    "product_key": "new",
+                    "product_name": "新产品",
+                    "advertiser_id": "2001",
+                    "advertiser_name": "新账户",
+                    "channel": "微信",
+                    "owner": "",
+                    "account_remark": "",
+                    "status": "active",
+                    "notes": "",
+                }
+            ],
+        )
+
+    assert json.loads(store.read_text(encoding="utf-8")) == original_payload
+    assert not (store.parent / ".product-accounts.local.json.tmp").exists()

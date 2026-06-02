@@ -3,11 +3,11 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter
-from fastapi import HTTPException
 from fastapi import Request
 from pydantic import BaseModel
 from pydantic import Field
 
+from backend.app.safety.confirmation import require_execute_confirmation
 from backend.app.services.project_management import build_project_management_execute_preview
 from backend.app.services.project_management import build_project_management_config_preview
 from backend.app.services.project_management import start_project_management_execute_task
@@ -69,8 +69,7 @@ def project_management_execute_preview(request: Request, body: ProjectManagement
 
 @router.post("/project-management/execute")
 def project_management_execute(request: Request, body: ProjectManagementExecuteRequest) -> dict:
-    if body.confirmation != "确认执行":
-        raise HTTPException(status_code=400, detail="真实执行前必须输入：确认执行")
+    require_execute_confirmation(body.confirmation)
     return start_project_management_execute_task(
         body.model_dump(),
         project_root=request.app.state.settings.project_root,

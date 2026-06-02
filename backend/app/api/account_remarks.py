@@ -3,11 +3,11 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter
-from fastapi import HTTPException
 from fastapi import Request
 from pydantic import BaseModel
 from pydantic import Field
 
+from backend.app.safety.confirmation import require_execute_confirmation
 from backend.app.services.account_remarks import build_account_remark_config_preview
 from backend.app.services.account_remarks import build_account_remark_execute_preview
 from backend.app.services.account_remarks import start_account_remark_config_task
@@ -59,8 +59,7 @@ def account_remark_execute_preview(request: Request, body: AccountRemarkExecuteP
 
 @router.post("/account-remarks/execute")
 def account_remark_execute(request: Request, body: AccountRemarkExecuteRequest) -> dict:
-    if body.confirmation != "确认执行":
-        raise HTTPException(status_code=400, detail="真实执行前必须输入：确认执行")
+    require_execute_confirmation(body.confirmation)
     return start_account_remark_execute_task(
         body.model_dump(),
         project_root=request.app.state.settings.project_root,

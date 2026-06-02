@@ -13,6 +13,7 @@ from roibang_v2.ui.script_runner import build_account_remark_config_command
 from roibang_v2.ui.script_runner import build_account_remark_execute_command
 from roibang_v2.workflows.frontend_operation_log import record_frontend_operation
 
+from backend.app.safety.confirmation import EXECUTE_CONFIRMATION_PHRASE
 from backend.app.services.account_names import account_name_for
 from backend.app.services.account_names import load_account_name_map
 
@@ -154,7 +155,7 @@ def build_account_remark_execute_preview(request: dict[str, Any], *, project_roo
                 {"label": "账户数", "value": len(advertiser_ids)},
                 {"label": "账户备注 JSON", "value": account_remark_update_path},
             ],
-            "warnings": ["这是账户备注真实修改入口；执行前必须核对中文摘要和账户明细，并输入“确认执行”。"],
+            "warnings": [f"这是账户备注真实修改入口；执行前必须核对中文摘要和账户明细，并输入“{EXECUTE_CONFIRMATION_PHRASE}”。"],
             "blocking_reasons": [],
         },
         "table": {"columns": ["账户 ID", "账户名", "目标备注"], "rows": rows},

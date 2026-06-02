@@ -13,6 +13,7 @@ from roibang_v2.workflows.frontend_operation_log import record_frontend_operatio
 from roibang_v2.workflows.site_status_update import build_site_status_update_plan
 from roibang_v2.workflows.site_template_foundation import build_site_template_foundation_plan
 
+from backend.app.safety.confirmation import EXECUTE_CONFIRMATION_PHRASE
 from backend.app.services.account_names import account_name_for
 from backend.app.services.account_names import load_account_name_map
 
@@ -108,7 +109,7 @@ def build_site_status_preview(request: dict[str, Any], *, project_root: str | Pa
                 {"label": "落地页数", "value": plan["summary"]["site_count"]},
                 {"label": "请求批次数", "value": plan["summary"]["request_count"]},
             ],
-            "warnings": ["这是落地页状态真实修改入口；执行前必须核对中文摘要和落地页明细，并输入“确认执行”。"],
+            "warnings": [f"这是落地页状态真实修改入口；执行前必须核对中文摘要和落地页明细，并输入“{EXECUTE_CONFIRMATION_PHRASE}”。"],
             "blocking_reasons": [],
         },
         "table": {"columns": ["账户 ID", "账户名", "落地页 ID", "目标状态"], "rows": rows},
@@ -187,7 +188,7 @@ def build_site_template_foundation_preview(request: dict[str, Any], *, project_r
                 {"label": "小游戏路径", "value": _text(summary.get("game_path"))},
                 {"label": "发布", "value": "是" if bool(summary.get("publish")) else "否"},
             ],
-            "warnings": ["这是模板建站真实执行入口；执行前必须核对中文摘要和目标账户明细，并输入“确认执行”。"],
+            "warnings": [f"这是模板建站真实执行入口；执行前必须核对中文摘要和目标账户明细，并输入“{EXECUTE_CONFIRMATION_PHRASE}”。"],
             "blocking_reasons": [],
         },
         "table": {"columns": ["账户 ID", "账户名", "现有落地页 ID", "动作", "小游戏路径", "发布"], "rows": rows},

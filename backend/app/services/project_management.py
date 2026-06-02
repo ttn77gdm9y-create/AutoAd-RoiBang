@@ -13,6 +13,7 @@ from roibang_v2.ui.script_runner import build_project_update_execute_command
 from roibang_v2.ui.script_runner import build_project_filter_command
 from roibang_v2.workflows.frontend_operation_log import record_frontend_operation
 
+from backend.app.safety.confirmation import EXECUTE_CONFIRMATION_PHRASE
 from backend.app.services.account_names import account_name_for
 from backend.app.services.account_names import load_account_name_map
 
@@ -216,7 +217,7 @@ def build_project_management_execute_preview(request: dict[str, Any], *, project
             "risk_level": _max_action_risk(actions),
             "execution_enabled": True,
             "items": _execute_summary_items(request, project_update, actions, project_update_path),
-            "warnings": ["这是高风险真实执行入口；点击执行前必须核对中文摘要和项目明细，并输入“确认执行”。"],
+            "warnings": [f"这是高风险真实执行入口；点击执行前必须核对中文摘要和项目明细，并输入“{EXECUTE_CONFIRMATION_PHRASE}”。"],
             "blocking_reasons": [],
         },
         "table": {

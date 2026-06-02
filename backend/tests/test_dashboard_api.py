@@ -445,6 +445,247 @@ def test_dashboard_overview_filters_by_product_key(tmp_path):
     ]
 
 
+def test_dashboard_product_realtime_uses_account_name_scope_not_guojing_scope(tmp_path: Path):
+    _write_json(
+        tmp_path / "configs" / "accounts" / "product-accounts.local.json",
+        {
+            "accounts": [
+                {
+                    "product_key": "diandian-hero",
+                    "product_name": "点点英雄",
+                    "advertiser_id": "guojing-1",
+                    "advertiser_name": "黑旗-点点英雄-微小-郭靖-1",
+                    "channel": "微信",
+                    "owner": "郭靖",
+                    "status": "active",
+                },
+                {
+                    "product_key": "diandian-hero",
+                    "product_name": "点点英雄",
+                    "advertiser_id": "other-hero-1",
+                    "advertiser_name": "黑旗-点点英雄-微小-杨过-1",
+                    "channel": "微信",
+                    "owner": "运营A",
+                    "status": "active",
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "configs" / "products" / "diandian-hero.local.json",
+        {
+            "product_key": "diandian-hero",
+            "product": "点点英雄",
+            "automation": {
+                "enabled": True,
+                "delivery_patrol": {
+                    "enabled": True,
+                    "account_scopes": [
+                        {
+                            "scope_id": "diandian-hero-guojing",
+                            "title": "点点英雄-微小-郭靖",
+                            "account_remark_equals": "点点英雄-微小-郭靖",
+                        },
+                        {
+                            "scope_id": "diandian-hero-all",
+                            "title": "点点英雄全量账户",
+                            "account_name_contains": "点点英雄",
+                        },
+                    ],
+                },
+            },
+        },
+    )
+    _write_json(
+        tmp_path / "data" / "runs" / "delivery_patrol" / "20260530T230000Z-guojing.json",
+        {
+            "workflow": "delivery_patrol",
+            "summary": {
+                "target_date": "2026-05-30",
+                "account_scope": {"account_remark_equals": "点点英雄-微小-郭靖"},
+                "overall_metrics": {"today": {"stat_cost": 100, "billing_convert_cnt": 1, "billing_1day_pay_roi": 0.1}},
+            },
+            "accounts": [
+                {
+                    "advertiser_id": "guojing-1",
+                    "account_name": "黑旗-点点英雄-微小-郭靖-1",
+                    "metrics": {"today": {"stat_cost": 100, "billing_convert_cnt": 1, "billing_1day_pay_roi": 0.1}},
+                }
+            ],
+            "projects": [],
+            "promotions": [],
+        },
+    )
+    _write_json(
+        tmp_path / "data" / "runs" / "delivery_patrol" / "20260530T220000Z-all.json",
+        {
+            "workflow": "delivery_patrol",
+            "summary": {
+                "target_date": "2026-05-30",
+                "account_scope": {"account_name_contains": "点点英雄"},
+                "overall_metrics": {"today": {"stat_cost": 300, "billing_convert_cnt": 3, "billing_1day_pay_roi": 0.2}},
+            },
+            "accounts": [
+                {
+                    "advertiser_id": "guojing-1",
+                    "account_name": "黑旗-点点英雄-微小-郭靖-1",
+                    "metrics": {"today": {"stat_cost": 100, "billing_convert_cnt": 1, "billing_1day_pay_roi": 0.1}},
+                },
+                {
+                    "advertiser_id": "other-hero-1",
+                    "account_name": "黑旗-点点英雄-微小-杨过-1",
+                    "metrics": {"today": {"stat_cost": 200, "billing_convert_cnt": 2, "billing_1day_pay_roi": 0.25}},
+                },
+                {
+                    "advertiser_id": "zero-hero",
+                    "account_name": "黑旗-点点英雄-零消耗",
+                    "metrics": {"today": {"stat_cost": 0, "billing_convert_cnt": 0}},
+                },
+            ],
+            "projects": [],
+            "promotions": [],
+        },
+    )
+    client = _client(tmp_path)
+
+    response = client.get("/api/dashboard/overview", params={"product_key": "diandian-hero"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert {"label": "今日消耗", "value": 300.0} in payload["summary"]["items"]
+    assert {"label": "活跃账户", "value": 2} in payload["summary"]["items"]
+    assert payload["artifact_path"].endswith("20260530T220000Z-all.json")
+    assert payload["table"]["rows"] == [
+        {
+            "产品": "点点英雄",
+            "账户数": 2,
+            "消耗": 300.0,
+            "计费转化": 3.0,
+            "转化成本": 100.0,
+            "付费 ROI": 0.2,
+            "异常项目": 0,
+            "建议事项": 0,
+        }
+    ]
+
+    default_response = client.get("/api/dashboard/overview")
+    default_payload = default_response.json()
+    assert default_payload["artifact_path"].endswith("20260530T220000Z-all.json")
+    assert {"label": "今日消耗", "value": 300.0} in default_payload["summary"]["items"]
+
+
+def test_dashboard_default_realtime_ignores_stale_account_store_scope(tmp_path: Path):
+    _write_json(
+        tmp_path / "configs" / "accounts" / "product-accounts.local.json",
+        {
+            "accounts": [
+                {
+                    "product_key": "diandian-hero",
+                    "product_name": "点点英雄",
+                    "advertiser_id": "stale-hero-1",
+                    "advertiser_name": "黑旗-点点英雄-旧账户",
+                    "status": "active",
+                }
+            ]
+        },
+    )
+    _write_json(
+        tmp_path / "configs" / "products" / "diandian-hero.local.json",
+        {
+            "product_key": "diandian-hero",
+            "product": "点点英雄",
+            "automation": {
+                "enabled": True,
+                "delivery_patrol": {
+                    "enabled": True,
+                    "account_scopes": [
+                        {
+                            "scope_id": "diandian-hero-all",
+                            "title": "点点英雄全量账户",
+                            "account_name_contains": "点点英雄",
+                        }
+                    ],
+                },
+            },
+        },
+    )
+    _write_json(
+        tmp_path / "data" / "runs" / "delivery_patrol" / "20260531T200000Z-stale.json",
+        {
+            "workflow": "delivery_patrol",
+            "summary": {
+                "target_date": "2026-05-31",
+                "overall_metrics": {"today": {"stat_cost": 50, "billing_convert_cnt": 1, "billing_1day_pay_roi": 0.02}},
+            },
+            "accounts": [
+                {
+                    "advertiser_id": "stale-hero-1",
+                    "account_name": "黑旗-点点英雄-旧账户",
+                    "metrics": {"today": {"stat_cost": 50, "billing_convert_cnt": 1, "billing_1day_pay_roi": 0.02}},
+                }
+            ],
+            "projects": [],
+            "promotions": [],
+        },
+    )
+    _write_json(
+        tmp_path / "data" / "runs" / "delivery_patrol" / "20260601T120000Z-all.json",
+        {
+            "workflow": "delivery_patrol",
+            "summary": {
+                "target_date": "2026-06-01",
+                "account_scope": {"account_name_contains": "点点英雄"},
+                "overall_metrics": {"today": {"stat_cost": 300, "billing_convert_cnt": 3, "billing_1day_pay_roi": 0.2}},
+            },
+            "accounts": [
+                {
+                    "advertiser_id": "live-hero-1",
+                    "account_name": "黑旗-点点英雄-实时账户-1",
+                    "metrics": {"today": {"stat_cost": 100, "billing_convert_cnt": 1, "billing_1day_pay_roi": 0.1}},
+                },
+                {
+                    "advertiser_id": "live-hero-2",
+                    "account_name": "黑旗-点点英雄-实时账户-2",
+                    "metrics": {"today": {"stat_cost": 200, "billing_convert_cnt": 2, "billing_1day_pay_roi": 0.25}},
+                },
+                {
+                    "advertiser_id": "zero-hero",
+                    "account_name": "黑旗-点点英雄-零消耗",
+                    "metrics": {"today": {"stat_cost": 0, "billing_convert_cnt": 0}},
+                },
+            ],
+            "projects": [],
+            "promotions": [],
+        },
+    )
+    client = _client(tmp_path)
+
+    filters = client.get("/api/dashboard/filters").json()
+    assert filters["raw"]["default_product_key"] == "diandian-hero"
+    assert {"类型": "产品", "显示名称": "点点英雄", "值": "diandian-hero"} in filters["table"]["rows"]
+
+    response = client.get("/api/dashboard/overview")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["artifact_path"].endswith("20260601T120000Z-all.json")
+    assert {"label": "数据日期", "value": "2026-06-01"} in payload["summary"]["items"]
+    assert {"label": "今日消耗", "value": 300.0} in payload["summary"]["items"]
+    assert {"label": "活跃账户", "value": 2} in payload["summary"]["items"]
+    assert payload["table"]["rows"] == [
+        {
+            "产品": "点点英雄",
+            "账户数": 2,
+            "消耗": 300.0,
+            "计费转化": 3.0,
+            "转化成本": 100.0,
+            "付费 ROI": 0.2,
+            "异常项目": 0,
+            "建议事项": 0,
+        }
+    ]
+
+
 def test_dashboard_product_detail_returns_chinese_drilldown(tmp_path):
     _write_dashboard_fixture(tmp_path)
     client = _client(tmp_path)
@@ -518,9 +759,10 @@ def test_dashboard_projects_returns_project_table(tmp_path):
     payload = response.json()
     assert payload["summary"]["title"] == "项目看板"
     assert {"label": "项目数", "value": 3} in payload["summary"]["items"]
-    assert payload["table"]["columns"] == ["产品", "账户 ID", "项目 ID", "项目名", "状态", "消耗", "计费转化", "异常原因"]
+    assert payload["table"]["columns"] == ["产品", "账户 ID", "项目 ID", "项目名", "状态", "消耗", "计费转化", "是否异常", "异常原因"]
     assert payload["table"]["rows"][1]["项目 ID"] == "p2"
     assert payload["table"]["rows"][1]["状态"] == "attention"
+    assert payload["table"]["rows"][1]["是否异常"] == "是"
     assert payload["table"]["rows"][1]["异常原因"] == "今日消耗已有但转化不足"
 
 

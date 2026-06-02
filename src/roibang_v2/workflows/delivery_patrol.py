@@ -68,6 +68,9 @@ def _account_scope(cfg: dict[str, Any], *, source: str) -> dict[str, Any]:
         "account_remark_equals": str(
             scope.get("account_remark_equals") or cfg.get("account_remark_equals") or ""
         ).strip(),
+        "account_name_contains": str(
+            scope.get("account_name_contains") or cfg.get("account_name_contains") or ""
+        ).strip(),
         "min_spend": float(scope.get("min_spend", cfg.get("min_spend", 0)) or 0),
     }
 
@@ -80,6 +83,9 @@ def _matches_account_scope(account: dict[str, Any], cfg: dict[str, Any]) -> bool
         return False
     remark_equals = str(_account_scope(cfg, source="")["account_remark_equals"] or "").strip()
     if remark_equals and _account_remark(account) != remark_equals:
+        return False
+    name_contains = str(_account_scope(cfg, source="")["account_name_contains"] or "").strip()
+    if name_contains and name_contains not in account_name:
         return False
     return True
 

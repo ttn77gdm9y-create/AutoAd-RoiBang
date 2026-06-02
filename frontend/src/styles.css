@@ -36,6 +36,7 @@ body {
   margin: 0 auto;
 }
 
+.page-heading-row,
 .page-toolbar,
 .summary-header {
   display: flex;
@@ -122,11 +123,31 @@ body {
 }
 
 .metric-tile {
+  display: block;
+  width: 100%;
   min-height: 112px;
   padding: 18px;
   border: 1px solid #d8dee6;
   border-radius: 8px;
   background: #ffffff;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  appearance: none;
+}
+
+.metric-tile-clickable {
+  cursor: pointer;
+}
+
+.metric-tile-clickable:hover {
+  border-color: #1d6f62;
+  box-shadow: 0 6px 18px rgba(29, 111, 98, 0.14);
+}
+
+.metric-tile-clickable:focus-visible {
+  outline: 2px solid #1d6f62;
+  outline-offset: 2px;
 }
 
 .full-width,
@@ -229,6 +250,7 @@ body {
     padding: 16px;
   }
 
+  .page-heading-row,
   .page-toolbar,
   .summary-header,
   .import-panel {

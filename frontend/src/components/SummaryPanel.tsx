@@ -13,6 +13,8 @@ type SummaryPanelProps = {
   loading?: boolean;
   onRowClick?: (row: SummaryRow) => void;
   detailsCollapsed?: boolean;
+  sortableColumns?: string[];
+  defaultSort?: { column: string; order: "ascend" | "descend" };
   showArtifactPath?: boolean;
   showRawJson?: boolean;
   footer?: ReactNode;
@@ -65,11 +67,37 @@ function withRowKeys(rows: SummaryRow[], prefix: string): KeyedSummaryRow[] {
   return rows.map((row, index) => ({ ...row, __row_key: `${prefix}-${index}-${JSON.stringify(row)}` }));
 }
 
+function sortableValue(value: SummaryRow[string]): number | string {
+  if (typeof value === "number") {
+    return value;
+  }
+  const text = String(value ?? "").trim();
+  const numberValue = Number(text.replace(/,/g, "").replace("%", ""));
+  return Number.isFinite(numberValue) && text ? numberValue : text;
+}
+
+function compareSortableValues(left: SummaryRow[string], right: SummaryRow[string]): number {
+  const leftValue = sortableValue(left);
+  const rightValue = sortableValue(right);
+  if (typeof leftValue === "number" && typeof rightValue === "number") {
+    return leftValue - rightValue;
+  }
+  if (typeof leftValue === "number") {
+    return 1;
+  }
+  if (typeof rightValue === "number") {
+    return -1;
+  }
+  return leftValue.localeCompare(rightValue, "zh-Hans-CN");
+}
+
 export function SummaryPanel({
   result,
   loading = false,
   onRowClick,
   detailsCollapsed = false,
+  sortableColumns = [],
+  defaultSort,
   showArtifactPath = true,
   showRawJson = true,
   footer,
@@ -78,12 +106,19 @@ export function SummaryPanel({
     return <Empty description="暂无结果" />;
   }
 
-  const columns: ColumnsType<SummaryRow> = (result?.table.columns ?? []).map((column) => ({
-    title: column,
-    dataIndex: column,
-    key: column,
-    ellipsis: true,
-  }));
+  const sortableColumnSet = new Set(sortableColumns);
+  const columns: ColumnsType<SummaryRow> = (result?.table.columns ?? []).map((column) => {
+    const sortable = sortableColumnSet.has(column);
+    return {
+      title: column,
+      dataIndex: column,
+      key: column,
+      ellipsis: true,
+      sorter: sortable ? (left, right) => compareSortableValues(left[column], right[column]) : undefined,
+      defaultSortOrder: defaultSort?.column === column ? defaultSort.order : undefined,
+      sortDirections: sortable ? ["descend", "ascend"] : undefined,
+    };
+  });
   const tableRows = withRowKeys(result?.table.rows ?? [], "main");
   const sectionItems = (result?.sections ?? []).map((section) => {
     const sectionColumns: ColumnsType<SummaryRow> = section.table.columns.map((column) => ({

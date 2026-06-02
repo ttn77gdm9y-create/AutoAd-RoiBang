@@ -1,11 +1,21 @@
 {
   "delivery_readonly_report_chain": {
     "db_path": "data/roibang_v2.sqlite3",
-    "patrol_artifact_path": "data/runs/delivery_patrol/latest.json",
-    "suggestions_artifact_path": "data/runs/delivery_patrol_suggestions/latest.json",
+    "report_scopes": [
+      {
+        "scope_id": "diandian-hero-guojing",
+        "title": "点点英雄-微小-郭靖",
+        "account_remark_equals": "点点英雄-微小-郭靖"
+      },
+      {
+        "scope_id": "diandian-hero-all",
+        "title": "点点英雄全量账户",
+        "account_name_contains": "点点英雄"
+      }
+    ],
     "lookahead_days": 1,
     "recent_days": 7,
-    "project_name_contains": "郭靖",
+    "project_name_contains": "点点英雄",
     "limit": 20,
     "delivery": {
       "feishu": {

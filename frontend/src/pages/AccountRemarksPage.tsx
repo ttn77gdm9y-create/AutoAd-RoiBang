@@ -7,6 +7,7 @@ import { apiGet, apiPost } from "../api/client";
 import { ConfirmExecutePanel } from "../components/ConfirmExecutePanel";
 import { SummaryPanel } from "../components/SummaryPanel";
 import { InlineTaskStatus, WorkflowSteps } from "../components/WorkflowScaffold";
+import { EXECUTE_CONFIRMATION_PHRASE } from "../constants/safety";
 import type { ChineseResult, TaskDetailResponse } from "../types/api";
 import { isTaskActive, taskStatus } from "../utils/workflowState";
 
@@ -125,7 +126,7 @@ export function AccountRemarksPage() {
     },
   });
   const execute = useMutation({
-    mutationFn: () => apiPost<TaskResponse>("/account-remarks/execute", { ...executeRequest, confirmation: "确认执行" }),
+    mutationFn: () => apiPost<TaskResponse>("/account-remarks/execute", { ...executeRequest, confirmation: EXECUTE_CONFIRMATION_PHRASE }),
     onSuccess: async (result) => {
       setExecuteResult(result);
       await queryClient.invalidateQueries({ queryKey: ["tasks"] });

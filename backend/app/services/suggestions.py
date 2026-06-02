@@ -29,6 +29,11 @@ from backend.app.services.accounts_store import load_accounts
 from backend.app.services.artifacts import find_latest_artifact
 from backend.app.services.artifacts import read_json
 from backend.app.services.create_plans import build_create_plan_generate_preview
+from backend.app.services.realtime_snapshots import RealtimeSnapshot
+from backend.app.services.realtime_snapshots import find_realtime_patrol_snapshot
+from backend.app.services.realtime_snapshots import linked_suggestions_artifact
+from backend.app.services.realtime_snapshots import realtime_account_ids
+from backend.app.services.realtime_snapshots import realtime_account_names
 from roibang_v2.workflows.product_automation_job import load_product_configs
 
 
@@ -478,6 +483,15 @@ def build_suggestions_create_strategy_review(
     product_key: str = "",
 ) -> dict[str, Any]:
     root = Path(project_root)
+    realtime_snapshot = find_realtime_patrol_snapshot(
+        project_root=root,
+        configs_dir=configs_dir,
+        runs_dir=runs_dir,
+        product_key=product_key,
+        purpose="suggestions",
+    )
+    target_account_ids = realtime_account_ids(realtime_snapshot) if realtime_snapshot.required else None
+    target_account_names = realtime_account_names(realtime_snapshot) if realtime_snapshot.required else None
     result = run_create_suggestion_strategy_review_request(
         {
             "db_path": str(root / "data" / "roibang_v2.sqlite3"),
@@ -488,6 +502,8 @@ def build_suggestions_create_strategy_review(
             "strategy_dir": str(Path(configs_dir) / "create-suggestion-strategies"),
             "product_key": product_key,
             "include_examples": True,
+            "target_account_ids": target_account_ids,
+            "target_account_names": target_account_names or {},
         },
         runs_dir=runs_dir,
     )
@@ -500,6 +516,7 @@ def build_suggestions_create_strategy_review(
     warnings = [
         "这里只读扫描账户容量、素材门槛和转化/ROI 规则；不修改策略、不生成创建计划、不执行真实创建。"
     ]
+    warnings.extend(realtime_snapshot.warnings)
     if disabled_count:
         warnings.append("存在未启用或示例策略；示例策略不会被自动建议生成器加载。")
     if estimated_suggestion_count == 0:
@@ -642,10 +659,19 @@ def build_suggestions_project_update_preview(
         normalized_request,
     )
     account_names.update(_account_names_from_suggestions(selected_suggestions))
+    product_key, product_name = _project_update_product_metadata(configs_dir, accounts, selected_suggestions, normalized_request)
     blocking_reasons = _project_update_validation_reasons(selected_suggestions, normalized_request, account_names)
+    blocking_reasons.extend(
+        _realtime_scope_validation_reasons(
+            project_root=root,
+            configs_dir=configs_dir,
+            runs_dir=root / "data" / "runs",
+            product_key=product_key,
+            suggestions=selected_suggestions,
+        )
+    )
     if blocking_reasons:
         return _blocked_project_update_preview(normalized_request, blocking_reasons)
-    product_key, product_name = _project_update_product_metadata(configs_dir, accounts, selected_suggestions, normalized_request)
     build_request = dict(normalized_request)
     build_request["suggestions_artifact_path"] = str(suggestions_path)
     build_request["product_key"] = product_key
@@ -1065,6 +1091,15 @@ def build_suggestions_daily_operations(
         product_key=product_key,
     )
     root = Path(project_root)
+    realtime_snapshot = find_realtime_patrol_snapshot(
+        project_root=root,
+        configs_dir=configs_dir,
+        runs_dir=runs_dir,
+        product_key=product_key,
+        purpose="suggestions",
+    )
+    target_account_ids = realtime_account_ids(realtime_snapshot) if realtime_snapshot.required else None
+    target_account_names = realtime_account_names(realtime_snapshot) if realtime_snapshot.required else None
     strategy_review = run_create_suggestion_strategy_review_request(
         {
             "db_path": str(root / "data" / "roibang_v2.sqlite3"),
@@ -1075,6 +1110,8 @@ def build_suggestions_daily_operations(
             "strategy_dir": str(Path(configs_dir) / "create-suggestion-strategies"),
             "product_key": product_key,
             "include_examples": True,
+            "target_account_ids": target_account_ids,
+            "target_account_names": target_account_names or {},
         },
         runs_dir=runs_dir,
     )
@@ -1173,13 +1210,34 @@ def _load_suggestions_source(
     *,
     product_key: str,
 ) -> SuggestionsSource:
-    patrol_path = find_latest_artifact(runs_dir, "delivery_patrol_suggestions")
-    patrol_payload = read_json(patrol_path) if patrol_path else {}
+    realtime_snapshot = find_realtime_patrol_snapshot(
+        project_root=project_root,
+        configs_dir=configs_dir,
+        runs_dir=runs_dir,
+        product_key=product_key,
+        purpose="suggestions",
+    )
+    if realtime_snapshot.required and not realtime_snapshot.payload:
+        return SuggestionsSource(
+            payload=_empty_suggestions_payload(product_key, source="realtime_snapshot_missing"),
+            path=None,
+            warnings=list(realtime_snapshot.warnings),
+        )
+    if realtime_snapshot.required:
+        patrol_path = linked_suggestions_artifact(project_root, realtime_snapshot.payload)
+        embedded = realtime_snapshot.payload.get("delivery_patrol_suggestions")
+        patrol_payload = read_json(patrol_path) if patrol_path else {}
+        if not patrol_payload and isinstance(embedded, dict):
+            patrol_payload = dict(embedded)
+    else:
+        patrol_path = find_latest_artifact(runs_dir, "delivery_patrol_suggestions")
+        patrol_payload = read_json(patrol_path) if patrol_path else {}
     local_payload = _build_local_rule_suggestions(
         project_root=project_root,
         configs_dir=configs_dir,
         runs_dir=runs_dir,
         product_key=product_key,
+        realtime_snapshot=realtime_snapshot,
     )
     patrol_rows = _rows(patrol_payload.get("suggestions"))
     local_rows = _rows(local_payload.get("suggestions"))
@@ -1187,18 +1245,41 @@ def _load_suggestions_source(
         payload = _merge_suggestions_payloads(local_payload, patrol_payload)
         path = write_latest_artifact(runs_dir, "rule_suggestions", payload)
         payload["artifact_path"] = str(path)
-        return SuggestionsSource(payload=payload, path=path, warnings=[])
+        return SuggestionsSource(payload=payload, path=path, warnings=list(realtime_snapshot.warnings))
     if local_payload:
         return SuggestionsSource(
             payload=local_payload,
             path=None,
-            warnings=["本地数据库已读取，但当前规则没有生成建议。"],
+            warnings=[*realtime_snapshot.warnings, "本地数据库已读取，但当前规则没有生成建议。"],
         )
     return SuggestionsSource(
         payload=patrol_payload,
         path=patrol_path,
-        warnings=[] if patrol_path else ["未找到最近建议结果，当前只展示产品数据源状态。"],
+        warnings=[*realtime_snapshot.warnings] if patrol_path else [*realtime_snapshot.warnings, "未找到最近建议结果，当前只展示产品数据源状态。"],
     )
+
+
+def _empty_suggestions_payload(product_key: str, *, source: str) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "workflow": "rule_suggestions",
+        "phase": "control_analysis",
+        "execution_enabled": False,
+        "external_api_calls": 0,
+        "summary": {
+            "source": source,
+            "product_key": product_key,
+            "suggestion_count": 0,
+            "convertible_project_action_count": 0,
+            "create_project_suggestion_count": 0,
+        },
+        "suggestions": [],
+        "blocked_suggestions": [],
+        "guardrails": [
+            "没有匹配实时快照时不生成可执行建议。",
+            "历史数据只作为证据，不单独触发当前建议。",
+        ],
+    }
 
 
 def _build_local_rule_suggestions(
@@ -1207,6 +1288,7 @@ def _build_local_rule_suggestions(
     configs_dir: str | Path,
     runs_dir: str | Path,
     product_key: str,
+    realtime_snapshot: RealtimeSnapshot | None = None,
 ) -> dict[str, Any]:
     root = Path(project_root)
     db_path = root / "data" / "roibang_v2.sqlite3"
@@ -1231,7 +1313,12 @@ def _build_local_rule_suggestions(
         source_advertiser_name = _text(product.get("source_advertiser_name"))
         if source_advertiser_id and source_advertiser_name:
             account_names.setdefault(source_advertiser_id, source_advertiser_name)
-        target_scope = _suggestion_target_account_scope(root, Path(runs_dir), product)
+        target_scope = _suggestion_target_account_scope(
+            root,
+            Path(runs_dir),
+            product,
+            realtime_snapshot=realtime_snapshot,
+        )
         account_names.update(target_scope.get("account_names") if isinstance(target_scope.get("account_names"), dict) else {})
         target_scope_summaries.append(target_scope)
         request = _control_strategy_request(
@@ -1249,30 +1336,32 @@ def _build_local_rule_suggestions(
             }
         )
         for suggestion in _rows(result.get("suggestions")):
-            suggestions.append(
-                _normalize_suggestion_for_center(
-                    suggestion,
-                    product_key=_text(product.get("product_key")),
-                    product_name=product_name,
-                    account_names=account_names,
-                    source_label="本地控制策略",
-                )
+            normalized = _normalize_suggestion_for_center(
+                suggestion,
+                product_key=_text(product.get("product_key")),
+                product_name=product_name,
+                account_names=account_names,
+                source_label="本地控制策略",
             )
+            normalized["realtime_scope"] = _suggestion_scope_payload(target_scope)
+            suggestions.append(normalized)
         for suggestion in _rows(result.get("blocked_suggestions")):
-            blocked_suggestions.append(
-                _normalize_suggestion_for_center(
-                    suggestion,
-                    product_key=_text(product.get("product_key")),
-                    product_name=product_name,
-                    account_names=account_names,
-                    source_label="本地控制策略",
-                )
+            normalized = _normalize_suggestion_for_center(
+                suggestion,
+                product_key=_text(product.get("product_key")),
+                product_name=product_name,
+                account_names=account_names,
+                source_label="本地控制策略",
             )
+            normalized["realtime_scope"] = _suggestion_scope_payload(target_scope)
+            blocked_suggestions.append(normalized)
     create_suggestions_payload = _build_create_project_rule_suggestions(
         project_root=root,
         configs_dir=configs_dir,
         product_key=product_key,
         target_date=target_date,
+        target_account_ids=_first_summary_list(target_scope_summaries, "target_account_ids"),
+        target_account_names=_merged_scope_account_names(target_scope_summaries),
     )
     for suggestion in _rows(create_suggestions_payload.get("suggestions")):
         normalized = dict(suggestion)
@@ -1341,6 +1430,8 @@ def _build_create_project_rule_suggestions(
     configs_dir: str | Path,
     product_key: str,
     target_date: str,
+    target_account_ids: list[str] | None = None,
+    target_account_names: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     root = Path(project_root)
     strategy_dir = Path(configs_dir) / "create-suggestion-strategies"
@@ -1355,6 +1446,8 @@ def _build_create_project_rule_suggestions(
             strategy_dir=strategy_dir,
             product_key=product_key,
             target_date=target_date,
+            target_account_ids=target_account_ids,
+            target_account_names=target_account_names,
         )
     except Exception as exc:  # noqa: BLE001 - suggestions page should surface config/data problems, not crash.
         return {
@@ -1494,16 +1587,59 @@ def _first_summary_value(rows: list[dict[str, Any]], key: str) -> Any:
     return ""
 
 
-def _suggestion_target_account_scope(project_root: Path, runs_dir: Path, product: dict[str, Any]) -> dict[str, Any]:
+def _first_summary_list(rows: list[dict[str, Any]], key: str) -> list[str] | None:
+    for row in rows:
+        value = row.get(key)
+        if isinstance(value, list):
+            return [_text(item) for item in value if _text(item)]
+    return None
+
+
+def _merged_scope_account_names(rows: list[dict[str, Any]]) -> dict[str, str]:
+    names: dict[str, str] = {}
+    for row in rows:
+        value = row.get("account_names")
+        if isinstance(value, dict):
+            for advertiser_id, account_name in value.items():
+                account_id = _text(advertiser_id)
+                name = _text(account_name)
+                if account_id and name:
+                    names[account_id] = name
+    return names
+
+
+def _suggestion_scope_payload(scope: dict[str, Any]) -> dict[str, Any]:
+    account_scope = scope.get("account_scope") if isinstance(scope.get("account_scope"), dict) else {}
+    return {
+        "patrol_artifact_path": _text(scope.get("patrol_artifact_path")),
+        "today_patrol_date": _text(scope.get("today_patrol_date")),
+        "account_scope": dict(account_scope),
+        "target_account_count": int(scope.get("target_account_count") or 0),
+    }
+
+
+def _suggestion_target_account_scope(
+    project_root: Path,
+    runs_dir: Path,
+    product: dict[str, Any],
+    *,
+    realtime_snapshot: RealtimeSnapshot | None = None,
+) -> dict[str, Any]:
     allowed_account_ids = _allowed_account_ids_for_product(project_root, product)
-    patrol_payload, patrol_path = _latest_product_delivery_patrol(project_root, runs_dir, product)
+    product_key = _text(product.get("product_key"))
+    if realtime_snapshot and realtime_snapshot.required and _text(realtime_snapshot.scope.get("_product_key")) == product_key:
+        patrol_payload = realtime_snapshot.payload
+        patrol_path = realtime_snapshot.path
+    else:
+        patrol_payload, patrol_path = _latest_product_delivery_patrol(project_root, runs_dir, product)
     today_spent_account_ids = _today_spent_account_ids(patrol_payload)
     account_names = _patrol_account_names(patrol_payload)
     target_account_ids = sorted(allowed_account_ids & today_spent_account_ids)
     patrol_summary = patrol_payload.get("summary") if isinstance(patrol_payload.get("summary"), dict) else {}
     windows = patrol_payload.get("windows") if isinstance(patrol_payload.get("windows"), dict) else {}
+    account_scope = patrol_summary.get("account_scope") if isinstance(patrol_summary.get("account_scope"), dict) else {}
     return {
-        "product_key": _text(product.get("product_key")),
+        "product_key": product_key,
         "product_name": _text(product.get("product")) or _text(product.get("product_name")),
         "today_patrol_date": _text(patrol_summary.get("target_date") or windows.get("today")),
         "today_patrol_spent_account_count": len(today_spent_account_ids),
@@ -1512,6 +1648,8 @@ def _suggestion_target_account_scope(project_root: Path, runs_dir: Path, product
         "target_account_ids": target_account_ids,
         "account_names": account_names,
         "patrol_artifact_path": str(patrol_path or ""),
+        "account_scope": dict(account_scope),
+        "realtime_scope_required": bool(realtime_snapshot.required) if realtime_snapshot else False,
     }
 
 
@@ -2149,6 +2287,37 @@ def _project_update_validation_reasons(
                 reasons.append(f"建议 {suggestion_id} 是调整时段动作，但缺少明确小时，不能猜投放时段。")
     if selected_suggestions and convertible_count == 0 and not reasons:
         reasons.append("所选建议没有可生成项目管理配置的项目动作。")
+    return reasons
+
+
+def _realtime_scope_validation_reasons(
+    *,
+    project_root: str | Path,
+    configs_dir: str | Path,
+    runs_dir: str | Path,
+    product_key: str,
+    suggestions: list[dict[str, Any]],
+) -> list[str]:
+    snapshot = find_realtime_patrol_snapshot(
+        project_root=project_root,
+        configs_dir=configs_dir,
+        runs_dir=runs_dir,
+        product_key=product_key,
+        purpose="suggestions",
+    )
+    if not snapshot.required:
+        return []
+    if not snapshot.payload:
+        return list(snapshot.warnings)
+    allowed_ids = set(realtime_account_ids(snapshot))
+    reasons: list[str] = []
+    for suggestion in suggestions:
+        if suggestion.get("_missing") or not _can_convert_to_project_update(suggestion):
+            continue
+        advertiser_id = _text(suggestion.get("advertiser_id"))
+        suggestion_id = _text(suggestion.get("suggestion_id")) or "未命名建议"
+        if advertiser_id not in allowed_ids:
+            reasons.append(f"建议 {suggestion_id} 不属于当前建议实时范围，不能生成项目管理配置。")
     return reasons
 
 

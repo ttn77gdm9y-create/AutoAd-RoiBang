@@ -170,6 +170,7 @@ def test_delivery_patrol_filters_accounts_by_account_remark(tmp_path: Path):
     assert plan["summary"]["account_scope"] == {
         "source": "allowed_target_accounts",
         "account_remark_equals": "勇者突进-微小-郭靖",
+        "account_name_contains": "",
         "min_spend": 0.0,
     }
 
@@ -664,6 +665,95 @@ def test_delivery_patrol_can_discover_today_spending_accounts_by_workbench_remar
     assert result["summary"]["account_discovery"]["source"] == "workbench_account_list"
     assert result["summary"]["account_scope"]["account_remark_equals"] == "勇者突进-微小-郭靖"
     assert result["summary"]["account_discovery"]["total_spend"] == 88
+
+
+def test_delivery_patrol_can_discover_today_spending_accounts_by_workbench_account_name(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    session_path = tmp_path / "workbench-session.json"
+    bootstrap_database(db_path)
+    session_path.write_text(
+        json.dumps({"cookie": "cookie-value", "csrf_token": "csrf-value", "ebpid": "ebp-1"}),
+        encoding="utf-8",
+    )
+    request = {
+        "delivery_patrol": {
+            "target_date": "2026-05-15",
+            "yesterday_date": "2026-05-14",
+            "product_keyword": "点点英雄",
+            "account_scope": {
+                "source": "workbench_account_list",
+                "account_name_contains": "点点英雄",
+                "min_spend": 0,
+            },
+            "active_account_discovery": {
+                "enabled": True,
+                "source": "workbench_account_list",
+                "min_spend": 0,
+                "workbench": {
+                    "enabled": True,
+                    "session_file": str(session_path),
+                    "keyword": "点点英雄",
+                    "limit": 100,
+                    "response_audit_dir": str(tmp_path / "audit"),
+                },
+            },
+            "page_size": 100,
+            "execution": {"status": "execute", "external_api_enabled": True},
+            "openapi_http": {"enabled": True},
+        }
+    }
+    openapi_calls = []
+
+    def workbench_opener(url, body, headers, timeout_seconds):
+        return HttpResponse(
+            200,
+            {
+                "code": 0,
+                "data": {
+                    "list": [
+                        {
+                            "advertiser_id": "point-hero-1",
+                            "advertiser_name": "黑旗-点点英雄-微小-郭靖-1",
+                            "advertiser_remark": "点点英雄-微小-郭靖",
+                            "metrics": {"stat_cost": "100"},
+                        },
+                        {
+                            "advertiser_id": "point-hero-2",
+                            "advertiser_name": "黑旗-点点英雄-微小-杨过-2",
+                            "advertiser_remark": "点点英雄-微小-杨过",
+                            "metrics": {"stat_cost": "66"},
+                        },
+                        {
+                            "advertiser_id": "other-game",
+                            "advertiser_name": "黑旗-勇者突进-微小-郭靖-1",
+                            "advertiser_remark": "勇者突进-微小-郭靖",
+                            "metrics": {"stat_cost": "77"},
+                        },
+                    ],
+                    "pagination": {"page": 1, "hasMore": False, "total": 3},
+                },
+            },
+        )
+
+    def transport(request):
+        openapi_calls.append(request)
+        if request["endpoint_key"] in {"project_list", "promotion_list"}:
+            return {"code": 0, "data": {"list": [], "page_info": {"page": 1, "total_page": 1}}}
+        return {"code": 0, "data": {"rows": _report_rows(request), "page_info": {"page": 1, "total_page": 1}}}
+
+    result = run_delivery_patrol_request(
+        request,
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        transport=transport,
+        workbench_opener=workbench_opener,
+    )
+
+    assert {call["account"]["advertiser_id"] for call in openapi_calls} == {"point-hero-1", "point-hero-2"}
+    assert result["summary"]["account_count"] == 2
+    assert result["summary"]["account_scope"]["account_remark_equals"] == ""
+    assert result["summary"]["account_scope"]["account_name_contains"] == "点点英雄"
+    assert result["summary"]["account_discovery"]["total_spend"] == 166
 
 
 def test_delivery_patrol_cli_requires_enable_readonly(tmp_path: Path):

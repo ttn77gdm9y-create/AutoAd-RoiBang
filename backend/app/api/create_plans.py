@@ -3,12 +3,12 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter
-from fastapi import HTTPException
 from fastapi import Query
 from fastapi import Request
 from pydantic import BaseModel
 from pydantic import Field
 
+from backend.app.safety.confirmation import require_execute_confirmation
 from backend.app.services.create_plans import build_create_plan_detail
 from backend.app.services.create_plans import build_create_plan_execute_preview
 from backend.app.services.create_plans import build_create_plan_execution_review_preview
@@ -135,8 +135,7 @@ def create_plan_execute_preview(request: Request, plan_id: str, body: CreatePlan
 
 @router.post("/create-plans/{plan_id}/execute")
 def create_plan_execute(request: Request, plan_id: str, body: CreatePlanExecuteRequest) -> dict:
-    if body.confirmation != "确认执行":
-        raise HTTPException(status_code=400, detail="真实执行前必须输入：确认执行")
+    require_execute_confirmation(body.confirmation)
     return start_create_plan_execute_task(
         plan_id,
         body.model_dump(),

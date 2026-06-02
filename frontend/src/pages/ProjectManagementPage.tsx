@@ -8,6 +8,7 @@ import { apiGet, apiPost } from "../api/client";
 import { ConfirmExecutePanel } from "../components/ConfirmExecutePanel";
 import { SummaryPanel } from "../components/SummaryPanel";
 import { InlineTaskStatus, WorkflowSteps } from "../components/WorkflowScaffold";
+import { EXECUTE_CONFIRMATION_PHRASE } from "../constants/safety";
 import type { ChineseResult, TaskDetailResponse } from "../types/api";
 import { isTaskActive, isTaskCompleted, summaryItemNumber, taskStatus } from "../utils/workflowState";
 
@@ -168,7 +169,7 @@ export function ProjectManagementPage() {
     },
   });
   const execute = useMutation({
-    mutationFn: () => apiPost<TaskResponse>("/project-management/execute", { ...executeRequest, confirmation: "确认执行" }),
+    mutationFn: () => apiPost<TaskResponse>("/project-management/execute", { ...executeRequest, confirmation: EXECUTE_CONFIRMATION_PHRASE }),
     onSuccess: async (result) => {
       setExecuteResult(result);
       await queryClient.invalidateQueries({ queryKey: ["tasks"] });
@@ -424,7 +425,7 @@ export function ProjectManagementPage() {
                 type="warning"
                 showIcon
                 message="当前配置来源：投放建议工作台生成的项目管理配置"
-                description={`请先核对来源建议、中文风险摘要、账户名、项目名和动作明细；真实执行仍必须在本页输入“确认执行”。${configPath}`}
+                description={`请先核对来源建议、中文风险摘要、账户名、项目名和动作明细；真实执行仍必须在本页输入“${EXECUTE_CONFIRMATION_PHRASE}”。${configPath}`}
               />
             ) : configSource === "manual" ? (
               <Alert

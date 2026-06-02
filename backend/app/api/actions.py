@@ -8,6 +8,7 @@ from fastapi import Request
 from pydantic import BaseModel
 from pydantic import Field
 
+from backend.app.safety.confirmation import require_execute_confirmation
 from backend.app.services.script_registry import build_action_task
 from backend.app.services.script_registry import list_action_catalog
 from backend.app.services.script_registry import start_action_task
@@ -36,8 +37,7 @@ def action_preview(request: Request, action: str, body: ActionPreviewRequest) ->
 
 @router.post("/actions/{action}/execute")
 def action_execute(request: Request, action: str, body: ActionExecuteRequest) -> dict:
-    if body.confirmation != "确认执行":
-        raise HTTPException(status_code=400, detail="真实执行前必须输入：确认执行")
+    require_execute_confirmation(body.confirmation)
     preview = build_action_task(action, body.request, project_root=request.app.state.settings.project_root)
     if not preview.get("ok"):
         raise HTTPException(status_code=400, detail=preview["summary"]["blocking_reasons"][0])

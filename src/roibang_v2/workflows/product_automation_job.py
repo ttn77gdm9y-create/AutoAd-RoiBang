@@ -31,6 +31,7 @@ class ProductJobCommand:
     job: str
     request_path: str
     command: list[str]
+    scope_id: str = ""
 
 
 def _text(value: Any) -> str:
@@ -93,6 +94,16 @@ def _account_keyword(product: dict[str, Any]) -> str:
 def _account_remark(product: dict[str, Any]) -> str:
     discovery = _account_discovery(product)
     return _text(discovery.get("account_remark_equals")) or _text(product.get("account_remark_pattern"))
+
+
+def _delivery_patrol_scopes(product: dict[str, Any]) -> list[dict[str, Any]]:
+    job_cfg = _job_config(product, "delivery_patrol")
+    scopes = job_cfg.get("account_scopes")
+    if isinstance(scopes, list):
+        rows = [dict(scope) for scope in scopes if isinstance(scope, dict)]
+        if rows:
+            return rows
+    return [{}]
 
 
 def _enabled_for_job(product: dict[str, Any], job: str) -> bool:
@@ -165,7 +176,13 @@ def _allowed_accounts(path_text: str, *, product: dict[str, Any] | None = None) 
     return accounts
 
 
-def build_product_job_request(product: dict[str, Any], job: str, *, target_date: str = "yesterday") -> dict[str, Any]:
+def build_product_job_request(
+    product: dict[str, Any],
+    job: str,
+    *,
+    target_date: str = "yesterday",
+    delivery_patrol_scope: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     if job not in SUPPORTED_JOBS:
         raise ValueError(f"unsupported product automation job: {job}")
     product_name = _text(product.get("product"))
@@ -377,11 +394,23 @@ def build_product_job_request(product: dict[str, Any], job: str, *, target_date:
             }
         }
 
+    patrol_cfg = _job_config(product, "delivery_patrol")
+    patrol_scope = dict(delivery_patrol_scope or {})
+    scope_id = _text(patrol_scope.get("scope_id"))
+    scope_keyword = _text(patrol_scope.get("workbench_keyword") or patrol_scope.get("account_name_contains")) or keyword
+    scope_remark = _text(patrol_scope.get("account_remark_equals")) or (remark if not patrol_scope else "")
+    scope_name_contains = _text(patrol_scope.get("account_name_contains"))
+    account_scope = {"source": "workbench_account_list", "min_spend": 0}
+    if scope_remark:
+        account_scope["account_remark_equals"] = scope_remark
+    if scope_name_contains:
+        account_scope["account_name_contains"] = scope_name_contains
+    audit_suffix = f"{product_key}-{scope_id}-delivery-patrol" if scope_id else f"{product_key}-delivery-patrol"
     return {
         "delivery_patrol": {
             "product_keyword": product_name,
             "allowed_target_accounts_path": _text(product.get("allowed_target_accounts_path")),
-            "account_scope": {"source": "workbench_account_list", "account_remark_equals": remark, "min_spend": 0},
+            "account_scope": account_scope,
             "active_account_discovery": {
                 "enabled": True,
                 "source": "workbench_account_list",
@@ -390,15 +419,15 @@ def build_product_job_request(product: dict[str, Any], job: str, *, target_date:
                     "enabled": True,
                     "organization_id": organization_id,
                     "session_file": "data/secrets/oceanengine-workbench-session.local.json",
-                    "keyword": keyword,
-                    "limit": 100,
-                    "max_pages": 20,
+                    "keyword": scope_keyword,
+                    "limit": int(patrol_scope.get("limit") or patrol_cfg.get("limit") or 100),
+                    "max_pages": int(patrol_scope.get("max_pages") or patrol_cfg.get("max_pages") or 20),
                     "stop_when_sorted_cost_reaches_zero": True,
                     "timeout_seconds": 20,
                     "max_retries": 2,
                     "retry_sleep_seconds": 1,
                     "retry_statuses": [429, 500, 502, 503, 504],
-                    "response_audit_dir": f"data/runs/workbench_account_discovery/{product_key}-delivery-patrol",
+                    "response_audit_dir": f"data/runs/workbench_account_discovery/{audit_suffix}",
                 },
             },
             "page_size": 100,
@@ -409,7 +438,7 @@ def build_product_job_request(product: dict[str, Any], job: str, *, target_date:
                 "request_path": "configs/delivery-patrol-suggestions.example.json",
                 "db_path": "data/roibang_v2.sqlite3",
             },
-            "openapi_http": _readonly_http(f"{product_key}-delivery-patrol"),
+            "openapi_http": _readonly_http(audit_suffix),
         }
     }
 
@@ -475,10 +504,18 @@ def write_product_job_request(
     *,
     output_dir: str | Path,
     target_date: str,
+    delivery_patrol_scope: dict[str, Any] | None = None,
 ) -> Path:
     key = _text(product.get("product_key"))
-    request = build_product_job_request(product, job, target_date=target_date)
-    path = Path(output_dir) / f"{_timestamp()}-{key}-{job}.local.json"
+    request = build_product_job_request(
+        product,
+        job,
+        target_date=target_date,
+        delivery_patrol_scope=delivery_patrol_scope,
+    )
+    scope_id = _text((delivery_patrol_scope or {}).get("scope_id"))
+    scope_part = f"-{scope_id}" if scope_id else ""
+    path = Path(output_dir) / f"{_timestamp()}-{key}{scope_part}-{job}.local.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(request, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return path
@@ -594,23 +631,32 @@ def build_product_job_commands(
     ]
     commands: list[ProductJobCommand] = []
     for product in products:
-        request_path = write_product_job_request(product, job, output_dir=request_dir, target_date=target_date)
-        command = build_product_job_command(
-            job=job,
-            request_path=str(request_path),
-            enable_readonly=enable_readonly,
-            execute=execute,
-            yes=yes,
-        )
-        commands.append(
-            ProductJobCommand(
-                product_key=_text(product.get("product_key")),
-                product=_text(product.get("product")),
+        scopes = _delivery_patrol_scopes(product) if job == "delivery_patrol" else [{}]
+        for scope in scopes:
+            request_path = write_product_job_request(
+                product,
+                job,
+                output_dir=request_dir,
+                target_date=target_date,
+                delivery_patrol_scope=scope if job == "delivery_patrol" else None,
+            )
+            command = build_product_job_command(
                 job=job,
                 request_path=str(request_path),
-                command=command,
+                enable_readonly=enable_readonly,
+                execute=execute,
+                yes=yes,
             )
-        )
+            commands.append(
+                ProductJobCommand(
+                    product_key=_text(product.get("product_key")),
+                    product=_text(product.get("product")),
+                    job=job,
+                    request_path=str(request_path),
+                    command=command,
+                    scope_id=_text(scope.get("scope_id")) if job == "delivery_patrol" else "",
+                )
+            )
     return commands
 
 
@@ -643,6 +689,7 @@ def run_product_automation_job(
             "product_key": item.product_key,
             "product": item.product,
             "job": item.job,
+            "scope_id": item.scope_id,
             "request_path": item.request_path,
             "command": item.command,
         }
