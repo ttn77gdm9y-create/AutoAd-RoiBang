@@ -29,6 +29,59 @@ def test_workflow_run_catalog_exposes_only_safe_business_tasks(tmp_path):
     assert "project_update_execute" not in raw_text
 
 
+def test_workflow_run_catalog_includes_business_controls_and_latest_status(tmp_path):
+    runs_dir = tmp_path / "data" / "runs" / "product_automation_job_operation_log_sync"
+    runs_dir.mkdir(parents=True)
+    artifact_path = runs_dir / "20260603T010203Z.json"
+    artifact_path.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "workflow": "product_automation_job_operation_log_sync",
+                "status": "completed",
+                "external_api_calls": 24,
+                "summary": {"job": "operation_log_sync", "product_count": 1, "target_date": "2026-06-02"},
+                "results": [
+                    {
+                        "product_key": "diandian-hero",
+                        "product": "点点英雄",
+                        "job": "operation_log_sync",
+                        "ok": True,
+                        "return_code": 0,
+                        "parsed_stdout": {
+                            "summary": {
+                                "planned_request_count": 20,
+                                "operation_logs_imported": 214,
+                            }
+                        },
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    app = create_app(project_root=tmp_path)
+    client = TestClient(app)
+
+    response = client.get("/api/workflow-runs/catalog")
+
+    assert response.status_code == 200
+    payload = response.json()
+    workflows = {item["workflow_id"]: item for item in payload["raw"]["workflows"]}
+    material_parameters = {item["name"]: item for item in workflows["material_daily_sync"]["parameters"]}
+    assert material_parameters["product_key"]["control"] == "product_select"
+    assert material_parameters["target_date"]["control"] == "date_select"
+
+    rows = {row["工作流 ID"]: row for row in payload["table"]["rows"]}
+    operation_row = rows["operation_log_sync"]
+    assert operation_row["最近状态"] == "已完成"
+    assert operation_row["最近结果"] == "点点英雄，目标日期 2026-06-02，计划账户 20，导入日志 214，外部只读调用 24"
+    assert operation_row["最近结果文件"] == "data/runs/product_automation_job_operation_log_sync/20260603T010203Z.json"
+    assert workflows["operation_log_sync"]["latest_status"]["status_label"] == "已完成"
+    assert workflows["operation_log_sync"]["latest_status"]["summary"] == operation_row["最近结果"]
+
+
 def test_workflow_preview_blocks_unknown_parameters(tmp_path):
     app = create_app(project_root=tmp_path)
     client = TestClient(app)

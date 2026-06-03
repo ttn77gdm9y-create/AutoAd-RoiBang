@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import json
 import sys
 from dataclasses import dataclass
+from datetime import datetime
+from datetime import timezone
 from pathlib import Path
 from typing import Any
+
+from backend.app.services.ui_labels import status_label
 
 
 @dataclass(frozen=True)
@@ -13,6 +18,7 @@ class WorkflowParameter:
     default: str = ""
     required: bool = False
     description: str = ""
+    control: str = "text"
 
 
 @dataclass(frozen=True)
@@ -32,10 +38,11 @@ class WorkflowDefinition:
 
 PRODUCT_KEY_PARAM = WorkflowParameter(
     name="product_key",
-    label="产品 Key",
+    label="产品",
     default="",
     required=False,
-    description="为空时按已启用产品配置运行。",
+    description="为空时按全部启用产品运行。",
+    control="product_select",
 )
 YESTERDAY_PARAM = WorkflowParameter(
     name="target_date",
@@ -43,6 +50,7 @@ YESTERDAY_PARAM = WorkflowParameter(
     default="yesterday",
     required=False,
     description="today / yesterday / YYYY-MM-DD。",
+    control="date_select",
 )
 TODAY_PARAM = WorkflowParameter(
     name="target_date",
@@ -50,6 +58,7 @@ TODAY_PARAM = WorkflowParameter(
     default="today",
     required=False,
     description="today / yesterday / YYYY-MM-DD。",
+    control="date_select",
 )
 GRAVITY_AUTH_FILE_PARAM = WorkflowParameter(
     name="auth_file",
@@ -137,7 +146,8 @@ def get_workflow_definition(workflow_id: str) -> WorkflowDefinition | None:
     return None
 
 
-def workflow_catalog_result() -> dict[str, Any]:
+def workflow_catalog_result(*, project_root: str | Path | None = None) -> dict[str, Any]:
+    latest_statuses = _latest_statuses(project_root)
     rows = [
         {
             "工作流 ID": item.workflow_id,
@@ -146,6 +156,10 @@ def workflow_catalog_result() -> dict[str, Any]:
             "风险": _risk_label(item.risk_level),
             "真实投放动作": "是" if item.true_action else "否",
             "AI 自动运行": "允许" if item.ai_auto_run and not item.true_action else "不允许",
+            "最近状态": latest_statuses.get(item.workflow_id, {}).get("status_label", "未运行"),
+            "最近运行时间": latest_statuses.get(item.workflow_id, {}).get("run_at_label", ""),
+            "最近结果": latest_statuses.get(item.workflow_id, {}).get("summary", ""),
+            "最近结果文件": latest_statuses.get(item.workflow_id, {}).get("artifact_path", ""),
             "说明": item.description,
         }
         for item in WORKFLOW_CATALOG
@@ -164,7 +178,19 @@ def workflow_catalog_result() -> dict[str, Any]:
             "blocking_reasons": [],
         },
         "table": {
-            "columns": ["工作流 ID", "任务名称", "分类", "风险", "真实投放动作", "AI 自动运行", "说明"],
+            "columns": [
+                "工作流 ID",
+                "任务名称",
+                "分类",
+                "风险",
+                "真实投放动作",
+                "AI 自动运行",
+                "最近状态",
+                "最近运行时间",
+                "最近结果",
+                "最近结果文件",
+                "说明",
+            ],
             "rows": rows,
         },
         "artifact_path": "",
@@ -187,9 +213,11 @@ def workflow_catalog_result() -> dict[str, Any]:
                             "default": parameter.default,
                             "required": parameter.required,
                             "description": parameter.description,
+                            "control": parameter.control,
                         }
                         for parameter in item.parameters
                     ],
+                    "latest_status": latest_statuses.get(item.workflow_id, {}),
                 }
                 for item in WORKFLOW_CATALOG
             ],
@@ -200,6 +228,180 @@ def workflow_catalog_result() -> dict[str, Any]:
             ],
         },
     }
+
+
+def _latest_statuses(project_root: str | Path | None) -> dict[str, dict[str, Any]]:
+    if project_root is None:
+        return {}
+    root = Path(project_root)
+    runs_dir = root / "data" / "runs"
+    statuses: dict[str, dict[str, Any]] = {}
+    for definition in WORKFLOW_CATALOG:
+        candidates: list[dict[str, Any]] = []
+        candidates.extend(_scheduled_status_candidates(root, runs_dir, definition))
+        candidates.extend(_frontend_task_status_candidates(root, runs_dir, definition))
+        if candidates:
+            statuses[definition.workflow_id] = max(candidates, key=lambda item: str(item.get("sort_key") or ""))
+    return statuses
+
+
+def _scheduled_status_candidates(root: Path, runs_dir: Path, definition: WorkflowDefinition) -> list[dict[str, Any]]:
+    artifact_dir = runs_dir / definition.latest_workflow
+    candidates = []
+    for path in artifact_dir.glob("*.json"):
+        payload = _read_json(path)
+        if not payload:
+            continue
+        candidates.append(_status_from_payload(root, path, payload, source="定时任务", sort_key=_sort_key_from_artifact(path)))
+    return candidates
+
+
+def _frontend_task_status_candidates(root: Path, runs_dir: Path, definition: WorkflowDefinition) -> list[dict[str, Any]]:
+    task_dir = runs_dir / "frontend_tasks"
+    candidates = []
+    for path in task_dir.glob("frontend-*.json"):
+        payload = _read_json(path)
+        if str(payload.get("operation_type") or "") != definition.operation_type:
+            continue
+        result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+        status_payload = result or payload
+        candidates.append(
+            _status_from_payload(
+                root,
+                path,
+                status_payload,
+                source="手动补跑",
+                task_id=str(payload.get("task_id") or path.stem),
+                sort_key=str(payload.get("updated_at") or payload.get("created_at") or _sort_key_from_artifact(path)),
+            )
+        )
+    return candidates
+
+
+def _status_from_payload(
+    root: Path,
+    path: Path,
+    payload: dict[str, Any],
+    *,
+    source: str,
+    sort_key: str,
+    task_id: str = "",
+) -> dict[str, Any]:
+    status = str(payload.get("status") or ("completed" if payload.get("ok") is True else "unknown"))
+    return {
+        "status": status,
+        "status_label": status_label(status),
+        "run_at": _run_at_from_path(path),
+        "run_at_label": _run_at_label(path),
+        "source": source,
+        "task_id": task_id,
+        "artifact_path": _display_path(root, path),
+        "summary": _latest_status_summary(payload),
+        "sort_key": sort_key,
+    }
+
+
+def _latest_status_summary(payload: dict[str, Any]) -> str:
+    summary = _dict(payload.get("summary"))
+    result = _first_result(payload)
+    parsed_summary = _dict(_dict(result.get("parsed_stdout")).get("summary"))
+    parts: list[str] = []
+    product = _text(result.get("product")) or _text(summary.get("product"))
+    if product:
+        parts.append(product)
+    target_date = _text(summary.get("target_date")) or _text(parsed_summary.get("target_date"))
+    if not target_date:
+        date_range = _dict(parsed_summary.get("date_range"))
+        start_date = _text(date_range.get("start"))
+        end_date = _text(date_range.get("end"))
+        if start_date and end_date and start_date == end_date:
+            target_date = start_date
+    if target_date:
+        parts.append(f"目标日期 {target_date}")
+    parts.extend(_summary_metric_parts(parsed_summary))
+    external_calls = payload.get("external_api_calls")
+    if external_calls is not None:
+        parts.append(f"外部只读调用 {external_calls}")
+    if not parts:
+        parts.append(status_label(payload.get("status")))
+    return "，".join(parts)
+
+
+def _summary_metric_parts(summary: dict[str, Any]) -> list[str]:
+    mapping = [
+        ("candidate_account_count", "候选账户"),
+        ("active_account_count", "活跃账户"),
+        ("active_accounts_upserted", "入库账户"),
+        ("material_rows_imported", "导入素材"),
+        ("active_accounts_discovered", "发现账户"),
+        ("detail_fetch_account_count", "明细抓取账户"),
+        ("planned_request_count", "计划账户"),
+        ("operation_logs_imported", "导入日志"),
+        ("rows_received", "接收日志"),
+        ("source_material_count", "源素材"),
+        ("rollup_rows_written", "汇总行"),
+        ("suggestion_count", "建议"),
+    ]
+    parts = []
+    for key, label in mapping:
+        value = summary.get(key)
+        if value is not None:
+            parts.append(f"{label} {value}")
+    return parts
+
+
+def _first_result(payload: dict[str, Any]) -> dict[str, Any]:
+    results = payload.get("results")
+    if isinstance(results, list):
+        for item in results:
+            if isinstance(item, dict):
+                return item
+    return {}
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _sort_key_from_artifact(path: Path) -> str:
+    return path.stem
+
+
+def _run_at_from_path(path: Path) -> str:
+    parsed = _artifact_datetime(path)
+    return parsed.isoformat(timespec="seconds") if parsed is not None else ""
+
+
+def _run_at_label(path: Path) -> str:
+    parsed = _artifact_datetime(path)
+    return parsed.strftime("%Y-%m-%d %H:%M") if parsed is not None else ""
+
+
+def _artifact_datetime(path: Path) -> datetime | None:
+    try:
+        parsed = datetime.strptime(path.stem, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    return parsed.astimezone()
+
+
+def _display_path(root: Path, path: Path) -> str:
+    try:
+        return path.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def _dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _text(value: Any) -> str:
+    return str(value or "").strip()
 
 
 def normalize_workflow_request(definition: WorkflowDefinition, request: dict[str, Any]) -> tuple[dict[str, str], list[str]]:

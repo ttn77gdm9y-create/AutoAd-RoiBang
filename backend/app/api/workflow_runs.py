@@ -20,8 +20,8 @@ class WorkflowRunRequest(BaseModel):
 
 
 @router.get("/workflow-runs/catalog")
-def workflow_run_catalog() -> dict:
-    return workflow_catalog_result()
+def workflow_run_catalog(request: Request) -> dict:
+    return workflow_catalog_result(project_root=request.app.state.settings.project_root)
 
 
 @router.post("/workflow-runs/{workflow_id}/preview")

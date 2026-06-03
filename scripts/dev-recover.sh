@@ -14,19 +14,19 @@ lsof -tiTCP:$BACKEND_PORT -sTCP:LISTEN | xargs kill 2>/dev/null || true
 lsof -tiTCP:$FRONTEND_PORT -sTCP:LISTEN | xargs kill 2>/dev/null || true
 
 echo "Starting backend..."
-env PYTHONPATH=src:. uvicorn backend.app.main:app --host 127.0.0.1 --port "$BACKEND_PORT" \
+nohup env PYTHONPATH=src:. uvicorn backend.app.main:app --host 127.0.0.1 --port "$BACKEND_PORT" \
   > "$LOG_DIR/backend.log" 2>&1 &
 
 echo "Starting frontend..."
 (
   cd "$ROOT/frontend"
-  npm run dev -- --host 127.0.0.1 --port "$FRONTEND_PORT" \
-    > "$LOG_DIR/frontend.log" 2>&1
-) &
+  nohup env VITE_API_BASE_URL=http://127.0.0.1:$BACKEND_PORT/api npm run dev -- --host 127.0.0.1 --port "$FRONTEND_PORT" \
+    > "$LOG_DIR/frontend.log" 2>&1 &
+)
 
 echo "Checking backend..."
 for _ in {1..30}; do
-  if curl -fsS "http://127.0.0.1:$BACKEND_PORT/api/dashboard/filters" >/dev/null 2>&1; then
+  if curl -fsS "http://127.0.0.1:$BACKEND_PORT/api/workflow-runs/catalog" >/dev/null 2>&1; then
     echo "Backend OK: http://127.0.0.1:$BACKEND_PORT"
     break
   fi

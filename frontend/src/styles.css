@@ -163,6 +163,34 @@ body {
   margin-top: 4px;
 }
 
+.workflow-list-summary {
+  display: block;
+  line-height: 1.45;
+}
+
+.workflow-list-time {
+  font-size: 12px;
+}
+
+.workflow-latest-panel {
+  padding: 12px;
+  border: 1px solid #d8dee6;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.workflow-param-control {
+  width: 100%;
+}
+
+.workflow-date-control {
+  width: 100%;
+}
+
+.workflow-date-preset {
+  min-width: 140px;
+}
+
 .suggestion-action-bar {
   position: sticky;
   bottom: 16px;

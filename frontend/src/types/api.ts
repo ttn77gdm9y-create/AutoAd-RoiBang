@@ -79,6 +79,18 @@ export type WorkflowParameter = {
   default: string;
   required: boolean;
   description: string;
+  control?: "product_select" | "date_select" | "text" | string;
+};
+
+export type WorkflowLatestStatus = {
+  status?: string;
+  status_label?: string;
+  run_at?: string;
+  run_at_label?: string;
+  source?: string;
+  task_id?: string;
+  artifact_path?: string;
+  summary?: string;
 };
 
 export type WorkflowCatalogItem = {
@@ -92,6 +104,7 @@ export type WorkflowCatalogItem = {
   true_action: boolean;
   ai_auto_run: boolean;
   parameters: WorkflowParameter[];
+  latest_status?: WorkflowLatestStatus;
 };
 
 export type WorkflowRunResponse = ChineseResult & {

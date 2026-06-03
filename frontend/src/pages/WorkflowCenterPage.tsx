@@ -1,17 +1,20 @@
 import { FileSearchOutlined, PlayCircleOutlined, ReloadOutlined } from "@ant-design/icons";
-import { Alert, Button, Card, Col, Form, Input, Row, Space, Table, Tag, Typography, message as antdMessage } from "antd";
+import { Alert, Button, Card, Col, DatePicker, Descriptions, Form, Input, Row, Select, Space, Table, Tag, Typography, message as antdMessage } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import dayjs from "dayjs";
+import type { Dayjs } from "dayjs";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { apiGet, apiPost } from "../api/client";
 import { SummaryPanel } from "../components/SummaryPanel";
 import { InlineTaskStatus } from "../components/WorkflowScaffold";
-import type { ChineseResult, TaskDetailResponse, WorkflowCatalogItem, WorkflowRunResponse } from "../types/api";
+import type { ChineseResult, TaskDetailResponse, WorkflowCatalogItem, WorkflowParameter, WorkflowRunResponse } from "../types/api";
 
 type WorkflowRequest = Record<string, string>;
 
 const defaultWorkflowId = "material_daily_sync";
+const allProductsValue = "__all_enabled_products__";
 
 export function WorkflowCenterPage() {
   const queryClient = useQueryClient();
@@ -19,11 +22,17 @@ export function WorkflowCenterPage() {
   const [workflowRequest, setWorkflowRequest] = useState<WorkflowRequest>({});
   const [previewResult, setPreviewResult] = useState<ChineseResult | undefined>();
   const [runResult, setRunResult] = useState<WorkflowRunResponse | undefined>();
+  const lastInitializedWorkflowId = useRef("");
   const activeTaskId = runResult?.task?.task_id ?? "";
   const catalog = useQuery({
     queryKey: ["workflow-runs", "catalog"],
     queryFn: () => apiGet<ChineseResult>("/workflow-runs/catalog"),
   });
+  const filterCatalog = useQuery({
+    queryKey: ["dashboard", "filters"],
+    queryFn: () => apiGet<ChineseResult>("/dashboard/filters"),
+  });
+  const productOptions = useMemo(() => rowsToProductOptions(filterCatalog.data), [filterCatalog.data]);
   const workflows = useMemo(() => workflowItemsFromCatalog(catalog.data), [catalog.data]);
   const selectedWorkflow = workflows.find((item) => item.workflow_id === selectedWorkflowId) ?? workflows[0];
   const activeTaskDetail = useQuery({
@@ -42,10 +51,20 @@ export function WorkflowCenterPage() {
       setSelectedWorkflowId(nextWorkflow.workflow_id);
       return;
     }
-    setWorkflowRequest(defaultRequestForWorkflow(nextWorkflow));
-    setPreviewResult(undefined);
-    setRunResult(undefined);
+    if (lastInitializedWorkflowId.current !== nextWorkflow.workflow_id) {
+      lastInitializedWorkflowId.current = nextWorkflow.workflow_id;
+      setWorkflowRequest(defaultRequestForWorkflow(nextWorkflow));
+      setPreviewResult(undefined);
+      setRunResult(undefined);
+    }
   }, [selectedWorkflowId, workflows]);
+
+  useEffect(() => {
+    const status = String(activeTaskDetail.data?.summary.status ?? "");
+    if (status === "completed" || status === "failed") {
+      void catalog.refetch();
+    }
+  }, [activeTaskDetail.data?.summary.status]);
 
   const preview = useMutation({
     mutationFn: () => apiPost<ChineseResult>(`/workflow-runs/${selectedWorkflowId}/preview`, { request: workflowRequest }),
@@ -74,13 +93,17 @@ export function WorkflowCenterPage() {
     setRunResult(undefined);
   }
 
+  async function refreshWorkflowStatus() {
+    await Promise.all([catalog.refetch(), queryClient.invalidateQueries({ queryKey: ["tasks"] })]);
+  }
+
   return (
     <main className="page">
       <Space direction="vertical" size="large" className="full-width">
         <div className="page-heading-row">
           <Typography.Title level={2}>自动化工作台</Typography.Title>
-          <Button icon={<ReloadOutlined />} onClick={() => catalog.refetch()} loading={catalog.isFetching}>
-            刷新任务菜单
+          <Button icon={<ReloadOutlined />} onClick={refreshWorkflowStatus} loading={catalog.isFetching}>
+            刷新任务状态
           </Button>
         </div>
         <Alert
@@ -91,7 +114,7 @@ export function WorkflowCenterPage() {
         {catalog.error ? <Alert type="error" showIcon message={(catalog.error as Error).message} /> : null}
         <Row gutter={[16, 16]} align="top">
           <Col xs={24} xl={9}>
-            <Card size="small" title="任务菜单">
+            <Card size="small" title="任务状态列表">
               <Table<WorkflowCatalogItem>
                 rowKey="workflow_id"
                 loading={catalog.isLoading}
@@ -100,7 +123,7 @@ export function WorkflowCenterPage() {
                 size="small"
                 rowClassName={(record) => (record.workflow_id === selectedWorkflowId ? "workflow-row-selected" : "summary-row-clickable")}
                 onRow={(record) => ({ onClick: () => selectWorkflow(record.workflow_id) })}
-                columns={workflowColumns}
+                columns={workflowColumns()}
               />
             </Card>
           </Col>
@@ -122,16 +145,19 @@ export function WorkflowCenterPage() {
                     <Typography.Paragraph type="secondary" className="workflow-description">
                       {selectedWorkflow.description}
                     </Typography.Paragraph>
+                    <WorkflowLatestStatusPanel workflow={selectedWorkflow} />
                     <Form layout="vertical" className="workflow-param-panel">
                       <Row gutter={[16, 0]}>
                         {selectedWorkflow.parameters.map((parameter) => (
                           <Col xs={24} md={12} key={parameter.name}>
                             <Form.Item label={parameter.label} required={parameter.required}>
-                              <Input
-                                value={workflowRequest[parameter.name] ?? parameter.default}
-                                onChange={(event) => updateRequest(parameter.name, event.target.value)}
-                                placeholder={parameter.default}
-                              />
+                              {renderParameterControl({
+                                parameter,
+                                value: workflowRequest[parameter.name] ?? parameter.default,
+                                productOptions,
+                                productOptionsLoading: filterCatalog.isLoading,
+                                onChange: (value) => updateRequest(parameter.name, value),
+                              })}
                               {parameter.description ? (
                                 <Typography.Text type="secondary" className="allowed-account-help">
                                   {parameter.description}
@@ -181,30 +207,124 @@ export function WorkflowCenterPage() {
   );
 }
 
-const workflowColumns: ColumnsType<WorkflowCatalogItem> = [
-  {
-    title: "任务名称",
-    dataIndex: "name",
-    render: (value, record) => (
-      <Space direction="vertical" size={2}>
-        <Typography.Text strong>{value}</Typography.Text>
-        <Typography.Text type="secondary">{record.category}</Typography.Text>
+function workflowColumns(): ColumnsType<WorkflowCatalogItem> {
+  return [
+    {
+      title: "任务名称",
+      dataIndex: "name",
+      render: (value, record) => (
+        <Space direction="vertical" size={4} className="full-width">
+          <Space wrap size={6}>
+            <Typography.Text strong>{value}</Typography.Text>
+            <Tag>{record.category}</Tag>
+            <Tag color={record.risk_level === "medium" ? "orange" : "green"}>{record.risk_level === "medium" ? "风险中" : "风险低"}</Tag>
+          </Space>
+          <Typography.Text type="secondary" className="workflow-list-summary">
+            {record.latest_status?.summary || "暂无最近运行结果"}
+          </Typography.Text>
+          {record.latest_status?.run_at_label ? (
+            <Typography.Text type="secondary" className="workflow-list-time">
+              最近：{record.latest_status.run_at_label}
+            </Typography.Text>
+          ) : null}
+        </Space>
+      ),
+    },
+    {
+      title: "状态",
+      dataIndex: "latest_status",
+      width: 108,
+      render: (_value, record) => <Tag color={statusColor(record.latest_status?.status)}>{record.latest_status?.status_label || "未运行"}</Tag>,
+    },
+    {
+      title: "动作",
+      dataIndex: "true_action",
+      width: 84,
+      render: () => <Tag color="blue">只读</Tag>,
+    },
+  ];
+}
+
+function WorkflowLatestStatusPanel({ workflow }: { workflow?: WorkflowCatalogItem }) {
+  const latest = workflow?.latest_status;
+  if (!workflow || !latest?.status_label) {
+    return <Alert type="info" showIcon message="这个任务暂时没有最近运行记录，可以先生成运行预览。" />;
+  }
+  return (
+    <div className="workflow-latest-panel">
+      <Descriptions size="small" column={{ xs: 1, md: 2 }} labelStyle={{ color: "#667085" }}>
+        <Descriptions.Item label="最近状态">
+          <Tag color={statusColor(latest.status)}>{latest.status_label}</Tag>
+        </Descriptions.Item>
+        <Descriptions.Item label="运行来源">{latest.source || "本地记录"}</Descriptions.Item>
+        <Descriptions.Item label="最近运行时间">{latest.run_at_label || "-"}</Descriptions.Item>
+        <Descriptions.Item label="结果文件">{latest.artifact_path || "-"}</Descriptions.Item>
+        <Descriptions.Item label="最近结果" span={2}>
+          {latest.summary || "暂无中文摘要"}
+        </Descriptions.Item>
+      </Descriptions>
+    </div>
+  );
+}
+
+function renderParameterControl({
+  parameter,
+  value,
+  productOptions,
+  productOptionsLoading,
+  onChange,
+}: {
+  parameter: WorkflowParameter;
+  value: string;
+  productOptions: { label: string; value: string }[];
+  productOptionsLoading: boolean;
+  onChange: (value: string) => void;
+}) {
+  if (parameter.control === "product_select") {
+    return (
+      <Select
+        className="workflow-param-control"
+        loading={productOptionsLoading}
+        value={value || allProductsValue}
+        options={[{ label: "全部启用产品", value: allProductsValue }, ...productOptions]}
+        onChange={(nextValue) => onChange(nextValue === allProductsValue ? "" : nextValue)}
+      />
+    );
+  }
+  if (parameter.control === "date_select") {
+    const presetValue = value === "today" || value === "yesterday" ? value : "custom";
+    const customDate = presetValue === "custom" ? parseDateValue(value) : null;
+    return (
+      <Space wrap className="workflow-date-control">
+        <Select
+          className="workflow-date-preset"
+          value={presetValue}
+          options={[
+            { label: "今天", value: "today" },
+            { label: "昨天", value: "yesterday" },
+            { label: "指定日期", value: "custom" },
+          ]}
+          onChange={(nextValue) => {
+            if (nextValue === "custom") {
+              onChange(customDate?.format("YYYY-MM-DD") || dayjs().format("YYYY-MM-DD"));
+              return;
+            }
+            onChange(nextValue);
+          }}
+        />
+        {presetValue === "custom" ? (
+          <DatePicker
+            value={customDate}
+            format="YYYY-MM-DD"
+            onChange={(nextDate) => onChange(dateToRequestValue(nextDate))}
+            allowClear={false}
+          />
+        ) : null}
       </Space>
-    ),
-  },
-  {
-    title: "风险",
-    dataIndex: "risk_level",
-    width: 84,
-    render: (value) => <Tag color={value === "medium" ? "orange" : "green"}>{value === "medium" ? "中" : "低"}</Tag>,
-  },
-  {
-    title: "动作",
-    dataIndex: "true_action",
-    width: 96,
-    render: () => <Tag color="blue">只读</Tag>,
-  },
-];
+    );
+  }
+  return <Input value={value} onChange={(event) => onChange(event.target.value)} placeholder={parameter.default} />;
+}
 
 function workflowItemsFromCatalog(catalog?: ChineseResult): WorkflowCatalogItem[] {
   const rawWorkflows = catalog?.raw.workflows;
@@ -228,4 +348,44 @@ function defaultRequestForWorkflow(workflow: WorkflowCatalogItem): WorkflowReque
     request[parameter.name] = parameter.default;
   });
   return request;
+}
+
+function rowsToProductOptions(result?: ChineseResult) {
+  return (result?.table.rows ?? [])
+    .filter((row) => row["类型"] === "产品")
+    .map((row) => ({
+      label: String(row["显示名称"] ?? row["值"] ?? ""),
+      value: String(row["值"] ?? ""),
+    }));
+}
+
+function parseDateValue(value: string): Dayjs | null {
+  if (!value || value === "today" || value === "yesterday") {
+    return null;
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return null;
+  }
+  const parsed = dayjs(value);
+  return parsed.isValid() ? parsed : null;
+}
+
+function dateToRequestValue(value: Dayjs | null): string {
+  return value?.format("YYYY-MM-DD") ?? dayjs().format("YYYY-MM-DD");
+}
+
+function statusColor(status?: string): string {
+  if (status === "completed" || status === "success" || status === "succeeded") {
+    return "green";
+  }
+  if (status === "failed" || status === "partial_failed") {
+    return "red";
+  }
+  if (status === "queued" || status?.startsWith("running")) {
+    return "blue";
+  }
+  if (status === "blocked") {
+    return "orange";
+  }
+  return "default";
 }
