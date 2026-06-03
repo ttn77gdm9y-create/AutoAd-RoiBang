@@ -12,6 +12,7 @@ from roibang_v2.ui.background_tasks import write_task_record
 from roibang_v2.ui.script_runner import build_project_update_execute_command
 from roibang_v2.ui.script_runner import build_project_filter_command
 from roibang_v2.workflows.frontend_operation_log import record_frontend_operation
+from roibang_v2.workflows.project_update_suggestion_lifecycle import project_update_config_duplicate_reasons
 
 from backend.app.safety.confirmation import EXECUTE_CONFIRMATION_PHRASE
 from backend.app.services.account_names import account_name_for
@@ -200,6 +201,14 @@ def build_project_management_execute_preview(request: dict[str, Any], *, project
     if not actions:
         return _blocked_execute_preview("项目管理 JSON 中没有 actions，不能执行", request, project_update_path)
     validation_reasons = _execute_validation_reasons(project_update, actions, request)
+    if not validation_reasons and _requires_suggestion_metadata(project_update, request):
+        validation_reasons.extend(
+            project_update_config_duplicate_reasons(
+                project_root=project_root,
+                runs_dir=Path(project_root) / "data" / "runs",
+                project_update=project_update,
+            )
+        )
     if validation_reasons:
         blocked = _blocked_execute_preview(validation_reasons[0], request, project_update_path)
         blocked["summary"]["blocking_reasons"] = validation_reasons

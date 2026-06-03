@@ -220,7 +220,7 @@ def build_create_plan_suggestion_preview_detail(path: str, *, project_root: str 
     workflow_reasons = [str(item) for item in payload.get("blocking_reasons") or [] if str(item)]
     generate_reasons = [str(item) for item in generate_summary.get("blocking_reasons") or [] if str(item)]
     status = "blocked" if workflow_reasons or generate_reasons else _text(generate_summary.get("status")) or "loaded"
-    table = generate_preview.get("table") if isinstance(generate_preview.get("table"), dict) else {
+    table = _suggestion_generate_table(generate_preview.get("table")) if isinstance(generate_preview.get("table"), dict) else {
         "columns": ["账户 ID", "账户名", "创建模式", "产品", "负责人", "目标日期", "出价", "ROI 系数"],
         "rows": [],
     }
@@ -234,9 +234,9 @@ def build_create_plan_suggestion_preview_detail(path: str, *, project_root: str 
                 {"label": "来源建议", "value": int(payload.get("summary", {}).get("source_suggestion_count") or 0)},
                 {"label": "账户数", "value": int(payload.get("summary", {}).get("account_count") or 0)},
                 {"label": "产品", "value": _text(create_plan_request.get("product_name"))},
-                {"label": "推荐模式", "value": _text(create_plan_request.get("mode"))},
+                {"label": "推荐模式", "value": create_mode_label(_text(create_plan_request.get("mode")))},
                 {"label": "来源策略", "value": _source_strategy_text(payload)},
-                {"label": "创建预览", "value": display_path},
+                {"label": "预览状态", "value": "已接收"},
             ],
             "warnings": [
                 "已从创建建议预览填入创建计划表单；仍需在本页检查、生成计划并人工确认真实创建。",
@@ -862,20 +862,36 @@ def _suggestion_preview_sections(payload: dict[str, Any]) -> list[dict[str, Any]
     return sections
 
 
+def _suggestion_generate_table(value: Any) -> dict[str, Any]:
+    table = value if isinstance(value, dict) else {}
+    rows: list[dict[str, Any]] = []
+    for row in _rows(table.get("rows")):
+        next_row = dict(row)
+        if "创建模式" in next_row:
+            next_row["创建模式"] = create_mode_label(next_row.get("创建模式"))
+        rows.append(next_row)
+    return {
+        "columns": [str(item) for item in table.get("columns") or [] if str(item)],
+        "rows": rows,
+    }
+
+
 def _suggestion_group_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for group in payload.get("suggestion_groups") or []:
+    for index, group in enumerate(payload.get("suggestion_groups") or [], start=1):
         if not isinstance(group, dict):
             continue
+        product_name = _text(group.get("product_name") or group.get("product_key"))
+        mode_key = _text(group.get("mode_key"))
         rows.append(
             {
-                "批次": _text(group.get("group_id")),
-                "产品": _text(group.get("product_name") or group.get("product_key")),
-                "推荐模式": _text(group.get("mode_key")),
+                "批次": _suggestion_group_label(group, index=index),
+                "产品": product_name,
+                "推荐模式": create_mode_label(mode_key),
                 "账户数": _int(group.get("account_count")),
                 "来源建议": _int(group.get("source_suggestion_count")),
-                "命中策略": "、".join(_text(item) for item in group.get("strategy_ids") or [] if _text(item)),
-                "模板": _text(group.get("template_catalog")),
+                "命中策略": _strategy_list_display_text(group.get("strategy_ids"), product_name=product_name, mode_key=mode_key),
+                "模板": _template_display_text(_text(group.get("template_catalog")), product_name=product_name),
                 "证据": _suggestion_group_evidence_text(group.get("evidence_summary")),
             }
         )
@@ -894,7 +910,11 @@ def _suggestion_evidence_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 "建议 ID": _text(suggestion.get("suggestion_id")),
                 "账户 ID": _text(suggestion.get("advertiser_id")),
                 "账户名": _text(suggestion.get("account_name") or suggestion.get("advertiser_name")),
-                "命中策略": _text(suggestion.get("strategy_id") or suggestion.get("rule_id")),
+                "命中策略": _strategy_display_text(
+                    _text(suggestion.get("strategy_id") or suggestion.get("rule_id")),
+                    product_name=_text(suggestion.get("product_name") or suggestion.get("product")),
+                    mode_key=_text(suggestion.get("mode_key") or suggestion.get("recommended_mode_key")),
+                ),
                 "项目容量": _text(metrics.get("project_capacity") or evidence.get("project_capacity")),
                 "合格素材": _text(metrics.get("qualified_material_count") or evidence.get("qualified_material_count")),
                 "推荐原因": _text(suggestion.get("reason") or suggestion.get("message")),
@@ -904,16 +924,79 @@ def _suggestion_evidence_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _source_strategy_text(payload: dict[str, Any]) -> str:
-    strategy_ids: list[str] = []
+    strategy_ids: list[tuple[str, str, str]] = []
     for group in payload.get("suggestion_groups") or []:
         if not isinstance(group, dict):
             continue
-        strategy_ids.extend(_text(item) for item in group.get("strategy_ids") or [] if _text(item))
+        product_name = _text(group.get("product_name") or group.get("product_key"))
+        mode_key = _text(group.get("mode_key"))
+        strategy_ids.extend((_text(item), product_name, mode_key) for item in group.get("strategy_ids") or [] if _text(item))
     if not strategy_ids:
         for suggestion in payload.get("source_suggestions") or []:
             if isinstance(suggestion, dict):
-                strategy_ids.append(_text(suggestion.get("strategy_id") or suggestion.get("rule_id")))
-    return "、".join(_unique_account_ids(strategy_ids))
+                strategy_ids.append(
+                    (
+                        _text(suggestion.get("strategy_id") or suggestion.get("rule_id")),
+                        _text(suggestion.get("product_name") or suggestion.get("product")),
+                        _text(suggestion.get("mode_key") or suggestion.get("recommended_mode_key")),
+                    )
+                )
+    labels = [
+        _strategy_display_text(strategy_id, product_name=product_name, mode_key=mode_key)
+        for strategy_id, product_name, mode_key in strategy_ids
+        if strategy_id
+    ]
+    return "、".join(_unique_account_ids(labels))
+
+
+def _strategy_display_text(strategy_id: str, *, product_name: str = "", mode_key: str = "") -> str:
+    strategy_id = _text(strategy_id)
+    if not strategy_id:
+        return ""
+    product = _text(product_name)
+    mode = _text(mode_key)
+    normalized = strategy_id.replace("-", "_")
+    mode_label = create_mode_label(mode) if mode else ""
+    if mode and mode.replace("-", "_") in normalized and mode_label:
+        return f"{product}{mode_label}策略" if product else f"{mode_label}策略"
+    if "recent_scale" in normalized:
+        label = "近期放量"
+    elif "test_new" in normalized:
+        label = "测新"
+    elif "scale" in normalized:
+        label = "历史放量"
+    elif mode_label:
+        label = mode_label
+    else:
+        return strategy_id
+    return f"{product}{label}策略" if product else f"{label}策略"
+
+
+def _strategy_list_display_text(value: Any, *, product_name: str = "", mode_key: str = "") -> str:
+    labels = [
+        _strategy_display_text(_text(item), product_name=product_name, mode_key=mode_key)
+        for item in value or []
+        if _text(item)
+    ]
+    return "、".join(_unique_account_ids(labels))
+
+
+def _template_display_text(path: str, *, product_name: str = "") -> str:
+    path_text = _text(path)
+    if not path_text:
+        return "未指定模板"
+    product = _text(product_name)
+    if product:
+        return f"{product}创建模板"
+    return Path(path_text).name.replace(".local.json", "").replace(".json", "") or "创建模板"
+
+
+def _suggestion_group_label(group: dict[str, Any], *, index: int) -> str:
+    product = _text(group.get("product_name") or group.get("product_key"))
+    mode = create_mode_label(_text(group.get("mode_key")))
+    account_count = _int(group.get("account_count"))
+    parts = [part for part in [product, mode, f"{account_count} 个账户"] if part]
+    return f"第 {index} 批" + (f"：{'｜'.join(parts)}" if parts else "")
 
 
 def _suggestion_group_evidence_text(value: Any) -> str:
@@ -1281,6 +1364,10 @@ def _unique_account_ids(values: Any) -> list[str]:
             output.append(advertiser_id)
             seen.add(advertiser_id)
     return output
+
+
+def _rows(value: Any) -> list[dict[str, Any]]:
+    return [dict(item) for item in value if isinstance(item, dict)] if isinstance(value, list) else []
 
 
 def _account_source_label(source: str) -> str:

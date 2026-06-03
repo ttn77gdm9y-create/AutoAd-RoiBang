@@ -53,6 +53,7 @@ const defaultRequest: ProjectManagementRequest = {
   cpa_bid: "",
   roi_goal: "",
 };
+const suggestionsForceRefreshKey = "roibang_suggestions_force_refresh";
 
 function projectUpdatePathFromTask(detail?: TaskDetailResponse): string {
   const result = detail?.raw?.result;
@@ -196,6 +197,8 @@ export function ProjectManagementPage() {
     onSuccess: async (result) => {
       setExecuteResult(result);
       await queryClient.invalidateQueries({ queryKey: ["tasks"] });
+      await queryClient.invalidateQueries({ queryKey: ["suggestions"] });
+      window.sessionStorage.setItem(suggestionsForceRefreshKey, String(Date.now()));
       antdMessage.success("项目管理任务已提交，本页会显示进度");
     },
   });
@@ -518,7 +521,7 @@ export function ProjectManagementPage() {
                     ) : null}
                     <ConfirmExecutePanel
                       buttonText="确认并执行项目动作"
-                      disabled={execute.isPending}
+                      disabled={execute.isPending || Boolean(executeResult) || isTaskActive(taskStatus(executeTaskDetail.data, executeResult))}
                       onConfirm={() => execute.mutate()}
                     />
                   </Space>

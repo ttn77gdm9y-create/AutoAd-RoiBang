@@ -96,6 +96,7 @@ type CreatePlanGroupRow = {
 };
 
 const suggestionsWorkbenchCacheKey = "roibang_suggestions_workbench_v1";
+const suggestionsForceRefreshKey = "roibang_suggestions_force_refresh";
 const suggestionsQueryCacheOptions = {
   staleTime: 30 * 60 * 1000,
   refetchOnMount: false as const,
@@ -117,7 +118,22 @@ function readSuggestionsWorkbenchCache(): Partial<SuggestionsWorkbenchCache> {
 
 function writeSuggestionsWorkbenchCache(cache: SuggestionsWorkbenchCache) {
   try {
-    window.sessionStorage.setItem(suggestionsWorkbenchCacheKey, JSON.stringify(cache));
+    window.sessionStorage.setItem(
+      suggestionsWorkbenchCacheKey,
+      JSON.stringify({
+        ...cache,
+        activeLane: "",
+        projectUpdateRequest: {
+          ...cache.projectUpdateRequest,
+          selected_suggestion_ids: [],
+          suggested_actions: [],
+        },
+        createPlanRequest: {
+          ...cache.createPlanRequest,
+          selected_suggestion_ids: [],
+        },
+      }),
+    );
   } catch {
     // Session storage can be unavailable in restricted browser contexts.
   }
@@ -163,7 +179,11 @@ function createPlanGroupsFromResult(result?: ChineseResult): CreatePlanGroupRow[
       const sourceSuggestionIds = Array.isArray(group.source_suggestion_ids)
         ? group.source_suggestion_ids.map(String).filter(Boolean)
         : [];
-      const strategyIds = Array.isArray(group.strategy_ids) ? group.strategy_ids.map(String).filter(Boolean).join("、") : "";
+      const strategyIds = Array.isArray(group.strategy_labels)
+        ? group.strategy_labels.map(String).filter(Boolean).join("、")
+        : Array.isArray(group.strategy_ids)
+          ? group.strategy_ids.map(String).filter(Boolean).join("、")
+          : "";
       const groupId = String(group.group_id ?? "").trim();
       if (!groupId) {
         return undefined;
@@ -176,13 +196,13 @@ function createPlanGroupsFromResult(result?: ChineseResult): CreatePlanGroupRow[
         evidenceParts.push(`最少合格素材 ${String(evidence.min_qualified_material_count ?? "")}`);
       }
       return {
-        groupId,
+        groupId: String(group.group_label ?? groupId),
         product: String(group.product_name ?? group.product_key ?? ""),
-        mode: String(group.mode_key ?? ""),
+        mode: String(group.mode_label ?? group.mode_key ?? ""),
         accountCount: Number(group.account_count ?? 0),
         sourceSuggestionCount: Number(group.source_suggestion_count ?? 0),
         strategyIds,
-        templateCatalog: String(group.template_catalog ?? ""),
+        templateCatalog: String(group.template_label ?? group.template_catalog ?? ""),
         evidence: evidenceParts.join("，"),
         status: group.can_generate_single_plan ? "可生成创建计划预览" : "需补配置",
         sourceSuggestionIds,
@@ -314,15 +334,18 @@ export function SuggestionsPage() {
   const [projectUpdateRequest, setProjectUpdateRequest] = useState<ProjectUpdateRequest>({
     ...emptyProjectUpdateRequest,
     ...cachedWorkbench.projectUpdateRequest,
+    selected_suggestion_ids: [],
+    suggested_actions: [],
   });
   const [createPlanRequest, setCreatePlanRequest] = useState<CreatePlanFromSuggestionRequest>({
     ...emptyCreatePlanRequest,
     ...cachedWorkbench.createPlanRequest,
+    selected_suggestion_ids: [],
   });
   const [suggestionsPagination, setSuggestionsPagination] = useState<SuggestionsTablePagination>(
     cachedWorkbench.tablePagination ?? defaultSuggestionsPagination,
   );
-  const [activeLane, setActiveLane] = useState<WorkbenchLane>(cachedWorkbench.activeLane ?? "");
+  const [activeLane, setActiveLane] = useState<WorkbenchLane>("");
   const [previewResult, setPreviewResult] = useState<ChineseResult | undefined>();
   const [generateResult, setGenerateResult] = useState<TaskResponse | undefined>();
   const [createPlanPreviewResult, setCreatePlanPreviewResult] = useState<ChineseResult | undefined>();
@@ -365,12 +388,6 @@ export function SuggestionsPage() {
     refetchInterval: 60 * 60 * 1000,
     ...suggestionsQueryCacheOptions,
   });
-  const suggestionQuality = useQuery({
-    queryKey: ["suggestions", "quality", productKey],
-    queryFn: () => apiGet<ChineseResult>(`/suggestions/quality${querySuffix}`),
-    refetchInterval: 60 * 60 * 1000,
-    ...suggestionsQueryCacheOptions,
-  });
   const effectReview = useQuery({
     queryKey: ["suggestions", "effect-review", productKey],
     queryFn: () => apiGet<ChineseResult>(`/suggestions/effect-review${querySuffix}`),
@@ -391,6 +408,16 @@ export function SuggestionsPage() {
   });
   const generatedProjectUpdatePath = projectUpdatePathFromTask(taskDetail.data);
   const expectedProjectUpdatePath = generatedProjectUpdatePath || plannedProjectUpdatePath(generateResult);
+
+  useEffect(() => {
+    const forceRefresh = window.sessionStorage.getItem(suggestionsForceRefreshKey);
+    if (!forceRefresh) {
+      return;
+    }
+    window.sessionStorage.removeItem(suggestionsForceRefreshKey);
+    clearSelectedSuggestions();
+    void queryClient.invalidateQueries({ queryKey: ["suggestions"] });
+  }, [queryClient]);
 
   const productOptions = useMemo(() => rowsToProductOptions(filterCatalog.data), [filterCatalog.data]);
   const suggestionRows = useMemo<SuggestionRow[]>(() => suggestions.data?.table.rows ?? [], [suggestions.data]);
@@ -464,17 +491,24 @@ export function SuggestionsPage() {
     ],
     [convertibleSuggestionRows.length, createSuggestionRows.length, filteredSuggestionRows.length, readonlySuggestionCount],
   );
+  const visibleSuggestionIdSet = useMemo(
+    () => new Set(visibleSuggestionRows.map((row) => rowText(row, "建议 ID")).filter(Boolean)),
+    [visibleSuggestionRows],
+  );
   const selectedSuggestionIds = useMemo(
-    () => [...createPlanRequest.selected_suggestion_ids, ...projectUpdateRequest.selected_suggestion_ids],
-    [createPlanRequest.selected_suggestion_ids, projectUpdateRequest.selected_suggestion_ids],
+    () =>
+      [...createPlanRequest.selected_suggestion_ids, ...projectUpdateRequest.selected_suggestion_ids].filter((id) =>
+        visibleSuggestionIdSet.has(id),
+      ),
+    [createPlanRequest.selected_suggestion_ids, projectUpdateRequest.selected_suggestion_ids, visibleSuggestionIdSet],
   );
   const selectedCreateRows = useMemo(
-    () => suggestionRows.filter((row) => createPlanRequest.selected_suggestion_ids.includes(rowText(row, "建议 ID"))),
-    [createPlanRequest.selected_suggestion_ids, suggestionRows],
+    () => visibleSuggestionRows.filter((row) => createPlanRequest.selected_suggestion_ids.includes(rowText(row, "建议 ID"))),
+    [createPlanRequest.selected_suggestion_ids, visibleSuggestionRows],
   );
   const selectedProjectUpdateRows = useMemo(
-    () => suggestionRows.filter((row) => projectUpdateRequest.selected_suggestion_ids.includes(rowText(row, "建议 ID"))),
-    [projectUpdateRequest.selected_suggestion_ids, suggestionRows],
+    () => visibleSuggestionRows.filter((row) => projectUpdateRequest.selected_suggestion_ids.includes(rowText(row, "建议 ID"))),
+    [projectUpdateRequest.selected_suggestion_ids, visibleSuggestionRows],
   );
   const selectedProjectUpdateCount = selectedProjectUpdateRows.length;
   const selectedCreateCount = selectedCreateRows.length;
@@ -992,35 +1026,6 @@ export function SuggestionsPage() {
               result={createStrategies.data}
               loading={createStrategies.isLoading}
               detailsCollapsed
-              showArtifactPath
-              showRawJson={false}
-            />
-          </Space>
-        </Card>
-
-        <Card size="small" title="策略学习与建议质量">
-          <Space direction="vertical" size="middle" className="full-width">
-            <Alert
-              type="info"
-              showIcon
-              message="这里展示历史操作学习结果、回测状态和是否已启用；未启用策略只作为证据，不会生成项目管理建议。"
-            />
-            <Space wrap className="workflow-actions">
-              <Button
-                icon={<ReloadOutlined />}
-                loading={suggestionQuality.isFetching}
-                onClick={() => {
-                  void suggestionQuality.refetch();
-                }}
-              >
-                刷新学习质量
-              </Button>
-            </Space>
-            {suggestionQuality.error ? <Alert type="error" showIcon message={(suggestionQuality.error as Error).message} /> : null}
-            <SummaryPanel
-              result={suggestionQuality.data}
-              loading={suggestionQuality.isLoading}
-              detailsCollapsed
               showArtifactPath={false}
               showRawJson={false}
             />
@@ -1080,7 +1085,8 @@ export function SuggestionsPage() {
               columns={suggestionColumns}
               dataSource={visibleSuggestionRows}
               pagination={{
-                ...suggestionsPagination,
+                current: suggestionsPagination.current,
+                pageSize: suggestionsPagination.pageSize,
                 showSizeChanger: true,
                 pageSizeOptions: ["8", "10", "20", "50", "100"],
                 onChange: (current, pageSize) => setSuggestionsPagination({ current, pageSize }),
@@ -1108,7 +1114,7 @@ export function SuggestionsPage() {
                 selectedRowKeys: selectedSuggestionIds,
                 onChange: (keys) => {
                   const keySet = new Set(keys.map(String));
-                  const selectedRows = suggestionRows.filter((row) => keySet.has(rowText(row, "建议 ID")));
+                  const selectedRows = visibleSuggestionRows.filter((row) => keySet.has(rowText(row, "建议 ID")));
                   const nextCreateIds = selectedRows.filter(isCreateSuggestionRow).map((row) => rowText(row, "建议 ID"));
                   const nextProjectUpdateIds = selectedRows.filter(isProjectUpdateSuggestionRow).map((row) => rowText(row, "建议 ID"));
                   updateCreatePlanRequest({
@@ -1119,7 +1125,7 @@ export function SuggestionsPage() {
                   });
                   setActiveLane(nextProjectUpdateIds.length ? "project-update" : nextCreateIds.length ? "create-plan" : "");
                 },
-                preserveSelectedRowKeys: true,
+                preserveSelectedRowKeys: false,
                 getCheckboxProps: (row) => ({
                   disabled: !isSelectableSuggestionRow(row),
                 }),
@@ -1324,7 +1330,7 @@ export function SuggestionsPage() {
                     result={createPlanPreviewResult}
                     loading={createPlanPreview.isPending}
                     detailsCollapsed
-                    showArtifactPath
+                    showArtifactPath={false}
                     showRawJson={false}
                   />
                 </Space>

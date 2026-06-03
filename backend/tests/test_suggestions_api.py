@@ -586,6 +586,76 @@ def _write_create_suggestion_execution_lifecycle(tmp_path: Path, suggestion_id: 
     )
 
 
+def _write_project_update_suggestion_execution_lifecycle(
+    tmp_path: Path,
+    *,
+    suggestion_id: str = "delete-1",
+    advertiser_id: str = "1001",
+    project_id: str = "p-delete",
+    project_name: str = "演示游戏-旧项目",
+) -> None:
+    config_path = tmp_path / "configs" / "project-updates" / "suggestions-demo-executed.local.json"
+    _write_json(
+        config_path,
+        {
+            "中文摘要": "根据投放建议生成项目管理配置，涉及 1 个账户、1 个动作；只生成配置，不直接执行。",
+            "project_update_id": "suggestions-demo-executed",
+            "product_key": "demo-game",
+            "product_name": "演示游戏",
+            "source_artifact": "data/runs/delivery_patrol_suggestions/20260528T100001Z.json",
+            "accounts": [{"account_id": advertiser_id, "account_name": "演示账户一"}],
+            "risk_summary": "包含删除项目 1 个；执行前必须人工核对账户、项目、动作和来源建议。",
+            "dry_run_required": True,
+            "execution_allowed": False,
+            "source": {
+                "workflow": "delivery_patrol_suggestions",
+                "artifact_path": "data/runs/delivery_patrol_suggestions/20260528T100001Z.json",
+            },
+            "execution": {"enabled": False, "status": "planned_only"},
+            "actions": [
+                {
+                    "action_type": "delete_project",
+                    "中文动作": "删除项目",
+                    "advertiser_id": advertiser_id,
+                    "account_name": "演示账户一",
+                    "entity_type": "project",
+                    "project_id": project_id,
+                    "project_name": project_name,
+                    "reason": "项目已关闭且两天无计费时间转化，建议删除。",
+                    "source_suggestion_id": suggestion_id,
+                }
+            ],
+        },
+    )
+    _write_json(
+        tmp_path / "data" / "runs" / "project_update_execute" / "20260528T110000Z.json",
+        {
+            "workflow": "project_update_execute",
+            "status": "completed",
+            "project_update_path": "configs/project-updates/suggestions-demo-executed.local.json",
+            "summary": {
+                "project_update_id": "suggestions-demo-executed",
+                "action_count": 1,
+                "updated_project_count": 1,
+                "failed_project_count": 0,
+            },
+            "results": [
+                {
+                    "operation": "delete_project",
+                    "advertiser_id": advertiser_id,
+                    "project_count": 1,
+                    "requested_project_count": 1,
+                    "failed_project_count": 0,
+                    "project_ids": [project_id],
+                    "requested_project_ids": [project_id],
+                    "error_list": [],
+                    "status": "completed",
+                }
+            ],
+        },
+    )
+
+
 def _write_completed_create_suggestion_lifecycle(tmp_path: Path, *, suggestion_id: str, advertiser_id: str, project_id: str) -> None:
     review_path = tmp_path / "data" / "runs" / "create_plan_execution_review" / "review-completed.json"
     _write_json(
@@ -728,6 +798,50 @@ def test_suggestions_list_returns_chinese_rows_with_account_names_and_action_jso
     assert rows[1]["建议动作"] == "暂停项目"
     assert rows[2]["建议动作"] == "观察"
     assert rows[2]["可转动作 JSON"] == "观察建议，不生成动作配置"
+
+
+def test_executed_project_management_suggestion_is_readonly_and_not_counted_for_config(tmp_path: Path):
+    _write_suggestion_fixture(tmp_path)
+    _write_project_update_suggestion_execution_lifecycle(tmp_path)
+    client = _client(tmp_path)
+
+    response = client.get("/api/suggestions", params={"product_key": "demo-game"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert {"label": "可生成管理配置", "value": 1} in payload["summary"]["items"]
+    rows = payload["table"]["rows"]
+    delete_row = next(row for row in rows if row["建议 ID"] == "delete-1")
+    close_row = next(row for row in rows if row["建议 ID"] == "close-1")
+    assert delete_row["建议类型"] == "只读诊断"
+    assert delete_row["下一步"] == "已执行"
+    assert delete_row["项目管理状态"] == "已执行"
+    assert delete_row["可生成管理配置"] == "已执行，不再生成项目管理配置"
+    assert close_row["建议类型"] == "项目管理建议"
+    assert close_row["下一步"] == "生成项目管理配置"
+
+
+def test_executed_project_management_suggestion_cannot_build_config_again(tmp_path: Path):
+    suggestions_path = _write_suggestion_fixture(tmp_path)
+    _write_project_update_suggestion_execution_lifecycle(tmp_path)
+    client = _client(tmp_path)
+
+    response = client.post(
+        "/api/suggestions/project-update/preview",
+        json={
+            "suggestions_artifact_path": str(suggestions_path),
+            "project_update_id": "suggestions-repeat-001",
+            "operator": "运营A",
+            "product_key": "demo-game",
+            "selected_suggestion_ids": ["delete-1"],
+            "output_path": "configs/project-updates/suggestions-repeat.local.json",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["status"] == "blocked"
+    assert "建议 delete-1 已执行完成，不能重复生成项目管理配置。" in payload["summary"]["blocking_reasons"]
 
 
 def test_suggestions_list_uses_guojing_realtime_scope_not_product_all_scope(tmp_path: Path):
@@ -966,8 +1080,8 @@ def test_suggestions_list_includes_readonly_create_project_suggestions(tmp_path:
     create_row = next(row for row in rows if row["建议动作"] == "建议创建项目")
     assert create_row["账户 ID"] == "1001"
     assert create_row["账户名"] == "演示账户一"
-    assert create_row["推荐模式"] == "wx_pay_general_recent_scale"
-    assert create_row["命中策略"] == "recent-scale-capacity-v1"
+    assert create_row["推荐模式"] == "每付通投近期放量"
+    assert create_row["命中策略"] == "演示游戏近期放量策略"
     assert create_row["数据来源"] == "本地创建策略"
     assert create_row["建议类型"] == "扩量机会"
     assert create_row["下一步"] == "生成创建项目计划"
@@ -1095,6 +1209,8 @@ def test_create_project_suggestion_can_build_create_plan_preview_and_import_to_c
     assert preview["summary"]["status"] == "planned"
     assert preview["summary"]["execution_enabled"] is False
     assert {"label": "来源建议", "value": 1} in preview["summary"]["items"]
+    assert {"label": "推荐模式", "value": "每付通投近期放量"} in preview["summary"]["items"]
+    assert not any(item["label"] == "创建预览" for item in preview["summary"]["items"])
     assert preview["raw"]["create_plan_request"]["mode"] == "wx_pay_general_recent_scale"
     assert preview["raw"]["create_plan_request"]["advertiser_ids"] == "1001"
     assert preview["raw"]["create_plan_request"]["owner"] == "运营A"
@@ -1113,8 +1229,12 @@ def test_create_project_suggestion_can_build_create_plan_preview_and_import_to_c
     section_titles = [section["title"] for section in imported["sections"]]
     assert "创建建议批次" in section_titles
     assert "来源建议证据" in section_titles
+    group_section = next(section for section in imported["sections"] if section["title"] == "创建建议批次")
+    assert group_section["table"]["rows"][0]["推荐模式"] == "每付通投近期放量"
+    assert group_section["table"]["rows"][0]["命中策略"] == "演示游戏近期放量策略"
+    assert "configs/" not in group_section["table"]["rows"][0]["模板"]
     evidence_section = next(section for section in imported["sections"] if section["title"] == "来源建议证据")
-    assert evidence_section["table"]["rows"][0]["命中策略"] == "recent-scale-capacity-v1"
+    assert evidence_section["table"]["rows"][0]["命中策略"] == "演示游戏近期放量策略"
     assert evidence_section["table"]["rows"][0]["合格素材"] == "1"
 
 
@@ -1261,9 +1381,11 @@ def test_create_project_suggestion_preview_returns_split_groups_for_cross_mode_s
     assert {"label": "需拆分", "value": "是"} in payload["summary"]["items"]
     assert len(payload["table"]["rows"]) == 2
     assert {row["推荐模式"] for row in payload["table"]["rows"]} == {
-        "wx_pay_general_recent_scale",
-        "wx_pay_male_recent_scale",
+        "每付通投近期放量",
+        "每付男近期放量",
     }
+    assert all(row["批次"].startswith("第 ") for row in payload["table"]["rows"])
+    assert all("configs/" not in row["模板"] for row in payload["table"]["rows"])
     assert len(payload["raw"]["suggestion_groups"]) == 2
     assert any("多个创建模式" in reason for reason in payload["raw"]["split_reasons"])
 

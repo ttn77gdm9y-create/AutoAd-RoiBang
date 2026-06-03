@@ -21,6 +21,7 @@ from roibang_v2.workflows.create_suggestion_strategy_review import run_create_su
 from roibang_v2.workflows.create_plan_from_suggestions import run_create_plan_from_suggestions_request
 from roibang_v2.workflows.create_project_suggestions import build_create_project_suggestions
 from roibang_v2.workflows.delivery_suggestion_backtest import run_delivery_suggestion_backtest_request
+from roibang_v2.workflows.project_update_suggestion_lifecycle import build_project_update_suggestion_lifecycle
 from roibang_v2.workflows.project_update_from_suggestions import build_project_update_from_suggestions
 
 from backend.app.services.account_names import account_name_for
@@ -34,6 +35,7 @@ from backend.app.services.realtime_snapshots import find_realtime_patrol_snapsho
 from backend.app.services.realtime_snapshots import linked_suggestions_artifact
 from backend.app.services.realtime_snapshots import realtime_account_ids
 from backend.app.services.realtime_snapshots import realtime_account_names
+from backend.app.services.ui_labels import create_mode_label
 from roibang_v2.workflows.product_automation_job import load_product_configs
 
 
@@ -215,6 +217,18 @@ def build_suggestions_list(
         product_key=product_key,
     )
     lifecycle_by_id = lifecycle.get("by_suggestion_id") if isinstance(lifecycle.get("by_suggestion_id"), dict) else {}
+    project_update_lifecycle = build_project_update_suggestion_lifecycle(
+        runs_dir=runs_dir,
+        project_root=project_root,
+        suggestions_artifact={**suggestions_payload, "suggestions": suggestions},
+        suggestions_artifact_path=str(suggestions_path or ""),
+        product_key=product_key,
+    )
+    project_update_lifecycle_by_id = (
+        project_update_lifecycle.get("by_suggestion_id")
+        if isinstance(project_update_lifecycle.get("by_suggestion_id"), dict)
+        else {}
+    )
     historical_date = _historical_evidence_date(suggestions_payload)
     patrol_date = _today_patrol_date(suggestions_payload)
     generated_at = _artifact_generated_at(suggestions_path, suggestions_payload)
@@ -229,11 +243,14 @@ def build_suggestions_list(
         action_info = _action_info(action)
         lifecycle_record = lifecycle_by_id.get(_text(suggestion.get("suggestion_id")))
         lifecycle_record = lifecycle_record if isinstance(lifecycle_record, dict) else {}
+        project_update_record = project_update_lifecycle_by_id.get(_text(suggestion.get("suggestion_id")))
+        project_update_record = project_update_record if isinstance(project_update_record, dict) else {}
         rows.append(
             _suggestion_list_row(
                 suggestion,
                 action_info=action_info,
                 lifecycle_record=lifecycle_record,
+                project_update_record=project_update_record,
                 product_name=_text(suggestion.get("product_name")) or product_by_account.get(advertiser_id, "未归档产品"),
                 account_name=account_name_for(account_names, advertiser_id, fallback="")
                 or suggestion_account_names.get(advertiser_id, "")
@@ -249,7 +266,10 @@ def build_suggestions_list(
             "execution_enabled": False,
             "items": [
                 {"label": "建议事项", "value": len(rows)},
-                {"label": "可生成管理配置", "value": sum(1 for item in suggestions if _can_convert_to_project_update(item))},
+                {
+                    "label": "可生成管理配置",
+                    "value": _active_project_update_suggestion_count(suggestions, project_update_lifecycle_by_id),
+                },
                 {"label": "已锁定创建建议", "value": int(lifecycle.get("summary", {}).get("locked_suggestion_count") or 0)},
                 *_suggestion_context_items(suggestions_payload, generated_at=generated_at),
             ],
@@ -278,6 +298,7 @@ def build_suggestions_list(
                 "中文解释",
                 "关键指标",
                 "创建状态",
+                "项目管理状态",
                 "计划预览",
                 "执行前复核",
                 "执行任务",
@@ -294,6 +315,7 @@ def build_suggestions_list(
             "suggestions": suggestions,
             "suggestions_artifact_path": str(suggestions_path or ""),
             "lifecycle": lifecycle,
+            "project_update_lifecycle": project_update_lifecycle,
         },
     }
 
@@ -303,6 +325,7 @@ def _suggestion_list_row(
     *,
     action_info: dict[str, str],
     lifecycle_record: dict[str, Any],
+    project_update_record: dict[str, Any],
     product_name: str,
     account_name: str,
     suggestions_path: Path | None,
@@ -314,7 +337,11 @@ def _suggestion_list_row(
     action = _suggestion_action(suggestion)
     action_label = action_info["label"]
     mode_key = _text(suggestion.get("mode_key") or suggestion.get("recommended_mode_key"))
-    category = _suggestion_category_label(suggestion)
+    mode_label = _create_mode_display(mode_key)
+    project_update_locked = _project_update_record_locks(project_update_record)
+    category = "只读诊断" if project_update_locked else _suggestion_category_label(suggestion)
+    project_update_label = _text(project_update_record.get("lifecycle_label")) or "未处理"
+    config_hint = "已执行，不再生成项目管理配置" if project_update_locked else action_info["config_hint"]
     return {
         "建议内容": _suggestion_title(
             action_label=action_label,
@@ -322,7 +349,7 @@ def _suggestion_list_row(
             account_name=account_name,
             project_name=project_name,
             project_id=project_id,
-            mode_key=mode_key,
+            mode_key=mode_label,
         ),
         "建议对象": _suggestion_target_text(
             entity_type=entity_type,
@@ -332,12 +359,13 @@ def _suggestion_list_row(
             project_id=project_id,
         ),
         "建议类型": category,
-        "下一步": _suggestion_next_step(suggestion, lifecycle_record),
+        "下一步": _suggestion_next_step(suggestion, lifecycle_record, project_update_record),
         "证据摘要": _suggestion_evidence_summary(suggestion),
         "学习依据": _suggestion_learning_summary(suggestion),
         "动作取舍": _suggestion_decision_summary(suggestion),
         "建议 ID": _text(suggestion.get("suggestion_id")),
         "创建状态": _text(lifecycle_record.get("lifecycle_label")) or "未处理",
+        "项目管理状态": project_update_label,
         "计划预览": _text(lifecycle_record.get("plan_preview_path")),
         "执行前复核": _text(lifecycle_record.get("execution_review_path")),
         "执行任务": _text(lifecycle_record.get("execution_task_id")),
@@ -351,13 +379,17 @@ def _suggestion_list_row(
         "项目 ID": project_id,
         "项目名": project_name,
         "建议动作": action_label,
-        "推荐模式": mode_key,
-        "命中策略": _text(suggestion.get("strategy_id") or suggestion.get("rule_id")),
+        "推荐模式": mode_label,
+        "命中策略": _strategy_display_text(
+            _text(suggestion.get("strategy_id") or suggestion.get("rule_id")),
+            product_name=product_name,
+            mode_key=mode_key,
+        ),
         "中文解释": _text(suggestion.get("reason") or suggestion.get("message") or "需要人工复核该建议。"),
         "关键指标": _metrics_text(suggestion.get("metrics")),
         "数据来源": _source_label(suggestion),
-        "可生成管理配置": action_info["config_hint"],
-        "可转动作 JSON": action_info["config_hint"],
+        "可生成管理配置": config_hint,
+        "可转动作 JSON": config_hint,
         "来源文件": str(suggestions_path or ""),
     }
 
@@ -409,7 +441,14 @@ def _suggestion_category_label(suggestion: dict[str, Any]) -> str:
     return "只读诊断"
 
 
-def _suggestion_next_step(suggestion: dict[str, Any], lifecycle_record: dict[str, Any]) -> str:
+def _suggestion_next_step(
+    suggestion: dict[str, Any],
+    lifecycle_record: dict[str, Any],
+    project_update_record: dict[str, Any] | None = None,
+) -> str:
+    project_update_record = project_update_record or {}
+    if _project_update_record_locks(project_update_record):
+        return "已执行"
     if bool(lifecycle_record.get("locked_for_create_plan")):
         return "已进入执行链路"
     action = _suggestion_action(suggestion).strip().lower()
@@ -418,6 +457,30 @@ def _suggestion_next_step(suggestion: dict[str, Any], lifecycle_record: dict[str
     if _can_convert_to_project_update(suggestion):
         return "生成项目管理配置"
     return "只读观察"
+
+
+def _project_update_record_locks(record: dict[str, Any] | None) -> bool:
+    if not isinstance(record, dict):
+        return False
+    if bool(record.get("locked_for_project_update")):
+        return True
+    return _text(record.get("lifecycle_status")) in {"execution_completed", "execution_submitted"}
+
+
+def _active_project_update_suggestion_count(
+    suggestions: list[dict[str, Any]],
+    lifecycle_by_id: dict[str, Any],
+) -> int:
+    count = 0
+    for suggestion in suggestions:
+        if not _can_convert_to_project_update(suggestion):
+            continue
+        record = lifecycle_by_id.get(_text(suggestion.get("suggestion_id")))
+        record = record if isinstance(record, dict) else {}
+        if _project_update_record_locks(record):
+            continue
+        count += 1
+    return count
 
 
 def _suggestion_evidence_summary(suggestion: dict[str, Any]) -> str:
@@ -454,8 +517,10 @@ def _suggestion_learning_summary(suggestion: dict[str, Any]) -> str:
     if evidence:
         sample_counts = evidence.get("sample_counts") if isinstance(evidence.get("sample_counts"), dict) else {}
         backtest = evidence.get("backtest") if isinstance(evidence.get("backtest"), dict) else {}
+        product_name = _text(suggestion.get("product_name") or suggestion.get("product"))
+        mode_key = _text(suggestion.get("mode_key") or suggestion.get("recommended_mode_key"))
         parts = [
-            f"策略 {evidence.get('strategy_id')}",
+            f"策略 {_strategy_display_text(_text(evidence.get('strategy_id')), product_name=product_name, mode_key=mode_key)}",
             f"版本 {evidence.get('strategy_version') or '未提供'}",
         ]
         if sample_counts:
@@ -472,7 +537,10 @@ def _suggestion_learning_summary(suggestion: dict[str, Any]) -> str:
     if _suggestion_action(suggestion) == "suggest_create_project":
         strategy_id = _text(suggestion.get("strategy_id") or suggestion.get("rule_id"))
         version = _text(suggestion.get("strategy_version"))
-        return f"创建策略 {strategy_id or '未提供'}；版本 {version or '未提供'}；运行时仍以实时账户容量和素材资格为准。"
+        product_name = _text(suggestion.get("product_name") or suggestion.get("product"))
+        mode_key = _text(suggestion.get("mode_key") or suggestion.get("recommended_mode_key"))
+        strategy_label = _strategy_display_text(strategy_id, product_name=product_name, mode_key=mode_key)
+        return f"创建策略 {strategy_label or '未提供'}；版本 {version or '未提供'}；运行时仍以实时账户容量和素材资格为准。"
 
     if _can_convert_to_project_update(suggestion):
         return "未提供学习证据；该建议不能绕过项目管理页复核和确认执行。"
@@ -723,9 +791,36 @@ def build_suggestions_project_update_preview(
         _rows(suggestions_artifact.get("suggestions")),
         normalized_request,
     )
+    project_update_lifecycle = build_project_update_suggestion_lifecycle(
+        runs_dir=root / "data" / "runs",
+        project_root=root,
+        suggestions_artifact={**suggestions_artifact, "suggestions": selected_suggestions},
+        suggestions_artifact_path=str(suggestions_path),
+        product_key=_text(normalized_request.get("product_key")),
+    )
+    project_update_lifecycle_by_id = (
+        project_update_lifecycle.get("by_suggestion_id")
+        if isinstance(project_update_lifecycle.get("by_suggestion_id"), dict)
+        else {}
+    )
+    if not _request_selected_suggestion_ids(normalized_request):
+        selected_suggestions = [
+            suggestion
+            for suggestion in selected_suggestions
+            if not _project_update_record_locks(
+                project_update_lifecycle_by_id.get(_text(suggestion.get("suggestion_id")))
+                if isinstance(project_update_lifecycle_by_id.get(_text(suggestion.get("suggestion_id"))), dict)
+                else {}
+            )
+        ]
     account_names.update(_account_names_from_suggestions(selected_suggestions))
     product_key, product_name = _project_update_product_metadata(configs_dir, accounts, selected_suggestions, normalized_request)
-    blocking_reasons = _project_update_validation_reasons(selected_suggestions, normalized_request, account_names)
+    blocking_reasons = _project_update_validation_reasons(
+        selected_suggestions,
+        normalized_request,
+        account_names,
+        project_update_lifecycle_by_id=project_update_lifecycle_by_id,
+    )
     blocking_reasons.extend(
         _realtime_scope_validation_reasons(
             project_root=root,
@@ -819,16 +914,17 @@ def build_suggestions_create_plan_preview(
     status = "blocked" if blocking_reasons else ("split_required" if workflow_status == "split_required" else "planned")
     rows = generate_preview.get("table", {}).get("rows", []) if isinstance(generate_preview.get("table"), dict) else []
     group_rows = _create_plan_group_rows(result)
+    generate_table = _create_plan_generate_table_for_suggestions(generate_preview.get("table"))
     table = (
-        generate_preview.get("table")
-        if isinstance(generate_preview.get("table"), dict) and workflow_status != "split_required"
+        generate_table
+        if generate_table and workflow_status != "split_required"
         else {
             "columns": ["批次", "产品", "推荐模式", "账户数", "来源建议", "命中策略", "模板", "证据", "状态"],
             "rows": group_rows,
         }
     )
     warnings = [
-        "这里只生成创建计划请求预览，不生成创建计划 JSON，不执行真实创建。",
+        "这里只生成创建计划请求预览，不会创建项目、单元或绑定素材。",
         "下一步必须进入创建计划页重新核对并人工确认。",
     ]
     warnings.extend(str(item) for item in generate_summary.get("warnings") or [] if str(item))
@@ -847,9 +943,9 @@ def build_suggestions_create_plan_preview(
                 {"label": "账户数", "value": account_count},
                 {"label": "需拆分", "value": "是" if bool(summary.get("split_required")) else "否"},
                 {"label": "产品", "value": _text(create_plan_request.get("product_name"))},
-                {"label": "推荐模式", "value": _text(create_plan_request.get("mode"))},
+                {"label": "推荐模式", "value": _create_mode_display(_text(create_plan_request.get("mode")))},
                 {"label": "目标日期", "value": _text(create_plan_request.get("target_date"))},
-                {"label": "创建预览", "value": _text(result.get("artifact_path"))},
+                {"label": "预览状态", "value": "已生成"},
             ],
             "warnings": warnings,
             "blocking_reasons": blocking_reasons,
@@ -860,7 +956,7 @@ def build_suggestions_create_plan_preview(
         "raw": {
             "request": normalized_request,
             "create_plan_request": create_plan_request,
-            "suggestion_groups": _rows(result.get("suggestion_groups")),
+            "suggestion_groups": _create_plan_group_raw_rows(result),
             "split_reasons": [str(item) for item in result.get("split_reasons") or [] if str(item)],
             "create_plan_from_suggestions": result,
             "generate_preview": generate_preview,
@@ -2717,14 +2813,28 @@ def _project_update_validation_reasons(
     selected_suggestions: list[dict[str, Any]],
     request: dict[str, Any],
     account_names: dict[str, str],
+    *,
+    project_update_lifecycle_by_id: dict[str, Any] | None = None,
 ) -> list[str]:
     reasons: list[str] = []
     convertible_count = 0
     explicit_ids = bool(_request_selected_suggestion_ids(request))
+    project_update_lifecycle_by_id = project_update_lifecycle_by_id or {}
+    if not selected_suggestions:
+        reasons.append("当前没有可生成项目管理配置的未处理建议。")
+        return reasons
     for suggestion in selected_suggestions:
         suggestion_id = _text(suggestion.get("suggestion_id")) or "未命名建议"
         if suggestion.get("_missing"):
             reasons.append(f"建议 {suggestion_id} 不在当前建议来源快照中；请返回投放建议工作台刷新建议后重新选择。")
+            continue
+        project_update_record = project_update_lifecycle_by_id.get(suggestion_id)
+        project_update_record = project_update_record if isinstance(project_update_record, dict) else {}
+        if _project_update_record_locks(project_update_record):
+            if _text(project_update_record.get("lifecycle_status")) == "execution_completed":
+                reasons.append(f"建议 {suggestion_id} 已执行完成，不能重复生成项目管理配置。")
+            else:
+                reasons.append(f"建议 {suggestion_id} 已进入项目管理执行链路，不能重复生成项目管理配置。")
             continue
         if not _can_convert_to_project_update(suggestion):
             if explicit_ids:
@@ -3010,22 +3120,120 @@ def _blocked_create_plan_preview(request: dict[str, Any], reason: str | list[str
     }
 
 
+def _create_mode_display(mode_key: str) -> str:
+    return create_mode_label(mode_key) if _text(mode_key) else ""
+
+
+def _strategy_display_text(strategy_id: str, *, product_name: str = "", mode_key: str = "") -> str:
+    strategy_id = _text(strategy_id)
+    if not strategy_id:
+        return ""
+    product = _text(product_name)
+    mode = _text(mode_key)
+    normalized = strategy_id.replace("-", "_")
+    mode_label = _create_mode_display(mode)
+    if mode and mode.replace("-", "_") in normalized and mode_label:
+        return f"{product}{mode_label}策略" if product else f"{mode_label}策略"
+    if "recent_scale" in normalized:
+        label = "近期放量"
+    elif "test_new" in normalized:
+        label = "测新"
+    elif "scale" in normalized:
+        label = "历史放量"
+    elif mode_label:
+        label = mode_label
+    else:
+        return strategy_id
+    return f"{product}{label}策略" if product else f"{label}策略"
+
+
+def _strategy_list_display_text(value: Any, *, product_name: str = "", mode_key: str = "") -> str:
+    labels = [
+        _strategy_display_text(_text(item), product_name=product_name, mode_key=mode_key)
+        for item in value or []
+        if _text(item)
+    ]
+    return "、".join(_unique_texts(labels))
+
+
+def _template_display_text(path: str, *, product_name: str = "") -> str:
+    path_text = _text(path)
+    if not path_text:
+        return "未指定模板"
+    product = _text(product_name)
+    if product:
+        return f"{product}创建模板"
+    return Path(path_text).name.replace(".local.json", "").replace(".json", "") or "创建模板"
+
+
+def _create_plan_group_label(group: dict[str, Any], *, index: int) -> str:
+    product = _text(group.get("product_name") or group.get("product_key"))
+    mode = _create_mode_display(_text(group.get("mode_key")))
+    account_count = int(group.get("account_count") or 0)
+    parts = [part for part in [product, mode, f"{account_count} 个账户"] if part]
+    return f"第 {index} 批" + (f"：{'｜'.join(parts)}" if parts else "")
+
+
+def _create_plan_generate_table_for_suggestions(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    columns = [str(item) for item in value.get("columns") or [] if str(item)]
+    rows: list[dict[str, Any]] = []
+    for row in _rows(value.get("rows")):
+        next_row = dict(row)
+        if "创建模式" in next_row:
+            next_row["创建模式"] = _create_mode_display(_text(next_row.get("创建模式")))
+        rows.append(next_row)
+    return {"columns": columns, "rows": rows}
+
+
+def _unique_texts(values: Any) -> list[str]:
+    output: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = _text(value)
+        if text and text not in seen:
+            output.append(text)
+            seen.add(text)
+    return output
+
+
 def _create_plan_group_rows(result: dict[str, Any]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for group in _rows(result.get("suggestion_groups")):
+    for index, group in enumerate(_rows(result.get("suggestion_groups")), start=1):
+        mode_key = _text(group.get("mode_key"))
+        product_name = _text(group.get("product_name")) or _text(group.get("product_key"))
         rows.append(
             {
-                "批次": _text(group.get("group_id")),
-                "产品": _text(group.get("product_name")) or _text(group.get("product_key")),
-                "推荐模式": _text(group.get("mode_key")),
+                "批次": _create_plan_group_label(group, index=index),
+                "产品": product_name,
+                "推荐模式": _create_mode_display(mode_key),
                 "账户数": int(group.get("account_count") or 0),
                 "来源建议": int(group.get("source_suggestion_count") or 0),
-                "命中策略": "、".join(_text(item) for item in group.get("strategy_ids") or [] if _text(item)),
-                "模板": _text(group.get("template_catalog")),
+                "命中策略": _strategy_list_display_text(group.get("strategy_ids"), product_name=product_name, mode_key=mode_key),
+                "模板": _template_display_text(_text(group.get("template_catalog")), product_name=product_name),
                 "证据": _create_plan_group_evidence_text(group.get("evidence_summary")),
                 "状态": "可生成创建计划预览" if bool(group.get("can_generate_single_plan")) else "需补配置",
             }
         )
+    return rows
+
+
+def _create_plan_group_raw_rows(result: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for index, group in enumerate(_rows(result.get("suggestion_groups")), start=1):
+        row = dict(group)
+        mode_key = _text(group.get("mode_key"))
+        product_name = _text(group.get("product_name")) or _text(group.get("product_key"))
+        row["group_label"] = _create_plan_group_label(group, index=index)
+        row["mode_label"] = _create_mode_display(mode_key)
+        row["strategy_labels"] = [
+            _strategy_display_text(_text(item), product_name=product_name, mode_key=mode_key)
+            for item in group.get("strategy_ids") or []
+            if _text(item)
+        ]
+        row["template_label"] = _template_display_text(_text(group.get("template_catalog")), product_name=product_name)
+        rows.append(row)
     return rows
 
 
@@ -3067,7 +3275,11 @@ def _create_plan_source_evidence_rows(result: dict[str, Any]) -> list[dict[str, 
                 "产品": _text(suggestion.get("product_name") or suggestion.get("product")),
                 "账户 ID": _text(suggestion.get("advertiser_id")),
                 "账户名": _text(suggestion.get("account_name") or suggestion.get("advertiser_name")),
-                "命中策略": _text(suggestion.get("strategy_id") or suggestion.get("rule_id")),
+                "命中策略": _strategy_display_text(
+                    _text(suggestion.get("strategy_id") or suggestion.get("rule_id")),
+                    product_name=_text(suggestion.get("product_name") or suggestion.get("product")),
+                    mode_key=_text(suggestion.get("mode_key") or suggestion.get("recommended_mode_key")),
+                ),
                 "项目容量": _text(metrics.get("project_capacity") or evidence.get("project_capacity")),
                 "合格素材": _text(metrics.get("qualified_material_count") or evidence.get("qualified_material_count")),
                 "推荐原因": _text(suggestion.get("reason") or suggestion.get("message")),

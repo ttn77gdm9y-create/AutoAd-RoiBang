@@ -6,6 +6,11 @@ from fastapi.testclient import TestClient
 from backend.app.main import create_app
 
 
+def _write_json(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def _project_management_request() -> dict:
     return {
         "project_update_id": "delete-p2",
@@ -84,6 +89,7 @@ def _write_suggestion_project_update(root: Path, *, patch: dict | None = None) -
                 "project_id": "p-delete",
                 "project_name": "演示游戏-旧项目",
                 "reason": "项目已关闭且两天无计费时间转化，建议删除。",
+                "source_suggestion_id": "delete-1",
             },
             {
                 "action_type": "status_update",
@@ -94,6 +100,7 @@ def _write_suggestion_project_update(root: Path, *, patch: dict | None = None) -
                 "project_id": "p-close",
                 "project_name": "演示游戏-关闭候选",
                 "reason": "累计消耗达到阈值但计费时间转化为 0，建议暂停项目。",
+                "source_suggestion_id": "close-1",
                 "opt_status": "DISABLE",
             },
         ],
@@ -425,6 +432,60 @@ def test_project_management_execute_preview_accepts_suggestion_json_with_chinese
     assert payload["raw"]["execute_command"][1] == "scripts/run_project_update_execute.py"
     assert "--execute" in payload["raw"]["execute_command"]
     assert "--yes" in payload["raw"]["execute_command"]
+
+
+def test_project_management_execute_preview_blocks_repeated_suggestion_config(tmp_path):
+    project_update_path = _write_suggestion_project_update(tmp_path)
+    _write_json(
+        tmp_path / "data" / "runs" / "project_update_execute" / "20260528T110000Z.json",
+        {
+            "workflow": "project_update_execute",
+            "status": "completed",
+            "project_update_path": project_update_path,
+            "summary": {
+                "project_update_id": "suggestions-demo",
+                "action_count": 2,
+                "updated_project_count": 2,
+                "failed_project_count": 0,
+            },
+            "results": [
+                {
+                    "operation": "delete_project",
+                    "advertiser_id": "1001",
+                    "project_count": 1,
+                    "requested_project_count": 1,
+                    "failed_project_count": 0,
+                    "project_ids": ["p-delete"],
+                    "requested_project_ids": ["p-delete"],
+                    "error_list": [],
+                    "status": "completed",
+                },
+                {
+                    "operation": "update_project_status",
+                    "advertiser_id": "1001",
+                    "project_count": 1,
+                    "requested_project_count": 1,
+                    "failed_project_count": 0,
+                    "project_ids": ["p-close"],
+                    "requested_project_ids": ["p-close"],
+                    "error_list": [],
+                    "status": "completed",
+                },
+            ],
+        },
+    )
+    client = TestClient(create_app(project_root=tmp_path))
+
+    response = client.post(
+        "/api/project-management/execute/preview",
+        json={"project_update_path": project_update_path, "config_source": "suggestions_generated"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["status"] == "blocked"
+    assert payload["summary"]["execution_enabled"] is False
+    assert "这份投放建议生成的项目管理配置已经执行完成，不能重复确认执行。" in payload["summary"]["blocking_reasons"]
 
 
 def test_project_management_execute_preview_blocks_suggestion_json_missing_chinese_summary(tmp_path):
