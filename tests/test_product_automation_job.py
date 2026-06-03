@@ -54,7 +54,9 @@ def test_builds_material_daily_sync_request_from_product_config(tmp_path: Path):
     assert cfg["active_account_discovery"]["allow_keyword_accounts"] is True
     assert cfg["active_account_discovery"]["product"] == "点点英雄"
     assert cfg["active_account_discovery"]["workbench"]["keyword"] == "点点英雄"
+    assert cfg["active_account_discovery"]["workbench"]["stop_when_sorted_cost_reaches_zero"] is False
     assert cfg["material_fetch"]["openapi"]["report_presets"] == ["material_daily"]
+    assert 51010 in cfg["material_fetch"]["openapi_http"]["retry_api_codes"]
 
 
 def test_builds_source_auto_push_request_with_product_account_keyword(tmp_path: Path):
@@ -87,6 +89,7 @@ def test_builds_daily_report_sync_request_from_product_config(tmp_path: Path):
     assert cfg["active_account_discovery"]["product"] == "点点英雄"
     assert cfg["active_account_discovery"]["platform"] == "WECHAT_GAME"
     assert cfg["active_account_discovery"]["workbench"]["keyword"] == "点点英雄"
+    assert cfg["active_account_discovery"]["workbench"]["stop_when_sorted_cost_reaches_zero"] is False
     assert cfg["report_fetch"]["product"] == "点点英雄"
     assert cfg["report_fetch"]["output"]["snapshot_dir"] == "data/snapshots/report/diandian-hero-daily"
     assert 51010 in cfg["report_fetch"]["openapi_http"]["retry_api_codes"]

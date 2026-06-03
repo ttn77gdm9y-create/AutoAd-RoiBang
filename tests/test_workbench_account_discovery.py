@@ -245,6 +245,37 @@ def test_workbench_discovery_can_restrict_results_to_local_account_pool(tmp_path
     assert result["summary"]["rows_received"] == 2
 
 
+def test_workbench_discovery_summarizes_raw_and_filtered_spending_accounts(tmp_path):
+    def opener(_url, _body, _headers, _timeout_seconds):
+        return _response(
+            [
+                {"advertiser_id": "in-pool", "advertiser_name": "In Pool", "metrics": {"stat_cost": "12.50"}},
+                {"advertiser_id": "outside-pool", "advertiser_name": "Outside", "metrics": {"stat_cost": "9.00"}},
+                {"advertiser_id": "zero-cost", "advertiser_name": "Zero", "metrics": {"stat_cost": "0.00"}},
+            ],
+            has_more=False,
+            total=3,
+        )
+
+    result = discover_spending_accounts(
+        {
+            "enabled": True,
+            "session_file": str(_secret_file(tmp_path / "session.json")),
+            "keyword": "点点英雄",
+            "allowed_account_ids": ["in-pool"],
+            "response_audit_dir": str(tmp_path / "audit"),
+        },
+        target_date="2026-06-02",
+        min_spend=0,
+        opener=opener,
+    )
+
+    assert result["active_account_ids"] == ["in-pool"]
+    assert result["summary"]["raw_spending_account_count"] == 2
+    assert result["summary"]["accepted_account_count"] == 1
+    assert result["summary"]["filtered_account_count"] == 1
+
+
 def test_workbench_discovery_fails_closed_when_disabled(tmp_path):
     with pytest.raises(WorkbenchAccountDiscoveryError, match="disabled"):
         discover_spending_accounts(

@@ -249,6 +249,8 @@ def discover_spending_accounts(
 
     accounts: list[dict[str, Any]] = []
     rows_received = 0
+    raw_spending_account_count = 0
+    filtered_account_count = 0
     transport_calls = 0
     total_count = 0
     offset = 1
@@ -310,9 +312,11 @@ def discover_spending_accounts(
             account = _account_from_row(row)
             if not account["advertiser_id"]:
                 continue
-            if allowed_account_ids and account["advertiser_id"] not in allowed_account_ids:
-                continue
             if account["stat_cost"] > min_spend:
+                raw_spending_account_count += 1
+                if allowed_account_ids and account["advertiser_id"] not in allowed_account_ids:
+                    filtered_account_count += 1
+                    continue
                 accounts.append(account)
             elif stop_at_zero:
                 reached_threshold = True
@@ -330,6 +334,9 @@ def discover_spending_accounts(
             "source": "workbench_account_list",
             "target_date": target_date,
             "candidate_account_count": len(allowed_account_ids) if allowed_account_ids else total_count or rows_received,
+            "raw_spending_account_count": raw_spending_account_count,
+            "accepted_account_count": len(accounts),
+            "filtered_account_count": filtered_account_count,
             "active_account_count": len(accounts),
             "min_spend": float(min_spend),
             "planned_request_count": transport_calls,

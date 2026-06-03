@@ -167,6 +167,57 @@ def test_operation_log_sync_plan_can_target_yesterday_only(tmp_path: Path):
     ]
 
 
+def test_operation_log_sync_plan_uses_all_spent_product_accounts_for_target_date(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+    with sqlite3.connect(db_path) as conn:
+        for index in range(1, 21):
+            advertiser_id = f"diandian-{index:02d}"
+            _insert_account_pool(
+                conn,
+                advertiser_id=advertiser_id,
+                account_name=f"黑旗-点点英雄-微小-傲星-{index}",
+                product="点点英雄",
+            )
+            _insert_metric(
+                conn,
+                metric_date="2026-06-02",
+                advertiser_id=advertiser_id,
+                material_id=f"material-{index}",
+                cost=10 + index,
+            )
+        _insert_account_pool(
+            conn,
+            advertiser_id="other-product",
+            account_name="黑旗-其他游戏-微小-傲星-1",
+            product="其他游戏",
+        )
+        _insert_metric(
+            conn,
+            metric_date="2026-06-02",
+            advertiser_id="other-product",
+            material_id="other-material",
+            cost=99,
+        )
+
+    payload = build_operation_log_sync_plan_from_metrics(
+        db_path,
+        page_size=20,
+        product_keyword="点点英雄",
+        date_range={"target_date": "2026-06-02"},
+    )
+    requests = payload["plan"]["requests"]
+
+    assert payload["summary"]["account_source"] == "material_daily_metrics"
+    assert payload["summary"]["account_date_source"] == "material_daily_metrics_spent_account_dates"
+    assert payload["summary"]["date_range"] == {"start": "2026-06-02", "end": "2026-06-02", "days": 1}
+    assert payload["summary"]["account_count"] == 20
+    assert payload["summary"]["planned_request_count"] == 20
+    assert {request["query_params"]["advertiser_id"] for request in requests} == {
+        f"diandian-{index:02d}" for index in range(1, 21)
+    }
+
+
 def test_control_scope_filters_product_keyword_by_account_name_and_product_not_project_name(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     bootstrap_database(db_path)
