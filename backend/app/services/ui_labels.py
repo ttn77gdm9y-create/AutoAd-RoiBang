@@ -15,6 +15,10 @@ OPERATION_LABELS = {
     "delivery_patrol": "投放巡检",
     "dry_run_probe": "连通性检查",
     "frontend_operation_log": "前端操作日志",
+    "gravity_api_probe": "引力素材库只读探测",
+    "material_daily_sync": "素材明细同步",
+    "daily_report_sync": "每日报表同步",
+    "operation_log_sync": "操作日志同步",
     "project_management_config_generate": "项目管理配置生成",
     "project_management_execute": "项目管理执行",
     "project_realtime_filter_config": "项目筛选配置生成",
@@ -24,6 +28,7 @@ OPERATION_LABELS = {
     "site_handsel": "落地页转赠",
     "site_status_update": "落地页状态更新",
     "site_template_foundation": "模板建站",
+    "source_material_rollup": "源素材表现汇总",
 }
 
 STATUS_LABELS = {

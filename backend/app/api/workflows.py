@@ -42,6 +42,36 @@ WORKFLOW_CATALOG = [
         "description": "查看最近一次本地投放巡检结果。",
     },
     {
+        "value": "product_automation_job_material_daily_sync",
+        "label": "素材明细同步",
+        "description": "查看产品级每日素材明细同步结果。",
+    },
+    {
+        "value": "product_automation_job_daily_report_sync",
+        "label": "每日报表同步",
+        "description": "查看产品级每日账户报表同步结果。",
+    },
+    {
+        "value": "product_automation_job_operation_log_sync",
+        "label": "操作日志同步",
+        "description": "查看产品级操作日志同步结果。",
+    },
+    {
+        "value": "product_automation_job_source_material_rollup",
+        "label": "源素材表现汇总",
+        "description": "查看源素材表现汇总重建结果。",
+    },
+    {
+        "value": "suggestions_refresh",
+        "label": "同步数据并重算建议",
+        "description": "查看只读同步、巡检和建议重算链路结果。",
+    },
+    {
+        "value": "gravity_api_probe",
+        "label": "引力素材库只读探测",
+        "description": "查看引力素材库本地鉴权探测结果。",
+    },
+    {
         "value": "project_update_execute",
         "label": "项目管理执行",
         "description": "查看项目删除、暂停、预算、出价等固定脚本执行结果。",

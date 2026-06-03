@@ -73,6 +73,35 @@ export type TaskDetailResponse = ChineseResult & {
   stderr: string;
 };
 
+export type WorkflowParameter = {
+  name: string;
+  label: string;
+  default: string;
+  required: boolean;
+  description: string;
+};
+
+export type WorkflowCatalogItem = {
+  workflow_id: string;
+  name: string;
+  category: string;
+  description: string;
+  operation_type: string;
+  latest_workflow: string;
+  risk_level: string;
+  true_action: boolean;
+  ai_auto_run: boolean;
+  parameters: WorkflowParameter[];
+};
+
+export type WorkflowRunResponse = ChineseResult & {
+  task?: {
+    task_id: string;
+    pid: number;
+    artifact_path: string;
+  };
+};
+
 export type SettingsPayload = {
   project_root: string;
   runs_dir: string;

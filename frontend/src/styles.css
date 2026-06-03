@@ -227,6 +227,23 @@ body {
   min-width: 280px;
 }
 
+.workflow-description {
+  max-width: 820px;
+  margin-bottom: 0 !important;
+}
+
+.workflow-param-panel {
+  padding: 12px;
+  border: 1px solid #d8dee6;
+  border-radius: 8px;
+  background: #f8fafb;
+}
+
+.workflow-row-selected > td {
+  background: #e8f4f1 !important;
+  cursor: pointer;
+}
+
 .dashboard-filter-select {
   min-width: 180px;
 }

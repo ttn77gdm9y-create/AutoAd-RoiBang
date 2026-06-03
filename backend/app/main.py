@@ -22,6 +22,7 @@ from backend.app.api import project_management
 from backend.app.api import sites
 from backend.app.api import suggestions
 from backend.app.api import tasks
+from backend.app.api import workflow_runs
 from backend.app.api import workflows
 from backend.app.services.settings import build_settings
 
@@ -81,6 +82,7 @@ def create_app(project_root: str | Path | None = None) -> FastAPI:
 
     app.include_router(health.router, prefix="/api")
     app.include_router(workflows.router, prefix="/api")
+    app.include_router(workflow_runs.router, prefix="/api")
     app.include_router(tasks.router, prefix="/api")
     app.include_router(automation_health.router, prefix="/api")
     app.include_router(actions.router, prefix="/api")
