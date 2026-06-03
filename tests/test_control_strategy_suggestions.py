@@ -303,6 +303,66 @@ def test_control_strategy_suggests_pause_for_low_first_day_roi_project(tmp_path:
     ]
 
 
+def test_control_strategy_keeps_one_project_action_when_rules_conflict(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    bootstrap_database(db_path)
+    with sqlite3.connect(db_path) as conn:
+        _insert_account_pool(conn, "a1")
+        _insert_project_metric(
+            conn,
+            metric_date="2026-05-11",
+            advertiser_id="a1",
+            project_id="project-conflict",
+            promotion_id="promotion-1",
+            cost=1000,
+            conversions=3,
+            roi_1day=0.2,
+        )
+
+    result = build_control_strategy_suggestions(
+        db_path,
+        {
+            "product_keyword": "勇者突进",
+            "target_date": "2026-05-11",
+            "rules": {
+                "pause_project_low_first_day_roi": {
+                    "enabled": True,
+                    "min_cost": 500,
+                    "min_conversions": 2,
+                    "max_roi_1day": 0.25,
+                },
+                "adjust_project_budget_low_roi": {
+                    "enabled": True,
+                    "min_cost": 500,
+                    "min_conversions": 2,
+                    "max_roi_1day": 0.35,
+                    "budget_decrease_percent": 20,
+                },
+                "adjust_project_bid_high_cpa": {
+                    "enabled": True,
+                    "min_cost": 500,
+                    "min_conversions": 2,
+                    "max_cpa": 300,
+                    "bid_decrease_percent": 10,
+                },
+            },
+        },
+    )
+
+    assert result["summary"]["suggestion_count"] == 1
+    assert result["summary"]["pause_project_suggestion_count"] == 1
+    assert result["summary"]["adjust_project_budget_suggestion_count"] == 0
+    assert result["summary"]["adjust_project_bid_suggestion_count"] == 0
+    assert result["summary"]["conflict_suppressed_count"] == 2
+    assert result["suggestions"][0]["suggestion_type"] == "pause_project"
+    assert result["suggestions"][0]["entity_id"] == "project-conflict"
+    assert result["suggestions"][0]["conflict_resolution"]["suppressed_suggestion_count"] == 2
+    assert {item["suggestion_type"] for item in result["suppressed_suggestions"]} == {
+        "adjust_project_budget",
+        "adjust_project_bid",
+    }
+
+
 def test_pause_project_suggestion_includes_configured_historical_operation_evidence(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     bootstrap_database(db_path)

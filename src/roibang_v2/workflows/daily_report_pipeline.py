@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from copy import deepcopy
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +33,10 @@ def _target_date(cfg: dict[str, Any], *, today: date | None = None) -> str:
     if isinstance(value, dict) and value.get("date"):
         return str(value["date"])
     raise ValueError("daily_report_pipeline requires target_date or target_date.mode=yesterday")
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _date_span(start_date: str, end_date: str) -> list[str]:
@@ -114,6 +118,55 @@ def _configured_accounts(report_fetch: dict[str, Any], *, db_path: str | Path) -
         by_id = {account["advertiser_id"]: account for account in accounts}
         accounts = [by_id[item] for item in account_ids if item in by_id]
     return accounts
+
+
+def _upsert_workbench_discovered_accounts(
+    *,
+    db_path: str | Path,
+    report_fetch: dict[str, Any],
+    accounts: list[dict[str, Any]],
+    source: str,
+) -> int:
+    product = str(report_fetch.get("product") or "").strip()
+    if not product:
+        return 0
+    platforms = [str(item) for item in report_fetch.get("platforms", []) if str(item).strip()]
+    platform = platforms[0] if platforms else "WECHAT_GAME"
+    synced_at = _utc_now()
+    rows: dict[str, dict[str, Any]] = {}
+    for account in accounts:
+        if not isinstance(account, dict):
+            continue
+        advertiser_id = str(account.get("advertiser_id") or "").strip()
+        if not advertiser_id:
+            continue
+        rows[advertiser_id] = account
+    with sqlite3.connect(db_path) as conn:
+        for advertiser_id, account in rows.items():
+            conn.execute(
+                """
+                INSERT INTO account_pool (
+                  advertiser_id, account_name, product, platform, historical_spend, source, synced_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(advertiser_id) DO UPDATE SET
+                  account_name = excluded.account_name,
+                  product = excluded.product,
+                  platform = excluded.platform,
+                  historical_spend = excluded.historical_spend,
+                  source = excluded.source,
+                  synced_at = excluded.synced_at
+                """,
+                (
+                    advertiser_id,
+                    str(account.get("account_name") or ""),
+                    product,
+                    platform,
+                    _number(account.get("stat_cost")),
+                    source,
+                    synced_at,
+                ),
+            )
+    return len(rows)
 
 
 def _discovery_fetch_request(
@@ -253,7 +306,9 @@ def _run_workbench_active_account_discovery(
     workbench = deepcopy(discovery.get("workbench") if isinstance(discovery.get("workbench"), dict) else {})
     report_fetch = cfg.get("report_fetch") if isinstance(cfg.get("report_fetch"), dict) else {}
     candidate_accounts = _configured_accounts(report_fetch, db_path=db_path)
-    workbench["allowed_account_ids"] = [str(account["advertiser_id"]) for account in candidate_accounts]
+    allow_keyword_accounts = bool(discovery.get("allow_keyword_accounts", False))
+    if "allowed_account_ids" not in workbench and not allow_keyword_accounts:
+        workbench["allowed_account_ids"] = [str(account["advertiser_id"]) for account in candidate_accounts]
     min_spend = _number(discovery.get("min_spend"))
     result = discover_spending_accounts(
         workbench,
@@ -261,10 +316,22 @@ def _run_workbench_active_account_discovery(
         min_spend=min_spend,
         opener=workbench_opener,
     )
+    active_accounts_upserted = 0
+    if allow_keyword_accounts:
+        active_accounts_upserted = _upsert_workbench_discovered_accounts(
+            db_path=db_path,
+            report_fetch=report_fetch,
+            accounts=[account for account in result.get("accounts") or [] if isinstance(account, dict)],
+            source="daily_report_pipeline.active_account_discovery",
+        )
+        summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+        summary["active_accounts_upserted"] = active_accounts_upserted
+        result["summary"] = summary
     return {
         **result,
         "artifact_path": "",
         "external_api_calls": int(result.get("external_api_calls") or 0),
+        "active_accounts_upserted": active_accounts_upserted,
     }
 
 

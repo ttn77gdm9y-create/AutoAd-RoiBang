@@ -33,6 +33,7 @@ def test_render_cron_uses_fixed_script_paths_without_ai_execution_prompts():
     assert "scripts/run_scheduler_job.py --registry configs/scheduler/roibang-v2.jobs.example.json --job-id roibang-operation-log-yesterday-sync" in cron_text
     assert "scripts/run_scheduler_job.py --registry configs/scheduler/roibang-v2.jobs.example.json --job-id roibang-material-kind-reconcile" in cron_text
     assert "scripts/run_scheduler_job.py --registry configs/scheduler/roibang-v2.jobs.example.json --job-id roibang-source-material-rollup-rebuild" in cron_text
+    assert "scripts/run_scheduler_job.py --registry configs/scheduler/roibang-v2.jobs.example.json --job-id roibang-strategy-learning" in cron_text
     assert "--job-id roibang-report-field-catalog" not in cron_text
     assert "scripts/run_data_sync.py" not in cron_text
     assert "--job-id roibang-data-sync" not in cron_text
@@ -44,7 +45,7 @@ def test_render_cron_uses_fixed_script_paths_without_ai_execution_prompts():
     assert "--job-id roibang-strategy-approval" not in cron_text
     assert "--job-id roibang-strategy-execute" not in cron_text
     job_lines = [line for line in cron_text.splitlines() if line and not line.startswith("#")]
-    assert len(job_lines) == 11
+    assert len(job_lines) == 12
     assert any(line.startswith("0 2 * * * cd '/tmp/RoiBang v2'") and "--job-id roibang-material-history-yesterday" in line for line in job_lines)
     assert any(line.startswith("30 2 * * * cd '/tmp/RoiBang v2'") and "--job-id roibang-operation-log-yesterday-sync" in line for line in job_lines)
     assert any(line.startswith("0 4 * * * cd '/tmp/RoiBang v2'") and "--job-id roibang-daily-report-pipeline" in line for line in job_lines)
@@ -52,6 +53,7 @@ def test_render_cron_uses_fixed_script_paths_without_ai_execution_prompts():
     assert any(line.startswith("0 5 * * * cd '/tmp/RoiBang v2'") and "--job-id roibang-source-material-account-auto-push" in line for line in job_lines)
     assert any(line.startswith("20 5 * * * cd '/tmp/RoiBang v2'") and "--job-id roibang-source-material-preload-to-guojing-spent" in line for line in job_lines)
     assert any(line.startswith("30 5 * * * cd '/tmp/RoiBang v2'") and "--job-id roibang-source-material-rollup-rebuild" in line for line in job_lines)
+    assert any(line.startswith("50 5 * * * cd '/tmp/RoiBang v2'") and "--job-id roibang-strategy-learning" in line for line in job_lines)
     assert any(line.startswith("0 6 * * * cd '/tmp/RoiBang v2'") and "--job-id roibang-scheduler-status" in line for line in job_lines)
     assert any(line.startswith("30 8-23 * * * cd '/tmp/RoiBang v2'") and "--job-id roibang-delivery-patrol" in line for line in job_lines)
     assert any(line.startswith("10 0 * * * cd '/tmp/RoiBang v2'") and "--job-id roibang-project-schedule-restore-due" in line for line in job_lines)
@@ -120,7 +122,7 @@ def test_render_scheduler_templates_writes_cron_and_launchd_examples(tmp_path):
 
     cron_file = tmp_path / "cron" / "roibang-v2.cron.example"
     launchd_file = tmp_path / "launchd" / "com.roibang.v2.roibang-source-material-account-auto-push.plist.example"
-    assert summary == {"cron_files": 1, "launchd_files": 11, "enabled_jobs": 11}
+    assert summary == {"cron_files": 1, "launchd_files": 12, "enabled_jobs": 12}
     assert cron_file.exists()
     assert launchd_file.exists()
     assert not stale_file.exists()
@@ -128,6 +130,7 @@ def test_render_scheduler_templates_writes_cron_and_launchd_examples(tmp_path):
     assert "roibang-operation-log-yesterday-sync" in cron_file.read_text()
     assert "roibang-daily-report-pipeline" in cron_file.read_text()
     assert "roibang-material-kind-reconcile" in cron_file.read_text()
+    assert "roibang-strategy-learning" in cron_file.read_text()
     assert "roibang-source-material-account-auto-push" in cron_file.read_text()
     assert "roibang-source-material-preload-to-guojing-spent" in cron_file.read_text()
     assert "roibang-source-material-rollup-rebuild" in cron_file.read_text()
@@ -166,5 +169,6 @@ def test_render_scheduler_cli_entrypoint_writes_summary(tmp_path, capsys):
 
     captured = capsys.readouterr()
     assert exit_code == 0
-    assert '"launchd_files": 11' in captured.out
+    assert '"launchd_files": 12' in captured.out
+    assert '"enabled_jobs": 12' in captured.out
     assert (tmp_path / "cron" / "roibang-v2.cron.example").exists()

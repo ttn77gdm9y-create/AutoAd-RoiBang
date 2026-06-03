@@ -766,3 +766,117 @@ def test_material_history_backfill_can_use_keyword_accounts_without_local_accoun
             "SELECT account_name, product FROM account_pool WHERE advertiser_id = '1866125088740552'"
         ).fetchone()
     assert account == ("黑旗-点点英雄-微小-郭靖-002", "点点英雄")
+
+
+def test_material_history_backfill_keyword_accounts_are_not_limited_by_existing_pool(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    pool_csv = tmp_path / "accounts.csv"
+    bootstrap_database(db_path)
+    pool_csv.write_text(
+        "\n".join(
+            [
+                "account_name,advertiser_id,消耗,product,platform",
+                "黑旗-点点英雄-微小-傲星-156,existing-account,100,点点英雄,WECHAT_GAME",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    import_accounts_csv(pool_csv, db_path=db_path)
+    (tmp_path / "session.json").write_text(
+        json.dumps({"cookie": "fake_cookie", "csrf_token": "fake_csrf", "ebpid": "fake_ebpid"}),
+        encoding="utf-8",
+    )
+    calls = []
+
+    def workbench_opener(_url, body, _headers, _timeout_seconds):
+        assert "allowed_account_ids" not in body
+        return HttpResponse(
+            200,
+            {
+                "code": 0,
+                "data": {
+                    "list": [
+                        {
+                            "advertiser_id": "existing-account",
+                            "advertiser_name": "黑旗-点点英雄-微小-傲星-156",
+                            "metrics": {"stat_cost": "88.00"},
+                        },
+                        {
+                            "advertiser_id": "new-keyword-account",
+                            "advertiser_name": "黑旗-点点英雄-微小-傲星-117",
+                            "metrics": {"stat_cost": "66.00"},
+                        },
+                    ],
+                    "pagination": {"page": 1, "limit": 100, "total": 2, "hasMore": False},
+                },
+            },
+        )
+
+    def openapi_transport(request):
+        calls.append(request["account"]["advertiser_id"])
+        return {
+            "code": 0,
+            "data": {
+                "page_info": {"page": 1, "page_size": 20, "total_page": 1, "total_count": 1},
+                "rows": [
+                    {
+                        "dimensions": {
+                            "stat_time_day": "2026-06-02",
+                            "cdp_project_id": f"project_{request['account']['advertiser_id']}",
+                            "cdp_promotion_id": f"promotion_{request['account']['advertiser_id']}",
+                            "material_id": f"material_{request['account']['advertiser_id']}",
+                            "material_kind": "video",
+                        },
+                        "metrics": {"stat_cost": "66.00"},
+                    }
+                ],
+            },
+        }
+
+    result = run_material_history_backfill_request(
+        {
+            "material_history_backfill": {
+                "product": "点点英雄",
+                "platforms": ["WECHAT_GAME"],
+                "date_range": {"start": "2026-06-02", "end": "2026-06-02"},
+                "active_account_discovery": {
+                    "source": "workbench_account_list",
+                    "enabled": True,
+                    "allow_keyword_accounts": True,
+                    "product": "点点英雄",
+                    "platform": "WECHAT_GAME",
+                    "workbench": {
+                        "enabled": True,
+                        "session_file": str(tmp_path / "session.json"),
+                        "keyword": "点点英雄",
+                        "limit": 100,
+                    },
+                    "min_spend": 0,
+                },
+                "material_fetch": {
+                    "source": "openapi_mock_execute",
+                    "openapi": {
+                        "endpoints": ["report_custom"],
+                        "report_presets": ["material_daily"],
+                        "page_size": 20,
+                    },
+                },
+            }
+        },
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        workbench_opener=workbench_opener,
+        workbench_sleeper=lambda seconds: None,
+        openapi_transport=openapi_transport,
+    )
+
+    assert result["ok"] is True
+    assert calls == ["existing-account", "new-keyword-account"]
+    assert result["summary"]["active_account_count"] == 2
+    assert result["summary"]["active_accounts_upserted"] == 2
+    with sqlite3.connect(db_path) as conn:
+        account = conn.execute(
+            "SELECT account_name, product, source FROM account_pool WHERE advertiser_id = 'new-keyword-account'"
+        ).fetchone()
+    assert account == ("黑旗-点点英雄-微小-傲星-117", "点点英雄", "material_history_backfill.active_account_discovery")

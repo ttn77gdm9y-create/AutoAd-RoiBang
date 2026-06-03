@@ -1,5 +1,5 @@
 const CONFIGURED_API_BASE = import.meta.env.VITE_API_BASE_URL;
-const DEFAULT_API_BASES = ["http://127.0.0.1:8007/api", "http://127.0.0.1:8006/api", "http://127.0.0.1:8000/api"];
+const DEFAULT_API_BASES = ["http://127.0.0.1:8000/api", "http://127.0.0.1:8007/api", "http://127.0.0.1:8006/api"];
 
 function getStoredApiBase(): string | undefined {
   try {
@@ -18,7 +18,7 @@ function rememberApiBase(apiBase: string): void {
 }
 
 function getApiBases(): string[] {
-  const bases = [CONFIGURED_API_BASE, getStoredApiBase(), ...DEFAULT_API_BASES].filter(Boolean) as string[];
+  const bases = [CONFIGURED_API_BASE, ...DEFAULT_API_BASES, getStoredApiBase()].filter(Boolean) as string[];
   return [...new Set(bases)];
 }
 

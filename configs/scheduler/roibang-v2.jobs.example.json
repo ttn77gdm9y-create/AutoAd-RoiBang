@@ -145,6 +145,20 @@
       "delivery": {"channel": "none"}
     },
     {
+      "id": "roibang-strategy-learning",
+      "name": "RoiBang-v2 每日投放策略学习",
+      "category": "strategy_learning",
+      "enabled": true,
+      "schedule": {"type": "cron", "expr": "50 5 * * *", "tz": "Asia/Shanghai"},
+      "script": {
+        "command": ["python3", "scripts/run_strategy_learning.py", "--config", "configs/runtime.example.json", "--request", "configs/strategy-learning.example.json", "--target-date", "yesterday"],
+        "mode": "foreground"
+      },
+      "policy": {"config": "configs/runtime.example.json", "request": "configs/strategy-learning.example.json", "target_date": "yesterday", "readonly": true},
+      "result_contract": {"workflow": "strategy_learning", "artifact_dir": "data/runs/strategy_learning", "must_include": ["ok", "workflow", "phase", "execution_enabled", "external_api_calls", "summary", "candidate_strategies", "runtime_contract"], "must_equal": {"execution_enabled": false, "external_api_calls": 0}},
+      "delivery": {"channel": "none"}
+    },
+    {
       "id": "roibang-scheduler-status",
       "name": "RoiBang-v2 定时任务日报",
       "category": "scheduler_status",

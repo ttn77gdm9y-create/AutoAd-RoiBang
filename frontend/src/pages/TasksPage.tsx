@@ -11,6 +11,7 @@ export function TasksPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [taskId, setTaskId] = useState<string | null>(searchParams.get("task_id"));
+  const returnTo = searchParams.get("return_to") ?? "";
   useEffect(() => {
     const nextTaskId = searchParams.get("task_id");
     if (nextTaskId !== taskId) {
@@ -20,11 +21,12 @@ export function TasksPage() {
   const selectTaskId = (nextTaskId: string | null) => {
     setTaskId(nextTaskId);
     if (nextTaskId) {
-      setSearchParams({ task_id: nextTaskId });
+      setSearchParams(returnTo ? { task_id: nextTaskId, return_to: returnTo } : { task_id: nextTaskId });
     } else {
-      setSearchParams({});
+      setSearchParams(returnTo ? { return_to: returnTo } : {});
     }
   };
+  const returnQuery = returnTo ? `&return_to=${encodeURIComponent(returnTo)}` : "";
   const tasks = useQuery({
     queryKey: ["tasks"],
     queryFn: () => apiGet<TaskListResponse>("/tasks"),
@@ -45,6 +47,7 @@ export function TasksPage() {
         type="info"
         showIcon
         message="这里是系统任务记录。正常业务进度会优先显示在发起页面，这里用于追踪历史任务和查看高级日志。"
+        action={returnTo ? <Button onClick={() => navigate(returnTo)}>返回投放建议工作台</Button> : undefined}
       />
       {tasks.error ? <Alert type="error" showIcon message={(tasks.error as Error).message} /> : null}
       <Table<TaskRow>
@@ -87,8 +90,8 @@ export function TasksPage() {
         <SummaryPanel result={businessDetail} loading={detail.isLoading} detailsCollapsed showArtifactPath={false} showRawJson={false} />
         {taskId ? (
           <Space wrap className="section-actions">
-            <Button onClick={() => navigate(`/operations?task_id=${encodeURIComponent(taskId)}`)}>查看关联操作日志</Button>
-            <Button onClick={() => navigate("/results")}>打开结果中心</Button>
+            <Button onClick={() => navigate(`/operations?task_id=${encodeURIComponent(taskId)}${returnQuery}`)}>查看关联操作日志</Button>
+            <Button onClick={() => navigate(returnTo ? `/results?return_to=${encodeURIComponent(returnTo)}` : "/results")}>打开结果中心</Button>
           </Space>
         ) : null}
         <Collapse

@@ -12,8 +12,8 @@ def test_scheduler_registry_has_no_ai_execution_prompts():
 
     assert result == {
         "ok": True,
-        "jobs": 23,
-        "enabled_jobs": 11,
+        "jobs": 24,
+        "enabled_jobs": 12,
         "disabled_jobs": 12,
         "violations": [],
     }
@@ -200,6 +200,7 @@ def test_scheduler_registry_keeps_daily_jobs_and_restore_due_job():
         ("roibang-source-material-account-auto-push", "0 5 * * *"),
         ("roibang-source-material-preload-to-guojing-spent", "20 5 * * *"),
         ("roibang-source-material-rollup-rebuild", "30 5 * * *"),
+        ("roibang-strategy-learning", "50 5 * * *"),
         ("roibang-scheduler-status", "0 6 * * *"),
         ("roibang-project-schedule-restore-due", "10 0 * * *"),
         ("roibang-delivery-patrol", "30 8-23 * * *"),

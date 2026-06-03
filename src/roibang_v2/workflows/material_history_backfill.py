@@ -437,7 +437,7 @@ def _workbench_config(discovery: dict[str, Any], accounts: list[dict[str, Any]])
     workbench.setdefault("enabled", bool(discovery.get("enabled", False)))
     if workbench.get("organization_id") and not workbench.get("ebpid"):
         workbench["ebpid"] = str(workbench["organization_id"])
-    if accounts or not bool(discovery.get("allow_keyword_accounts", False)):
+    if "allowed_account_ids" not in workbench and not bool(discovery.get("allow_keyword_accounts", False)):
         workbench["allowed_account_ids"] = [str(account["advertiser_id"]) for account in accounts]
     return workbench
 

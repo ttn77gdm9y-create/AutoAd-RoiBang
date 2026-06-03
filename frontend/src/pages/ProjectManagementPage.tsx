@@ -2,7 +2,7 @@ import { DeleteOutlined, FileSearchOutlined, PlusOutlined } from "@ant-design/ic
 import { Alert, Button, Card, Col, Collapse, Form, Input, Row, Select, Space, Typography, message as antdMessage } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { apiGet, apiPost } from "../api/client";
 import { ConfirmExecutePanel } from "../components/ConfirmExecutePanel";
@@ -66,6 +66,8 @@ export function ProjectManagementPage() {
   const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const requestInitialized = useRef(false);
+  const importedPreviewStarted = useRef("");
+  const executeCardRef = useRef<HTMLDivElement>(null);
   const [request, setRequest] = useState<ProjectManagementRequest>(defaultRequest);
   const [configPath, setConfigPath] = useState("");
   const [configSource, setConfigSource] = useState<"" | "current_generated" | "manual" | "suggestions_generated">("");
@@ -99,6 +101,7 @@ export function ProjectManagementPage() {
   const canReadConfig = Boolean(configPath.trim()) && !configGenerationActive && !generatedNoActions;
   const canExecuteSelectedConfig = configSource === "current_generated" || configSource === "suggestions_generated";
   const usesMetricFilters = request.metric_filters.some((filter) => filter.field || filter.op || filter.value);
+  const returnTo = searchParams.get("return_to") || "/suggestions";
 
   useEffect(() => {
     const path = searchParams.get("project_update_path")?.trim() ?? "";
@@ -110,6 +113,11 @@ export function ProjectManagementPage() {
     setConfigSource(source === "suggestions_generated" ? "suggestions_generated" : "manual");
     setExecutePreviewResult(undefined);
     setExecuteResult(undefined);
+    if (source === "suggestions_generated") {
+      window.setTimeout(() => {
+        executeCardRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+      }, 120);
+    }
   }, [searchParams]);
 
   useEffect(() => {
@@ -168,6 +176,21 @@ export function ProjectManagementPage() {
       setExecuteResult(undefined);
     },
   });
+
+  useEffect(() => {
+    if (configSource !== "suggestions_generated" || !configPath.trim() || configGenerationActive) {
+      return;
+    }
+    const previewKey = `${configSource}:${configPath}`;
+    if (importedPreviewStarted.current === previewKey) {
+      return;
+    }
+    importedPreviewStarted.current = previewKey;
+    executePreview.mutate();
+    window.setTimeout(() => {
+      executeCardRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+    }, 120);
+  }, [configGenerationActive, configPath, configSource]);
   const execute = useMutation({
     mutationFn: () => apiPost<TaskResponse>("/project-management/execute", { ...executeRequest, confirmation: EXECUTE_CONFIRMATION_PHRASE }),
     onSuccess: async (result) => {
@@ -201,6 +224,19 @@ export function ProjectManagementPage() {
           showIcon
           message="先按账户和筛选条件检查会影响哪些项目，再生成动作配置并确认执行；进度和结果会直接显示在本页。"
         />
+        {configSource === "suggestions_generated" ? (
+          <Alert
+            type="success"
+            showIcon
+            message="已接收投放建议工作台生成的项目管理配置"
+            description="本页会自动读取配置并展示执行前明细；确认无误后仍必须输入确认短语才会执行真实动作。"
+            action={
+              <Link to={returnTo}>
+                <Button>返回投放建议工作台</Button>
+              </Link>
+            }
+          />
+        ) : null}
 
         <Card size="small" title="第一步：筛选并检查项目动作">
           <Form layout="vertical" className="filter-bar">
@@ -407,6 +443,7 @@ export function ProjectManagementPage() {
           {generate.error ? <Alert type="error" showIcon message={(generate.error as Error).message} /> : null}
         </Card>
 
+        <div ref={executeCardRef}>
         <Card size="small" title="第二步：确认并执行项目动作">
           <Space direction="vertical" size="middle" className="full-width">
             <Alert
@@ -497,6 +534,7 @@ export function ProjectManagementPage() {
             {execute.error ? <Alert type="error" showIcon message={(execute.error as Error).message} /> : null}
           </Space>
         </Card>
+        </div>
 
         <InlineTaskStatus
           title="当前项目管理任务"

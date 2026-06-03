@@ -163,6 +163,17 @@ body {
   margin-top: 4px;
 }
 
+.suggestion-action-bar {
+  position: sticky;
+  bottom: 16px;
+  z-index: 5;
+  padding: 12px 14px;
+  border: 1px solid #b8d8cf;
+  border-radius: 8px;
+  background: #f2fbf8;
+  box-shadow: 0 8px 24px rgba(23, 32, 38, 0.12);
+}
+
 .allowed-account-tools {
   margin-top: 8px;
 }

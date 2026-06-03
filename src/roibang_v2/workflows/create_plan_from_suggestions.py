@@ -170,7 +170,7 @@ def _selection_blocking_reasons(
     if not selected_ids:
         reasons.append("必须选择至少一条创建项目建议。")
     for suggestion_id in missing_ids:
-        reasons.append(f"建议 {suggestion_id} 不存在。")
+        reasons.append(f"建议 {suggestion_id} 不在当前建议来源快照中；请返回投放建议工作台刷新建议后重新选择。")
     requested_product_key = _text(cfg.get("product_key"))
     for suggestion in selected:
         suggestion_id = _text(suggestion.get("suggestion_id")) or "未命名建议"

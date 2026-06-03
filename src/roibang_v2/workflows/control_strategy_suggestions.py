@@ -148,6 +148,83 @@ def _suggestion_id(
     return f"{target_date}:{entity_type}:{advertiser_id}:{entity_id}:{suggestion_type}"
 
 
+PROJECT_ACTION_PRIORITIES = {
+    "suggest_delete_project": 100,
+    "pause_project": 90,
+    "adjust_project_bid": 70,
+    "adjust_project_budget": 60,
+    "schedule_hollow": 50,
+}
+
+
+def _project_action_conflict_key(suggestion: dict[str, Any]) -> tuple[str, str] | None:
+    suggestion_type = str(suggestion.get("suggestion_type") or "")
+    if suggestion_type not in PROJECT_ACTION_PRIORITIES:
+        return None
+    entity_type = str(suggestion.get("entity_type") or "")
+    project_id = str(suggestion.get("project_id") or suggestion.get("entity_id") or "").strip()
+    advertiser_id = str(suggestion.get("advertiser_id") or "").strip()
+    if entity_type != "project" or not advertiser_id or not project_id:
+        return None
+    return advertiser_id, project_id
+
+
+def _split_project_action_conflicts(
+    suggestions: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    groups: dict[tuple[str, str], list[tuple[int, dict[str, Any]]]] = {}
+    for index, suggestion in enumerate(suggestions):
+        key = _project_action_conflict_key(suggestion)
+        if key is not None:
+            groups.setdefault(key, []).append((index, suggestion))
+
+    selected_indexes: set[int] = set()
+    suppressed_indexes: set[int] = set()
+    conflict_counts: dict[int, int] = {}
+    for rows in groups.values():
+        if len(rows) <= 1:
+            selected_indexes.add(rows[0][0])
+            continue
+        selected_index, _selected = max(
+            rows,
+            key=lambda item: (
+                PROJECT_ACTION_PRIORITIES.get(str(item[1].get("suggestion_type") or ""), 0),
+                float((item[1].get("metrics") or {}).get("stat_cost") or 0),
+                -item[0],
+            ),
+        )
+        selected_indexes.add(selected_index)
+        conflict_counts[selected_index] = len(rows) - 1
+        for index, _suggestion in rows:
+            if index != selected_index:
+                suppressed_indexes.add(index)
+
+    filtered: list[dict[str, Any]] = []
+    suppressed: list[dict[str, Any]] = []
+    for index, suggestion in enumerate(suggestions):
+        if index in suppressed_indexes:
+            suppressed.append(
+                {
+                    **suggestion,
+                    "suppressed_reason": "同一项目已有更高优先级的项目管理建议，避免同时给出冲突动作。",
+                }
+            )
+            continue
+        if index in conflict_counts:
+            filtered.append(
+                {
+                    **suggestion,
+                    "conflict_resolution": {
+                        "suppressed_suggestion_count": conflict_counts[index],
+                        "reason": "同一项目命中多个项目管理规则，已保留最高优先级建议。",
+                    },
+                }
+            )
+        else:
+            filtered.append(suggestion)
+    return filtered, suppressed
+
+
 def _scope_sql(product_keyword: str) -> tuple[str, dict[str, Any]]:
     keyword = str(product_keyword or "").strip()
     if not keyword:
@@ -240,6 +317,61 @@ def _project_day_rows(
         """,
         params,
     ).fetchall()
+
+
+def _rule_learning_evidence(rule: dict[str, Any]) -> dict[str, Any]:
+    strategy_id = str(rule.get("learned_strategy_id") or "").strip()
+    if not strategy_id:
+        return {}
+    sample_counts = rule.get("learned_sample_counts") if isinstance(rule.get("learned_sample_counts"), dict) else {}
+    backtest = rule.get("learned_backtest") if isinstance(rule.get("learned_backtest"), dict) else {}
+    evidence_samples = rule.get("learned_evidence_samples") if isinstance(rule.get("learned_evidence_samples"), list) else []
+    strategy_summary = str(rule.get("learned_strategy_summary") or "").strip()
+    return {
+        "strategy_id": strategy_id,
+        "strategy_version": str(rule.get("learned_strategy_version") or "").strip(),
+        "status": str(rule.get("learned_strategy_status") or "").strip(),
+        "action_label": str(rule.get("learned_action_label") or "").strip(),
+        "sample_counts": sample_counts,
+        "backtest": backtest,
+        "evidence_samples": evidence_samples[:3],
+        "中文摘要": strategy_summary
+        or f"该项目管理规则来自已启用学习策略 {strategy_id}；运行时仍以实时数据命中为准。",
+    }
+
+
+def _project_action_decision_explanation(
+    *,
+    action_label: str,
+    rule: dict[str, Any],
+    metrics: dict[str, Any],
+) -> dict[str, Any]:
+    evidence = _rule_learning_evidence(rule)
+    if not evidence:
+        return {}
+    strategy_id = str(evidence.get("strategy_id") or "")
+    roi = metrics.get("roi_1day")
+    cpa = metrics.get("cpa")
+    metric_parts = [f"实时消耗 {metrics.get('stat_cost', 0)}", f"实时转化 {metrics.get('convert_cnt', 0)}"]
+    if roi is not None:
+        metric_parts.append(f"ROI {roi}")
+    if cpa is not None:
+        metric_parts.append(f"CPA {cpa}")
+    return {
+        "selected_action": action_label,
+        "why_selected": f"实时数据命中已启用学习策略 {strategy_id}；{'，'.join(metric_parts)}。",
+        "why_not_other_actions": [
+            {
+                "action": "暂停/删除",
+                "reason": "高风险动作必须命中已启用的高风险学习策略；不会因为 ROI 低自动升级为暂停或删除。",
+            },
+            {
+                "action": "调预算/调出价",
+                "reason": "同一项目若命中多个项目管理动作，会按动作优先级只保留一条，避免重复或互斥执行。",
+            },
+        ],
+        "中文摘要": f"选择「{action_label}」是因为实时指标命中已启用学习策略 {strategy_id}，仍需人工复核后才能执行。",
+    }
 
 
 def _delete_project_closed_low_recent_suggestions(
@@ -345,6 +477,21 @@ def _delete_project_closed_low_recent_suggestions(
                     "enabled": False,
                     "note": "建议文件只供复核；不会调用删除项目接口。",
                 },
+                **(
+                    {
+                        "learning_evidence": _rule_learning_evidence(rule),
+                        "decision_explanation": _project_action_decision_explanation(
+                            action_label="删除项目",
+                            rule=rule,
+                            metrics={
+                                "stat_cost": _rounded(float(row["stat_cost"] or 0)),
+                                "convert_cnt": _rounded(float(row["convert_cnt"] or 0)),
+                            },
+                        ),
+                    }
+                    if _rule_learning_evidence(rule)
+                    else {}
+                ),
             }
         )
     return suggestions
@@ -433,6 +580,22 @@ def _pause_project_low_first_day_roi_suggestions(
                     "enabled": False,
                     "note": "建议文件只供复核；不会调用暂停、改预算、改时段接口。",
                 },
+                **(
+                    {
+                        "learning_evidence": _rule_learning_evidence(rule),
+                        "decision_explanation": _project_action_decision_explanation(
+                            action_label="暂停项目",
+                            rule=rule,
+                            metrics={
+                                "stat_cost": _rounded(stat_cost),
+                                "convert_cnt": _rounded(float(row["convert_cnt"] or 0)),
+                                "roi_1day": _rounded(roi_1day),
+                            },
+                        ),
+                    }
+                    if _rule_learning_evidence(rule)
+                    else {}
+                ),
             }
         )
     return suggestions
@@ -510,6 +673,23 @@ def _adjust_project_budget_low_roi_suggestions(
                     "enabled": False,
                     "note": "建议文件只供复核；不会调用暂停、改预算、改时段接口。",
                 },
+                **(
+                    {
+                        "learning_evidence": _rule_learning_evidence(rule),
+                        "decision_explanation": _project_action_decision_explanation(
+                            action_label="调预算",
+                            rule=rule,
+                            metrics={
+                                "stat_cost": _rounded(stat_cost),
+                                "convert_cnt": _rounded(convert_cnt),
+                                "roi_1day": _rounded(roi_1day),
+                                "cpa": _rounded(stat_cost / convert_cnt) if convert_cnt > 0 else None,
+                            },
+                        ),
+                    }
+                    if _rule_learning_evidence(rule)
+                    else {}
+                ),
             }
         )
     return suggestions
@@ -587,6 +767,23 @@ def _adjust_project_bid_high_cpa_suggestions(
                     "enabled": False,
                     "note": "建议文件只供复核；不会调用暂停、改预算、改时段接口。",
                 },
+                **(
+                    {
+                        "learning_evidence": _rule_learning_evidence(rule),
+                        "decision_explanation": _project_action_decision_explanation(
+                            action_label="调出价",
+                            rule=rule,
+                            metrics={
+                                "stat_cost": _rounded(stat_cost),
+                                "convert_cnt": _rounded(convert_cnt),
+                                "roi_1day": _rounded(roi_1day),
+                                "cpa": _rounded(stat_cost / convert_cnt) if convert_cnt > 0 else None,
+                            },
+                        ),
+                    }
+                    if _rule_learning_evidence(rule)
+                    else {}
+                ),
             }
         )
     return suggestions
@@ -1150,8 +1347,9 @@ def build_control_strategy_suggestions(db_path: str | Path, request: dict[str, A
             cfg=cfg,
             target_date=target_date,
         )
+        conflict_filtered_suggestions, suppressed_by_conflict = _split_project_action_conflicts(all_suggestions)
     target_filtered_suggestions, blocked_by_target = _split_by_target_accounts(
-        all_suggestions,
+        conflict_filtered_suggestions,
         target_account_ids=target_account_ids,
     )
     suggestions, blocked_by_allowlist = _split_by_allowlist(
@@ -1199,12 +1397,14 @@ def build_control_strategy_suggestions(db_path: str | Path, request: dict[str, A
             ),
             "blocked_by_target_account_count": len(blocked_by_target),
             "blocked_by_allowlist_count": len(blocked_by_allowlist),
+            "conflict_suppressed_count": len(suppressed_by_conflict),
             "target_account_count": len(target_account_ids) if target_account_ids is not None else None,
             "allowed_account_count": len(allowed_account_ids),
             "realtime_hourly_data_ready": realtime_ready,
         },
         "suggestions": suggestions,
         "blocked_suggestions": blocked,
+        "suppressed_suggestions": suppressed_by_conflict,
         "violations": violations,
         "guardrails": [
             "Readonly only: this workflow reads local SQLite data.",

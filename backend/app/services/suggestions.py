@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from roibang_v2.runs import write_run_artifact
-from roibang_v2.runs import write_latest_artifact
+from roibang_v2.runs import write_snapshot_artifact
 from roibang_v2.ui.background_tasks import build_runner_command
 from roibang_v2.ui.background_tasks import build_task_record
 from roibang_v2.ui.background_tasks import start_runner
@@ -83,6 +83,14 @@ ACTION_FILTER_ALIASES: dict[str, tuple[str, ...]] = {
     "adjust_project_budget": ("adjust_project_budget", "suggest_lower_budget"),
     "suggest_lower_bid": ("suggest_lower_bid", "adjust_project_bid"),
     "adjust_project_bid": ("adjust_project_bid", "suggest_lower_bid"),
+}
+
+PROJECT_CONTROL_RULES: dict[str, str] = {
+    "delete_project_closed_low_recent": "suggest_delete_project",
+    "pause_project_low_first_day_roi": "pause_project",
+    "adjust_project_budget_low_roi": "suggest_lower_budget",
+    "adjust_project_bid_high_cpa": "suggest_lower_bid",
+    "schedule_hollow_low_realtime_hour_roi": "schedule_hollow",
 }
 
 
@@ -255,6 +263,8 @@ def build_suggestions_list(
                 "建议类型",
                 "下一步",
                 "证据摘要",
+                "学习依据",
+                "动作取舍",
                 "优先级",
                 "产品",
                 "账户名",
@@ -324,6 +334,8 @@ def _suggestion_list_row(
         "建议类型": category,
         "下一步": _suggestion_next_step(suggestion, lifecycle_record),
         "证据摘要": _suggestion_evidence_summary(suggestion),
+        "学习依据": _suggestion_learning_summary(suggestion),
+        "动作取舍": _suggestion_decision_summary(suggestion),
         "建议 ID": _text(suggestion.get("suggestion_id")),
         "创建状态": _text(lifecycle_record.get("lifecycle_label")) or "未处理",
         "计划预览": _text(lifecycle_record.get("plan_preview_path")),
@@ -425,11 +437,64 @@ def _suggestion_evidence_summary(suggestion: dict[str, Any]) -> str:
     blocking_reasons = [_text(item) for item in suggestion.get("blocking_reasons") or [] if _text(item)]
     if blocking_reasons:
         parts.append(f"阻断：{'；'.join(blocking_reasons)}")
+    conflict = suggestion.get("conflict_resolution") if isinstance(suggestion.get("conflict_resolution"), dict) else {}
+    if conflict:
+        count = int(conflict.get("suppressed_suggestion_count") or 0)
+        if count > 0:
+            parts.append(f"已压制 {count} 条同项目冲突建议")
     reason = _text(suggestion.get("reason") or suggestion.get("message"))
     parts = [part for part in parts if part]
     if parts:
         return "；".join(parts)
     return reason or "等待人工复核"
+
+
+def _suggestion_learning_summary(suggestion: dict[str, Any]) -> str:
+    evidence = suggestion.get("learning_evidence") if isinstance(suggestion.get("learning_evidence"), dict) else {}
+    if evidence:
+        sample_counts = evidence.get("sample_counts") if isinstance(evidence.get("sample_counts"), dict) else {}
+        backtest = evidence.get("backtest") if isinstance(evidence.get("backtest"), dict) else {}
+        parts = [
+            f"策略 {evidence.get('strategy_id')}",
+            f"版本 {evidence.get('strategy_version') or '未提供'}",
+        ]
+        if sample_counts:
+            parts.append(
+                f"样本 跨产品 {sample_counts.get('total', 0)} / 本产品 {sample_counts.get('product', 0)} / 有指标 {sample_counts.get('with_pre_metrics', 0)}"
+            )
+        if backtest:
+            status = _text(backtest.get("status")) or "未回测"
+            rate = backtest.get("positive_outcome_rate")
+            rate_text = f"，正向率 {rate}" if rate is not None else ""
+            parts.append(f"回测 {status}{rate_text}")
+        return "；".join(str(part) for part in parts if str(part).strip())
+
+    if _suggestion_action(suggestion) == "suggest_create_project":
+        strategy_id = _text(suggestion.get("strategy_id") or suggestion.get("rule_id"))
+        version = _text(suggestion.get("strategy_version"))
+        return f"创建策略 {strategy_id or '未提供'}；版本 {version or '未提供'}；运行时仍以实时账户容量和素材资格为准。"
+
+    if _can_convert_to_project_update(suggestion):
+        return "未提供学习证据；该建议不能绕过项目管理页复核和确认执行。"
+
+    return "只读诊断；不生成项目管理配置。"
+
+
+def _suggestion_decision_summary(suggestion: dict[str, Any]) -> str:
+    decision = suggestion.get("decision_explanation") if isinstance(suggestion.get("decision_explanation"), dict) else {}
+    if decision:
+        return _text(decision.get("中文摘要") or decision.get("why_selected"))
+    conflict = suggestion.get("conflict_resolution") if isinstance(suggestion.get("conflict_resolution"), dict) else {}
+    if conflict:
+        return _text(conflict.get("reason")) or "同一项目命中多个项目管理规则，已压制冲突动作。"
+    blocking_reasons = [_text(item) for item in suggestion.get("blocking_reasons") or [] if _text(item)]
+    if blocking_reasons:
+        return f"当前不能进入动作链路：{'；'.join(blocking_reasons)}"
+    if _can_convert_to_project_update(suggestion):
+        return "该建议可生成项目管理配置，但真实执行仍需项目管理页预览并输入确认。"
+    if _suggestion_action(suggestion) == "suggest_create_project":
+        return "该扩量机会只能生成创建计划预览，真实创建仍需创建计划页人工确认。"
+    return "只读观察，不进入执行链路。"
 
 
 def build_suggestions_lifecycle(
@@ -1071,6 +1136,98 @@ def build_suggestions_effect_review(
     return response
 
 
+def build_suggestions_quality(
+    *,
+    project_root: str | Path,
+    configs_dir: str | Path,
+    runs_dir: str | Path,
+    product_key: str = "",
+) -> dict[str, Any]:
+    accounts = load_accounts(configs_dir)
+    source = _load_suggestions_source(project_root, configs_dir, runs_dir, product_key=product_key)
+    suggestions = _suggestions_in_scope(source.payload, accounts, product_key=product_key)
+    strategy_rows, strategy_payloads = _learned_strategy_quality_rows(configs_dir, product_key=product_key)
+    effect_path = find_latest_artifact(runs_dir, "delivery_suggestion_backtest")
+    effect_payload = read_json(effect_path) if effect_path else {}
+    effect_summary = effect_payload.get("summary") if isinstance(effect_payload.get("summary"), dict) else {}
+
+    enabled_count = sum(1 for row in strategy_rows if row["启用"] == "是")
+    executable_count = sum(1 for row in strategy_rows if row["可进入建议"] == "是")
+    passed_backtest_count = sum(1 for row in strategy_rows if "通过" in row["回测"])
+    blocked_count = sum(1 for row in strategy_rows if "阻断" in row["状态"])
+    candidate_count = sum(1 for row in strategy_rows if "候选" in row["状态"] or "待复核" in row["状态"])
+    project_management_count = sum(1 for item in suggestions if _can_convert_to_project_update(item))
+    create_count = sum(1 for item in suggestions if _suggestion_action(item) == "suggest_create_project")
+    readonly_count = max(len(suggestions) - project_management_count - create_count, 0)
+
+    warnings = [
+        "学习结果只作为建议依据；未启用策略不会生成项目管理建议。",
+        "暂停、删除等高风险动作即使有历史样本，也必须通过样本门槛、回测和人工启用后才可进入建议。",
+        *source.warnings,
+    ]
+    if strategy_rows and passed_backtest_count > executable_count:
+        warnings.append("存在已通过回测但未启用的候选策略；当前只展示为学习成果，不进入可执行建议。")
+    if blocked_count:
+        warnings.append("存在被阻断的高风险候选策略；这些策略只能作为只读诊断或人工复核材料。")
+    if project_management_count > 0 and executable_count <= 0:
+        warnings.append("当前建议快照存在项目管理建议，但没有可进入建议的已启用学习策略；建议先同步数据并重算建议。")
+    if not strategy_rows:
+        warnings.append("未找到学习策略配置；项目管理建议不会使用默认阈值兜底。")
+
+    return {
+        "summary": {
+            "title": "策略学习与建议质量",
+            "status": "warning" if blocked_count or not strategy_rows else "loaded",
+            "risk_level": "medium" if blocked_count or executable_count else "low",
+            "execution_enabled": False,
+            "items": [
+                {"label": "产品范围", "value": product_key or "全部产品"},
+                {"label": "学习策略", "value": len(strategy_rows)},
+                {"label": "已启用策略", "value": enabled_count},
+                {"label": "可进入建议", "value": executable_count},
+                {"label": "通过回测候选", "value": passed_backtest_count},
+                {"label": "阻断策略", "value": blocked_count},
+                {"label": "当前项目管理建议", "value": project_management_count},
+                {"label": "当前扩量机会", "value": create_count},
+                {"label": "当前只读诊断", "value": readonly_count},
+            ],
+            "warnings": warnings,
+            "blocking_reasons": [],
+        },
+        "table": {
+            "columns": ["策略", "范围", "动作", "状态", "启用", "样本", "回测", "可进入建议", "阻断原因", "学习摘要"],
+            "rows": strategy_rows,
+        },
+        "sections": [
+            {
+                "title": "当前建议质量",
+                "table": {
+                    "columns": ["项目", "值"],
+                    "rows": [
+                        {"项目": "建议来源", "值": str(source.path or "未找到")},
+                        {"项目": "当前建议总数", "值": len(suggestions)},
+                        {"项目": "项目管理建议", "值": project_management_count},
+                        {"项目": "扩量机会", "值": create_count},
+                        {"项目": "只读诊断", "值": readonly_count},
+                        {"项目": "已复盘建议", "值": int(effect_summary.get("evaluated_suggestion_count") or 0)},
+                        {"项目": "最近复盘产物", "值": str(effect_path or "未找到")},
+                    ],
+                },
+            }
+        ],
+        "artifact_path": str(effect_path or source.path or ""),
+        "raw": {
+            "source_suggestions_artifact_path": str(source.path or ""),
+            "strategy_payloads": strategy_payloads,
+            "effect_review_summary": effect_summary,
+            "中文摘要": (
+                f"策略学习与建议质量：读取 {len(strategy_rows)} 条学习策略，"
+                f"已启用 {enabled_count} 条，可进入建议 {executable_count} 条；当前建议 {len(suggestions)} 条。"
+            ),
+        },
+    }
+
+
 def build_suggestions_daily_operations(
     *,
     project_root: str | Path,
@@ -1203,6 +1360,122 @@ def _summary_item_value(summary: dict[str, Any], label: str) -> Any:
     return None
 
 
+def _learned_strategy_candidate_paths(configs_dir: str | Path, *, product_key: str) -> list[Path]:
+    strategy_dir = Path(configs_dir) / "learned-strategies"
+    if not strategy_dir.exists():
+        return []
+    paths: list[Path] = [strategy_dir / "cross-product.learned.local.json"]
+    if product_key:
+        paths.append(strategy_dir / f"{product_key}.learned.local.json")
+    else:
+        paths.extend(sorted(path for path in strategy_dir.glob("*.learned.local.json") if path.name != "cross-product.learned.local.json"))
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for path in paths:
+        if path in seen or not path.exists():
+            continue
+        seen.add(path)
+        unique.append(path)
+    return unique
+
+
+def _strategy_status_label(status: str) -> str:
+    mapping = {
+        "candidate_passed_backtest": "候选：回测通过",
+        "candidate_requires_review": "候选：待人工复核",
+        "insufficient_samples_readonly": "样本不足：只读诊断",
+        "blocked_mixed_high_risk_samples": "阻断：高风险样本混杂",
+        "approved": "已批准",
+        "enabled": "已启用",
+        "active": "已启用",
+    }
+    return mapping.get(status, status or "未提供")
+
+
+def _strategy_backtest_label(strategy: dict[str, Any]) -> str:
+    second_stage = strategy.get("second_stage_learning") if isinstance(strategy.get("second_stage_learning"), dict) else {}
+    backtest = second_stage.get("backtest") if isinstance(second_stage.get("backtest"), dict) else {}
+    if not backtest:
+        backtest = strategy.get("backtest") if isinstance(strategy.get("backtest"), dict) else {}
+    status = _text(backtest.get("status"))
+    rate = backtest.get("positive_outcome_rate")
+    if status == "passed":
+        return f"通过，正向率 {rate}" if rate is not None else "通过"
+    if status:
+        return f"{status}，正向率 {rate}" if rate is not None else status
+    return "未回测"
+
+
+def _strategy_can_enter_suggestions(strategy: dict[str, Any]) -> bool:
+    if not bool(strategy.get("enabled", False)):
+        return False
+    if _text(strategy.get("status")) not in {"enabled", "active", "approved"}:
+        return False
+    rule = strategy.get("control_strategy_rule")
+    return isinstance(rule, dict) and _text(rule.get("rule_id")) in PROJECT_CONTROL_RULES
+
+
+def _strategy_scope_label(strategy: dict[str, Any]) -> str:
+    scope = strategy.get("scope") if isinstance(strategy.get("scope"), dict) else {}
+    if _text(scope.get("type")) == "cross_product":
+        return "跨产品"
+    product = _text(scope.get("product")) or _text(scope.get("product_key"))
+    return product or "未提供"
+
+
+def _strategy_sample_label(strategy: dict[str, Any]) -> str:
+    counts = strategy.get("sample_counts") if isinstance(strategy.get("sample_counts"), dict) else {}
+    if not counts:
+        return "未提供"
+    return f"跨产品 {counts.get('total', 0)} / 本产品 {counts.get('product', 0)} / 有指标 {counts.get('with_pre_metrics', 0)}"
+
+
+def _learned_strategy_quality_rows(
+    configs_dir: str | Path,
+    *,
+    product_key: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    rows: list[dict[str, Any]] = []
+    payloads: list[dict[str, Any]] = []
+    for path in _learned_strategy_candidate_paths(configs_dir, product_key=product_key):
+        try:
+            payload = read_json(path)
+        except Exception:  # noqa: BLE001 - bad local strategy files should be visible as warnings in rows.
+            rows.append(
+                {
+                    "策略": path.name,
+                    "范围": "未知",
+                    "动作": "未知",
+                    "状态": "读取失败",
+                    "启用": "否",
+                    "样本": "未提供",
+                    "回测": "未提供",
+                    "可进入建议": "否",
+                    "阻断原因": f"无法读取策略文件：{path}",
+                    "学习摘要": "",
+                }
+            )
+            continue
+        payloads.append({"path": str(path), "summary": payload.get("summary", {}), "中文摘要": _text(payload.get("中文摘要"))})
+        for strategy in _rows(payload.get("strategies")):
+            blocking_reasons = [_text(item) for item in strategy.get("blocking_reasons") or [] if _text(item)]
+            rows.append(
+                {
+                    "策略": _text(strategy.get("strategy_id")) or path.name,
+                    "范围": _strategy_scope_label(strategy),
+                    "动作": _text(strategy.get("action_label")) or _text(strategy.get("action")),
+                    "状态": _strategy_status_label(_text(strategy.get("status"))),
+                    "启用": "是" if bool(strategy.get("enabled", False)) else "否",
+                    "样本": _strategy_sample_label(strategy),
+                    "回测": _strategy_backtest_label(strategy),
+                    "可进入建议": "是" if _strategy_can_enter_suggestions(strategy) else "否",
+                    "阻断原因": "；".join(blocking_reasons),
+                    "学习摘要": _text(strategy.get("中文摘要")),
+                }
+            )
+    return rows, payloads
+
+
 def _load_suggestions_source(
     project_root: str | Path,
     configs_dir: str | Path,
@@ -1243,7 +1516,7 @@ def _load_suggestions_source(
     local_rows = _rows(local_payload.get("suggestions"))
     if local_rows:
         payload = _merge_suggestions_payloads(local_payload, patrol_payload)
-        path = write_latest_artifact(runs_dir, "rule_suggestions", payload)
+        path = _write_or_reuse_rule_suggestions_snapshot(runs_dir, payload)
         payload["artifact_path"] = str(path)
         return SuggestionsSource(payload=payload, path=path, warnings=list(realtime_snapshot.warnings))
     if local_payload:
@@ -1257,6 +1530,24 @@ def _load_suggestions_source(
         path=patrol_path,
         warnings=[*realtime_snapshot.warnings] if patrol_path else [*realtime_snapshot.warnings, "未找到最近建议结果，当前只展示产品数据源状态。"],
     )
+
+
+def _write_or_reuse_rule_suggestions_snapshot(runs_dir: str | Path, payload: dict[str, Any]) -> Path:
+    latest_path = Path(runs_dir) / "rule_suggestions" / "latest.json"
+    if latest_path.is_file():
+        latest_payload = read_json(latest_path)
+        snapshot_path = Path(_text(latest_payload.get("artifact_path")))
+        if (
+            snapshot_path.is_file()
+            and snapshot_path.name != "latest.json"
+            and _artifact_content_without_path(latest_payload) == _artifact_content_without_path(payload)
+        ):
+            return snapshot_path
+    return write_snapshot_artifact(runs_dir, "rule_suggestions", payload)
+
+
+def _artifact_content_without_path(payload: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in payload.items() if key != "artifact_path"}
 
 
 def _empty_suggestions_payload(product_key: str, *, source: str) -> dict[str, Any]:
@@ -1307,6 +1598,7 @@ def _build_local_rule_suggestions(
     blocked_suggestions: list[dict[str, Any]] = []
     source_summaries: list[dict[str, Any]] = []
     target_scope_summaries: list[dict[str, Any]] = []
+    learned_rules = _learned_control_strategy_rules(configs_dir, product_key=product_key)
     for product in products:
         product_name = _text(product.get("product")) or _text(product.get("product_name")) or _text(product.get("product_key"))
         source_advertiser_id = _text(product.get("source_advertiser_id"))
@@ -1326,6 +1618,7 @@ def _build_local_rule_suggestions(
             product,
             target_date=target_date,
             target_account_ids=target_scope["target_account_ids"],
+            learned_rules=learned_rules,
         )
         result = build_control_strategy_suggestions(db_path, request)
         source_summaries.append(
@@ -1407,6 +1700,8 @@ def _build_local_rule_suggestions(
             "today_patrol_spent_account_count": sum(int(item.get("today_patrol_spent_account_count") or 0) for item in target_scope_summaries),
             "target_account_count": sum(int(item.get("target_account_count") or 0) for item in target_scope_summaries),
             "allowed_account_count": sum(int(item.get("allowed_account_count") or 0) for item in target_scope_summaries),
+            "learned_project_rule_count": len(learned_rules),
+            "allow_builtin_default_project_actions": False,
         },
         "source": {
             "workflow": "control_strategy_suggestions",
@@ -1470,47 +1765,116 @@ def _build_create_project_rule_suggestions(
         }
 
 
+def _learned_control_strategy_rules(configs_dir: str | Path, *, product_key: str) -> dict[str, dict[str, Any]]:
+    rules: dict[str, dict[str, Any]] = {}
+    for path in _learned_strategy_candidate_paths(configs_dir, product_key=product_key):
+        try:
+            payload = read_json(path)
+        except Exception:  # noqa: BLE001 - bad local strategy files should not crash the suggestions page.
+            continue
+        runtime_contract = payload.get("runtime_contract") if isinstance(payload.get("runtime_contract"), dict) else {}
+        if bool(runtime_contract.get("allow_builtin_default_project_actions", False)):
+            continue
+        for strategy in _rows(payload.get("strategies")):
+            if not bool(strategy.get("enabled", False)):
+                continue
+            if _text(strategy.get("status")) not in {"enabled", "active", "approved"}:
+                continue
+            scope = strategy.get("scope") if isinstance(strategy.get("scope"), dict) else {}
+            scope_product_key = _text(scope.get("product_key"))
+            if scope_product_key and product_key and scope_product_key != product_key:
+                continue
+            rule = strategy.get("control_strategy_rule")
+            if not isinstance(rule, dict):
+                continue
+            rule_id = _text(rule.get("rule_id"))
+            if rule_id not in PROJECT_CONTROL_RULES:
+                continue
+            parameters = rule.get("parameters") if isinstance(rule.get("parameters"), dict) else {}
+            second_stage = strategy.get("second_stage_learning") if isinstance(strategy.get("second_stage_learning"), dict) else {}
+            learned_backtest = second_stage.get("backtest") if isinstance(second_stage.get("backtest"), dict) else {}
+            if not learned_backtest:
+                learned_backtest = strategy.get("backtest") if isinstance(strategy.get("backtest"), dict) else {}
+            evidence_samples = strategy.get("evidence_samples") if isinstance(strategy.get("evidence_samples"), list) else []
+            rules[rule_id] = {
+                **parameters,
+                "enabled": True,
+                "learned_strategy_id": _text(strategy.get("strategy_id")),
+                "learned_strategy_version": _text(strategy.get("strategy_version")),
+                "learned_strategy_status": _text(strategy.get("status")),
+                "learned_action_label": _text(strategy.get("action_label")),
+                "learned_sample_counts": strategy.get("sample_counts") if isinstance(strategy.get("sample_counts"), dict) else {},
+                "learned_backtest": learned_backtest,
+                "learned_evidence_samples": evidence_samples[:3],
+                "learned_strategy_summary": _text(strategy.get("中文摘要")),
+            }
+    return rules
+
+
 def _control_strategy_request(
     root: Path,
     product: dict[str, Any],
     *,
     target_date: str,
     target_account_ids: list[str],
+    learned_rules: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     allowed_path = _text(product.get("allowed_target_accounts_path"))
+    learned_rules = learned_rules or {}
+
+    def project_rule(rule_id: str, defaults: dict[str, Any]) -> dict[str, Any]:
+        learned = learned_rules.get(rule_id)
+        if learned:
+            return {**defaults, **learned, "enabled": True}
+        return {**defaults, "enabled": False}
+
     return {
         "product_keyword": _text(product.get("product")),
         "target_date": target_date,
         "allowed_target_accounts_path": str(_resolve_path(root, allowed_path)) if allowed_path else "",
         "target_account_ids": sorted({_text(item) for item in target_account_ids if _text(item)}),
+        "strategy_source": "learned_strategy_only",
+        "runtime_metric_source": "realtime_patrol_snapshot",
+        "allow_builtin_default_project_actions": False,
         "rules": {
-            "delete_project_closed_low_recent": {
-                "enabled": True,
-                "lookback_days": 2,
-                "max_stat_cost": 100,
-                "max_convert_cnt": 0,
-            },
-            "pause_project_low_first_day_roi": {
-                "enabled": True,
-                "min_cost": 500,
-                "min_conversions": 2,
-                "max_roi_1day": 0.25,
-            },
-            "adjust_project_budget_low_roi": {
-                "enabled": True,
-                "min_cost": 800,
-                "min_conversions": 3,
-                "max_roi_1day": 0.35,
-                "budget_decrease_percent": 20,
-            },
-            "adjust_project_bid_high_cpa": {
-                "enabled": True,
-                "min_cost": 1000,
-                "min_conversions": 2,
-                "max_cpa": 300,
-                "bid_decrease_percent": 10,
-            },
-            "schedule_hollow_low_realtime_hour_roi": {"enabled": False},
+            "delete_project_closed_low_recent": project_rule(
+                "delete_project_closed_low_recent",
+                {
+                    "lookback_days": 2,
+                    "max_stat_cost": 100,
+                    "max_convert_cnt": 0,
+                },
+            ),
+            "pause_project_low_first_day_roi": project_rule(
+                "pause_project_low_first_day_roi",
+                {
+                    "min_cost": 500,
+                    "min_conversions": 2,
+                    "max_roi_1day": 0.25,
+                },
+            ),
+            "adjust_project_budget_low_roi": project_rule(
+                "adjust_project_budget_low_roi",
+                {
+                    "min_cost": 800,
+                    "min_conversions": 3,
+                    "max_roi_1day": 0.35,
+                    "budget_decrease_percent": 20,
+                },
+            ),
+            "adjust_project_bid_high_cpa": project_rule(
+                "adjust_project_bid_high_cpa",
+                {
+                    "min_cost": 1000,
+                    "min_conversions": 2,
+                    "max_cpa": 300,
+                    "bid_decrease_percent": 10,
+                },
+            ),
+            "schedule_hollow_low_realtime_hour_roi": project_rule(
+                "schedule_hollow_low_realtime_hour_roi",
+                {},
+            ),
             "material_reuse_risk": {
                 "enabled": True,
                 "window_key": "last_7d",
@@ -1842,17 +2206,28 @@ def _suggestion_freshness_warnings(historical_date: str, *, today_patrol_date: s
 
 def _merge_suggestions_payloads(local_payload: dict[str, Any], patrol_payload: dict[str, Any]) -> dict[str, Any]:
     suggestions: list[dict[str, Any]] = []
+    suppressed_patrol_project_actions: list[dict[str, Any]] = []
     seen: set[str] = set()
     for payload, source_label in [(local_payload, "本地控制策略"), (patrol_payload, "投放巡检建议")]:
         for suggestion in _rows(payload.get("suggestions")):
             normalized = dict(suggestion)
             normalized.setdefault("source_label", source_label)
             suggestion_id = _text(normalized.get("suggestion_id")) or _fallback_suggestion_id(normalized)
+            if source_label == "投放巡检建议" and _can_convert_to_project_update(normalized):
+                suppressed_patrol_project_actions.append(
+                    {
+                        **normalized,
+                        "suggestion_id": suggestion_id,
+                        "blocked_reason": "项目管理建议必须来自本地学习策略和实时数据；投放巡检旧快照中的项目动作已压制为不可执行。",
+                    }
+                )
+                continue
             if suggestion_id in seen:
                 continue
             normalized["suggestion_id"] = suggestion_id
             suggestions.append(normalized)
             seen.add(suggestion_id)
+    suggestions, suppressed_suggestions = _split_merged_project_action_conflicts(suggestions)
     action_counts: dict[str, int] = {}
     for suggestion in suggestions:
         action = _suggestion_action(suggestion)
@@ -1879,18 +2254,104 @@ def _merge_suggestions_payloads(local_payload: dict[str, Any], patrol_payload: d
             "action_counts": action_counts,
             "local_suggestion_count": len(_rows(local_payload.get("suggestions"))),
             "patrol_suggestion_count": len(_rows(patrol_payload.get("suggestions"))),
+            "patrol_project_action_suppressed_count": len(suppressed_patrol_project_actions),
+            "conflict_suppressed_count": len(suppressed_suggestions),
         },
         "sources": [
             {"label": "本地控制策略", "workflow": _text(local_payload.get("workflow")), "db_path": _text(local_payload.get("source", {}).get("db_path"))},
             {"label": "投放巡检建议", "workflow": _text(patrol_payload.get("workflow")), "artifact_path": _text(patrol_payload.get("artifact_path"))},
         ],
         "suggestions": suggestions,
-        "blocked_suggestions": _rows(local_payload.get("blocked_suggestions")),
+        "suppressed_suggestions": suppressed_suggestions,
+        "blocked_suggestions": [*_rows(local_payload.get("blocked_suggestions")), *suppressed_patrol_project_actions],
         "guardrails": [
             "只读建议，不执行真实业务动作。",
+            "项目管理建议只允许来自本地学习策略和实时数据；巡检旧快照里的项目动作不会进入执行链路。",
             "能转动作 JSON 的建议仍需项目管理页人工确认。",
         ],
     }
+
+
+MERGED_PROJECT_ACTION_PRIORITIES = {
+    "suggest_delete_project": 100,
+    "delete_project": 100,
+    "pause_project": 90,
+    "suggest_close_project": 90,
+    "close_project": 90,
+    "adjust_project_bid": 70,
+    "suggest_lower_bid": 70,
+    "adjust_project_budget": 60,
+    "suggest_lower_budget": 60,
+    "schedule_hollow": 50,
+}
+
+
+def _merged_project_action_conflict_key(suggestion: dict[str, Any]) -> tuple[str, str] | None:
+    action = _suggestion_action(suggestion).strip().lower()
+    if action not in MERGED_PROJECT_ACTION_PRIORITIES:
+        return None
+    entity_type = _text(suggestion.get("entity_type")).lower()
+    project_id = _text(suggestion.get("project_id") or suggestion.get("entity_id"))
+    advertiser_id = _text(suggestion.get("advertiser_id"))
+    if entity_type not in {"project", "项目"} or not advertiser_id or not project_id:
+        return None
+    return advertiser_id, project_id
+
+
+def _split_merged_project_action_conflicts(
+    suggestions: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    groups: dict[tuple[str, str], list[tuple[int, dict[str, Any]]]] = {}
+    for index, suggestion in enumerate(suggestions):
+        key = _merged_project_action_conflict_key(suggestion)
+        if key is not None:
+            groups.setdefault(key, []).append((index, suggestion))
+
+    selected_indexes: set[int] = set()
+    suppressed_indexes: set[int] = set()
+    suppressed_count_by_selected: dict[int, int] = {}
+    for rows in groups.values():
+        if len(rows) <= 1:
+            selected_indexes.add(rows[0][0])
+            continue
+        selected_index, _selected = max(
+            rows,
+            key=lambda item: (
+                MERGED_PROJECT_ACTION_PRIORITIES.get(_suggestion_action(item[1]).strip().lower(), 0),
+                _number((item[1].get("metrics") or {}).get("stat_cost") if isinstance(item[1].get("metrics"), dict) else 0),
+                -item[0],
+            ),
+        )
+        selected_indexes.add(selected_index)
+        suppressed_count_by_selected[selected_index] = len(rows) - 1
+        for index, _suggestion in rows:
+            if index != selected_index:
+                suppressed_indexes.add(index)
+
+    filtered: list[dict[str, Any]] = []
+    suppressed: list[dict[str, Any]] = []
+    for index, suggestion in enumerate(suggestions):
+        if index in suppressed_indexes:
+            suppressed.append(
+                {
+                    **suggestion,
+                    "suppressed_reason": "同一项目已保留更高优先级的项目管理建议，避免同时给出冲突动作。",
+                }
+            )
+            continue
+        if index in suppressed_count_by_selected:
+            filtered.append(
+                {
+                    **suggestion,
+                    "conflict_resolution": {
+                        "suppressed_suggestion_count": suppressed_count_by_selected[index],
+                        "reason": "同一项目命中多个项目管理建议，已保留最高优先级动作。",
+                    },
+                }
+            )
+        else:
+            filtered.append(suggestion)
+    return filtered, suppressed
 
 
 def _normalize_suggestion_for_center(
@@ -2263,7 +2724,7 @@ def _project_update_validation_reasons(
     for suggestion in selected_suggestions:
         suggestion_id = _text(suggestion.get("suggestion_id")) or "未命名建议"
         if suggestion.get("_missing"):
-            reasons.append(f"建议 {suggestion_id} 不存在。")
+            reasons.append(f"建议 {suggestion_id} 不在当前建议来源快照中；请返回投放建议工作台刷新建议后重新选择。")
             continue
         if not _can_convert_to_project_update(suggestion):
             if explicit_ids:

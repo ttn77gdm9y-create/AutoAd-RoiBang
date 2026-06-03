@@ -1,8 +1,8 @@
 import { FileSearchOutlined, SafetyCertificateOutlined } from "@ant-design/icons";
 import { Alert, Button, Card, Col, Collapse, Form, Input, Modal, Row, Select, Space, Typography, message as antdMessage } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { apiGet, apiPost } from "../api/client";
 import { ConfirmExecutePanel } from "../components/ConfirmExecutePanel";
@@ -152,6 +152,14 @@ function createPlanRequestFromSuggestionPreview(result?: ChineseResult): CreateP
   };
 }
 
+function generatePreviewFromSuggestionPreview(result?: ChineseResult): ChineseResult | undefined {
+  const preview = asRecord(result?.raw?.generate_preview);
+  if (!preview || !asRecord(preview.summary) || !asRecord(preview.table)) {
+    return undefined;
+  }
+  return preview as unknown as ChineseResult;
+}
+
 function modeOptionsFromResult(result?: ChineseResult): Array<{ label: string; value: string }> {
   const rows = result?.table.rows ?? [];
   const options = rows
@@ -173,6 +181,8 @@ export function CreatePlansPage() {
   const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const suggestionPreviewPath = searchParams.get("create_plan_preview_path") ?? "";
+  const returnTo = searchParams.get("return_to") || "/suggestions";
+  const skipNextRequestReset = useRef(false);
   const [request, setRequest] = useState<CreatePlanRequest>(defaultRequest);
   const [planPath, setPlanPath] = useState("");
   const [planSource, setPlanSource] = useState<"" | "current_generated" | "manual">("");
@@ -297,11 +307,12 @@ export function CreatePlansPage() {
     if (!importedRequest) {
       return;
     }
+    skipNextRequestReset.current = true;
     setRequest(importedRequest);
     setSuggestionImportResult(suggestionPreview.data);
     setPlanPath("");
     setPlanSource("");
-    setPreviewResult(undefined);
+    setPreviewResult(generatePreviewFromSuggestionPreview(suggestionPreview.data));
     setGenerateResult(undefined);
     setExecutionReviewResult(undefined);
     setExecutePreviewResult(undefined);
@@ -309,6 +320,10 @@ export function CreatePlansPage() {
   }, [suggestionPreview.data]);
 
   useEffect(() => {
+    if (skipNextRequestReset.current) {
+      skipNextRequestReset.current = false;
+      return;
+    }
     setPreviewResult(undefined);
     setGenerateResult(undefined);
     setExecutionReviewResult(undefined);
@@ -403,6 +418,19 @@ export function CreatePlansPage() {
         />
         {suggestionPreview.error ? <Alert type="error" showIcon message={(suggestionPreview.error as Error).message} /> : null}
         {suggestionPreview.isLoading ? <Alert type="info" showIcon message="正在读取创建建议预览并填入表单。" /> : null}
+        {suggestionPreviewPath ? (
+          <Alert
+            type="success"
+            showIcon
+            message="已接收投放建议工作台生成的创建计划预览"
+            description="页面已填入建议里的创建参数；请继续生成本次计划，真实创建仍必须执行前复核并输入确认短语。"
+            action={
+              <Link to={returnTo}>
+                <Button>返回投放建议工作台</Button>
+              </Link>
+            }
+          />
+        ) : null}
         {suggestionImportResult ? (
           <SummaryPanel result={suggestionImportResult} detailsCollapsed showArtifactPath showRawJson={false} />
         ) : null}

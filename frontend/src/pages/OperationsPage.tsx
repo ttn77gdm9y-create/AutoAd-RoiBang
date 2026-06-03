@@ -1,7 +1,7 @@
 import { Alert, Button, Form, Input, Select, Space, Typography } from "antd";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { apiGet } from "../api/client";
 import { SummaryPanel } from "../components/SummaryPanel";
@@ -30,6 +30,7 @@ export function OperationsPage() {
   const [filters, setFilters] = useState({ product: "", operation_type: "", status: "" });
   const [searchParams, setSearchParams] = useSearchParams();
   const [selectedTaskId, setSelectedTaskId] = useState(searchParams.get("task_id") ?? "");
+  const returnTo = searchParams.get("return_to") ?? "";
   useEffect(() => {
     const taskId = searchParams.get("task_id") ?? "";
     if (taskId !== selectedTaskId) {
@@ -39,9 +40,9 @@ export function OperationsPage() {
   const selectTaskId = (taskId: string) => {
     setSelectedTaskId(taskId);
     if (taskId) {
-      setSearchParams({ task_id: taskId });
+      setSearchParams(returnTo ? { task_id: taskId, return_to: returnTo } : { task_id: taskId });
     } else {
-      setSearchParams({});
+      setSearchParams(returnTo ? { return_to: returnTo } : {});
     }
   };
   const querySuffix = useMemo(() => {
@@ -72,6 +73,13 @@ export function OperationsPage() {
           type="info"
           showIcon
           message="这里是审计记录，用来回看每次业务动作的触发人、状态和执行对象；普通执行结果会优先显示在对应业务页。"
+          action={
+            returnTo ? (
+              <Link to={returnTo}>
+                <Button>返回投放建议工作台</Button>
+              </Link>
+            ) : undefined
+          }
         />
         <Form layout="inline" className="filter-bar">
           <Form.Item label="产品">

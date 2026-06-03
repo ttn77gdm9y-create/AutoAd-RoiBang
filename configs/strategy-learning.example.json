@@ -1,0 +1,53 @@
+{
+  "strategy_learning": {
+    "target_date": "yesterday",
+    "lookback_days": 45,
+    "products_dir": "configs/products",
+    "product_keys": [],
+    "metric_lookback_days": 3,
+    "post_days": 1,
+    "write_candidate_configs": true,
+    "output_strategy_dir": "configs/learned-strategies",
+    "second_stage_learning": {
+      "enabled": true,
+      "min_backtest_samples": 5,
+      "min_backtest_positive_rate": 0.5,
+      "min_metric_available_rate": 0.5,
+      "budget_decrease_percent_default": 20,
+      "bid_decrease_percent_default": 10,
+      "min_cost_floor": 100
+    },
+    "sample_standards": {
+      "read_only_diagnostic": {
+        "min_total_samples": 5,
+        "min_product_samples": 1,
+        "max_false_positive_rate": 0.5
+      },
+      "suggest_lower_budget": {
+        "min_total_samples": 30,
+        "min_product_samples": 5,
+        "max_false_positive_rate": 0.2
+      },
+      "suggest_lower_bid": {
+        "min_total_samples": 30,
+        "min_product_samples": 5,
+        "max_false_positive_rate": 0.2
+      },
+      "suggest_create_project": {
+        "min_total_samples": 30,
+        "min_product_samples": 5,
+        "max_false_positive_rate": 0.2
+      },
+      "pause_project": {
+        "min_total_samples": 80,
+        "min_product_samples": 10,
+        "max_false_positive_rate": 0.1
+      },
+      "suggest_delete_project": {
+        "min_total_samples": 100,
+        "min_product_samples": 15,
+        "max_false_positive_rate": 0.1
+      }
+    }
+  }
+}

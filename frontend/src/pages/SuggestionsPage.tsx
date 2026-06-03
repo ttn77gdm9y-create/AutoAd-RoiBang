@@ -64,6 +64,23 @@ type TaskResponse = ChineseResult & {
 type SuggestionRow = Record<string, string | number | boolean | null>;
 
 type SuggestionTypeFilter = "扩量机会" | "项目管理建议" | "只读诊断" | "全部";
+type WorkbenchLane = "create-plan" | "project-update" | "";
+
+type SuggestionsTablePagination = {
+  current: number;
+  pageSize: number;
+};
+
+type SuggestionsWorkbenchCache = {
+  version: 1;
+  productKey: string;
+  lifecycleFilter: string;
+  suggestionTypeFilter: SuggestionTypeFilter | "";
+  projectUpdateRequest: ProjectUpdateRequest;
+  createPlanRequest: CreatePlanFromSuggestionRequest;
+  tablePagination: SuggestionsTablePagination;
+  activeLane: WorkbenchLane;
+};
 
 type CreatePlanGroupRow = {
   groupId: string;
@@ -77,6 +94,34 @@ type CreatePlanGroupRow = {
   status: string;
   sourceSuggestionIds: string[];
 };
+
+const suggestionsWorkbenchCacheKey = "roibang_suggestions_workbench_v1";
+const suggestionsQueryCacheOptions = {
+  staleTime: 30 * 60 * 1000,
+  refetchOnMount: false as const,
+};
+const defaultSuggestionsPagination: SuggestionsTablePagination = { current: 1, pageSize: 8 };
+
+function readSuggestionsWorkbenchCache(): Partial<SuggestionsWorkbenchCache> {
+  try {
+    const raw = window.sessionStorage.getItem(suggestionsWorkbenchCacheKey);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw) as Partial<SuggestionsWorkbenchCache>;
+    return parsed.version === 1 ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeSuggestionsWorkbenchCache(cache: SuggestionsWorkbenchCache) {
+  try {
+    window.sessionStorage.setItem(suggestionsWorkbenchCacheKey, JSON.stringify(cache));
+  } catch {
+    // Session storage can be unavailable in restricted browser contexts.
+  }
+}
 
 function projectUpdatePathFromTask(detail?: TaskDetailResponse): string {
   const result = detail?.raw?.result;
@@ -249,17 +294,35 @@ function suggestionNextStepColor(nextStep: string): string {
   return "default";
 }
 
+function summaryItemValue(result: ChineseResult | undefined, label: string): string {
+  const item = result?.summary.items.find((entry) => entry.label === label);
+  return item?.value === null || item?.value === undefined ? "" : String(item.value);
+}
+
 export function SuggestionsPage() {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
+  const cachedWorkbench = useMemo(() => readSuggestionsWorkbenchCache(), []);
   const suggestionListRef = useRef<HTMLDivElement>(null);
-  const [productKey, setProductKey] = useState(searchParams.get("product_key")?.trim() ?? "");
-  const [lifecycleFilter, setLifecycleFilter] = useState("");
+  const createPlanPanelRef = useRef<HTMLDivElement>(null);
+  const projectUpdatePanelRef = useRef<HTMLDivElement>(null);
+  const [productKey, setProductKey] = useState(searchParams.get("product_key")?.trim() || cachedWorkbench.productKey || "");
+  const [lifecycleFilter, setLifecycleFilter] = useState(cachedWorkbench.lifecycleFilter ?? "");
   const [suggestionTypeFilter, setSuggestionTypeFilter] = useState<SuggestionTypeFilter | "">(
-    parseSuggestionType(searchParams.get("suggestion_type")) ?? "",
+    parseSuggestionType(searchParams.get("suggestion_type")) ?? cachedWorkbench.suggestionTypeFilter ?? "",
   );
-  const [projectUpdateRequest, setProjectUpdateRequest] = useState<ProjectUpdateRequest>(emptyProjectUpdateRequest);
-  const [createPlanRequest, setCreatePlanRequest] = useState<CreatePlanFromSuggestionRequest>(emptyCreatePlanRequest);
+  const [projectUpdateRequest, setProjectUpdateRequest] = useState<ProjectUpdateRequest>({
+    ...emptyProjectUpdateRequest,
+    ...cachedWorkbench.projectUpdateRequest,
+  });
+  const [createPlanRequest, setCreatePlanRequest] = useState<CreatePlanFromSuggestionRequest>({
+    ...emptyCreatePlanRequest,
+    ...cachedWorkbench.createPlanRequest,
+  });
+  const [suggestionsPagination, setSuggestionsPagination] = useState<SuggestionsTablePagination>(
+    cachedWorkbench.tablePagination ?? defaultSuggestionsPagination,
+  );
+  const [activeLane, setActiveLane] = useState<WorkbenchLane>(cachedWorkbench.activeLane ?? "");
   const [previewResult, setPreviewResult] = useState<ChineseResult | undefined>();
   const [generateResult, setGenerateResult] = useState<TaskResponse | undefined>();
   const [createPlanPreviewResult, setCreatePlanPreviewResult] = useState<ChineseResult | undefined>();
@@ -282,26 +345,37 @@ export function SuggestionsPage() {
     queryKey: ["suggestions", "overview", productKey],
     queryFn: () => apiGet<ChineseResult>(`/suggestions/overview${querySuffix}`),
     refetchInterval: 60 * 60 * 1000,
+    ...suggestionsQueryCacheOptions,
   });
   const dailyOperations = useQuery({
     queryKey: ["suggestions", "daily-operations", productKey],
     queryFn: () => apiGet<ChineseResult>(`/suggestions/daily-operations${querySuffix}`),
     refetchInterval: 60 * 60 * 1000,
+    ...suggestionsQueryCacheOptions,
   });
   const suggestions = useQuery({
     queryKey: ["suggestions", "list", productKey],
     queryFn: () => apiGet<ChineseResult>(`/suggestions${querySuffix}`),
     refetchInterval: 60 * 60 * 1000,
+    ...suggestionsQueryCacheOptions,
   });
   const createStrategies = useQuery({
     queryKey: ["suggestions", "create-strategies", productKey],
     queryFn: () => apiGet<ChineseResult>(`/suggestions/create-strategies${querySuffix}`),
     refetchInterval: 60 * 60 * 1000,
+    ...suggestionsQueryCacheOptions,
+  });
+  const suggestionQuality = useQuery({
+    queryKey: ["suggestions", "quality", productKey],
+    queryFn: () => apiGet<ChineseResult>(`/suggestions/quality${querySuffix}`),
+    refetchInterval: 60 * 60 * 1000,
+    ...suggestionsQueryCacheOptions,
   });
   const effectReview = useQuery({
     queryKey: ["suggestions", "effect-review", productKey],
     queryFn: () => apiGet<ChineseResult>(`/suggestions/effect-review${querySuffix}`),
     refetchInterval: 60 * 60 * 1000,
+    ...suggestionsQueryCacheOptions,
   });
   const taskDetail = useQuery({
     queryKey: ["tasks", taskId],
@@ -331,12 +405,21 @@ export function SuggestionsPage() {
     return values.map((value) => ({ label: value, value }));
   }, [suggestionRows]);
   const filteredSuggestionRows = useMemo(
-    () =>
-      lifecycleFilter
-        ? suggestionRows.filter((row) => String(row["创建状态"] ?? "").trim() === lifecycleFilter)
-        : suggestionRows,
+    () => {
+      if (!lifecycleFilter) {
+        return suggestionRows;
+      }
+      const rows = suggestionRows.filter((row) => String(row["创建状态"] ?? "").trim() === lifecycleFilter);
+      return rows.length > 0 || suggestionRows.length === 0 ? rows : suggestionRows;
+    },
     [lifecycleFilter, suggestionRows],
   );
+  useEffect(() => {
+    if (lifecycleFilter && suggestionRows.length > 0 && filteredSuggestionRows.length === 0) {
+      setLifecycleFilter("");
+      setSuggestionsPagination((current) => ({ ...current, current: 1 }));
+    }
+  }, [filteredSuggestionRows.length, lifecycleFilter, suggestionRows.length]);
   const convertibleSuggestionRows = useMemo(
     () => filteredSuggestionRows.filter(isProjectUpdateSuggestionRow),
     [filteredSuggestionRows],
@@ -366,6 +449,12 @@ export function SuggestionsPage() {
         : filteredSuggestionRows.filter((row) => suggestionTypeForRow(row) === effectiveSuggestionTypeFilter),
     [effectiveSuggestionTypeFilter, filteredSuggestionRows],
   );
+  useEffect(() => {
+    setSuggestionsPagination((current) => {
+      const maxPage = Math.max(1, Math.ceil(visibleSuggestionRows.length / current.pageSize));
+      return current.current > maxPage ? { ...current, current: maxPage } : current;
+    });
+  }, [visibleSuggestionRows.length]);
   const suggestionTypeOptions = useMemo(
     () => [
       { label: `扩量机会 ${createSuggestionRows.length}`, value: "扩量机会" },
@@ -387,6 +476,23 @@ export function SuggestionsPage() {
     () => suggestionRows.filter((row) => projectUpdateRequest.selected_suggestion_ids.includes(rowText(row, "建议 ID"))),
     [projectUpdateRequest.selected_suggestion_ids, suggestionRows],
   );
+  const selectedProjectUpdateCount = selectedProjectUpdateRows.length;
+  const selectedCreateCount = selectedCreateRows.length;
+  const hasSelectedSuggestions = selectedProjectUpdateCount > 0 || selectedCreateCount > 0;
+  const suggestedSourceLabels = useMemo(() => {
+    const values = [
+      ...new Set(
+        suggestionRows
+          .map((row) => rowText(row, "数据来源"))
+          .filter(Boolean),
+      ),
+    ];
+    return values.length ? values.join("、") : "暂无建议来源";
+  }, [suggestionRows]);
+  const suggestionGeneratedAt = summaryItemValue(suggestions.data, "建议生成时间");
+  const suggestionPatrolDate = summaryItemValue(suggestions.data, "今日巡检日期");
+  const suggestionSpentAccountCount = summaryItemValue(suggestions.data, "今日巡检有消耗账户");
+  const suggestionTargetAccountCount = summaryItemValue(suggestions.data, "建议对象账户");
   const lockedSelectedCreateSuggestionCount = useMemo(
     () =>
       suggestionRows.filter(
@@ -432,25 +538,13 @@ export function SuggestionsPage() {
         key: "actions",
         width: 170,
         render: (_, row) => {
-          const id = rowText(row, "建议 ID");
           const disabled = !isSelectableSuggestionRow(row);
           const buttonText = isCreateSuggestionRow(row) ? "选入创建计划" : "选入管理配置";
           return (
             <Button
               size="small"
               disabled={disabled}
-              onClick={() => {
-                if (!id) {
-                  return;
-                }
-                if (isCreateSuggestionRow(row)) {
-                  updateCreatePlanRequest({ selected_suggestion_ids: [id] });
-                  updateProjectRequest({ selected_suggestion_ids: [] });
-                } else {
-                  updateProjectRequest({ selected_suggestion_ids: [id] });
-                  updateCreatePlanRequest({ selected_suggestion_ids: [] });
-                }
-              }}
+              onClick={() => selectSuggestionForNextStep(row)}
             >
               {disabled ? "只读" : buttonText}
             </Button>
@@ -474,6 +568,17 @@ export function SuggestionsPage() {
   const createPlanPreviewPath = createPlanPreviewResult?.artifact_path ?? "";
   const createPlanPreviewReady = createPlanPreviewResult?.summary.status === "planned" && Boolean(createPlanPreviewPath);
   const createPlanGroups = useMemo(() => createPlanGroupsFromResult(createPlanPreviewResult), [createPlanPreviewResult]);
+  const returnToSuggestionsPath = useMemo(() => {
+    const params = new URLSearchParams();
+    if (productKey) {
+      params.set("product_key", productKey);
+    }
+    if (effectiveSuggestionTypeFilter) {
+      params.set("suggestion_type", effectiveSuggestionTypeFilter);
+    }
+    params.set("focus", "list");
+    return `/suggestions?${params.toString()}`;
+  }, [effectiveSuggestionTypeFilter, productKey]);
 
   function updateSuggestionSearch(patch: Record<string, string | null>) {
     const next = new URLSearchParams(searchParams);
@@ -486,6 +591,27 @@ export function SuggestionsPage() {
     });
     setSearchParams(next);
   }
+
+  useEffect(() => {
+    writeSuggestionsWorkbenchCache({
+      version: 1,
+      productKey,
+      lifecycleFilter,
+      suggestionTypeFilter,
+      projectUpdateRequest,
+      createPlanRequest,
+      tablePagination: suggestionsPagination,
+      activeLane,
+    });
+  }, [
+    activeLane,
+    createPlanRequest,
+    lifecycleFilter,
+    productKey,
+    projectUpdateRequest,
+    suggestionTypeFilter,
+    suggestionsPagination,
+  ]);
 
   useEffect(() => {
     const nextProductKey = searchParams.get("product_key")?.trim() ?? "";
@@ -525,11 +651,37 @@ export function SuggestionsPage() {
 
   useEffect(() => {
     const artifactPath = suggestions.data?.artifact_path ?? "";
-    if (artifactPath && artifactPath !== projectUpdateRequest.suggestions_artifact_path) {
-      setProjectUpdateRequest((current) => ({ ...current, suggestions_artifact_path: artifactPath }));
+    if (!artifactPath) {
+      return;
     }
-    if (artifactPath && artifactPath !== createPlanRequest.suggestions_artifact_path) {
-      setCreatePlanRequest((current) => ({ ...current, suggestions_artifact_path: artifactPath }));
+    const projectArtifactChanged = Boolean(
+      projectUpdateRequest.suggestions_artifact_path && projectUpdateRequest.suggestions_artifact_path !== artifactPath,
+    );
+    const createArtifactChanged = Boolean(
+      createPlanRequest.suggestions_artifact_path && createPlanRequest.suggestions_artifact_path !== artifactPath,
+    );
+    if (artifactPath !== projectUpdateRequest.suggestions_artifact_path) {
+      setProjectUpdateRequest((current) => ({
+        ...current,
+        suggestions_artifact_path: artifactPath,
+        selected_suggestion_ids: projectArtifactChanged ? [] : current.selected_suggestion_ids,
+        suggested_actions: projectArtifactChanged ? [] : current.suggested_actions,
+      }));
+    }
+    if (artifactPath !== createPlanRequest.suggestions_artifact_path) {
+      setCreatePlanRequest((current) => ({
+        ...current,
+        suggestions_artifact_path: artifactPath,
+        selected_suggestion_ids: createArtifactChanged ? [] : current.selected_suggestion_ids,
+      }));
+    }
+    if (projectArtifactChanged || createArtifactChanged) {
+      setPreviewResult(undefined);
+      setGenerateResult(undefined);
+      setCreatePlanPreviewResult(undefined);
+      setCreatePlanGroupPreviewResults({});
+      setActiveLane("");
+      antdMessage.info("建议来源已更新，已清空旧选择；请重新选择本次建议。");
     }
   }, [suggestions.data?.artifact_path, projectUpdateRequest.suggestions_artifact_path, createPlanRequest.suggestions_artifact_path]);
 
@@ -602,7 +754,9 @@ export function SuggestionsPage() {
                 检查该批创建计划
               </Button>
               {ready ? (
-                <Link to={`/create-plans?create_plan_preview_path=${encodeURIComponent(groupPath)}`}>
+                <Link
+                  to={`/create-plans?create_plan_preview_path=${encodeURIComponent(groupPath)}&return_to=${encodeURIComponent(returnToSuggestionsPath)}`}
+                >
                   <Button size="small" type="primary">
                     去创建计划页确认
                   </Button>
@@ -613,7 +767,7 @@ export function SuggestionsPage() {
         },
       },
     ],
-    [activeCreatePlanGroupId, createPlanGroupPreview, createPlanGroupPreviewResults],
+    [activeCreatePlanGroupId, createPlanGroupPreview, createPlanGroupPreviewResults, returnToSuggestionsPath],
   );
   const refresh = useMutation({
     mutationFn: () => apiPost<TaskResponse>("/suggestions/refresh", { product_key: productKey, target_date: "today" }),
@@ -660,6 +814,36 @@ export function SuggestionsPage() {
     setCreatePlanGroupPreviewResults({});
   }
 
+  function focusWorkbenchLane(lane: WorkbenchLane) {
+    setActiveLane(lane);
+    window.setTimeout(() => {
+      const target = lane === "create-plan" ? createPlanPanelRef.current : projectUpdatePanelRef.current;
+      target?.scrollIntoView({ block: "start", behavior: "smooth" });
+    }, 80);
+  }
+
+  function clearSelectedSuggestions() {
+    updateCreatePlanRequest({ selected_suggestion_ids: [] });
+    updateProjectRequest({ selected_suggestion_ids: [], suggested_actions: [] });
+    setActiveLane("");
+  }
+
+  function selectSuggestionForNextStep(row: SuggestionRow) {
+    const id = rowText(row, "建议 ID");
+    if (!id) {
+      return;
+    }
+    if (isCreateSuggestionRow(row)) {
+      updateCreatePlanRequest({ selected_suggestion_ids: [id] });
+      updateProjectRequest({ selected_suggestion_ids: [] });
+      focusWorkbenchLane("create-plan");
+    } else if (isProjectUpdateSuggestionRow(row)) {
+      updateProjectRequest({ selected_suggestion_ids: [id] });
+      updateCreatePlanRequest({ selected_suggestion_ids: [] });
+      focusWorkbenchLane("project-update");
+    }
+  }
+
   useEffect(() => {
     if (!isTaskCompleted(refreshStatus)) {
       return;
@@ -691,6 +875,8 @@ export function SuggestionsPage() {
                 updateSuggestionSearch({ product_key: nextProductKey || null });
                 setLifecycleFilter("");
                 setSuggestionTypeFilter("");
+                setSuggestionsPagination((current) => ({ ...current, current: 1 }));
+                setActiveLane("");
                 setProjectUpdateRequest((current) => ({
                   ...current,
                   product_key: nextProductKey,
@@ -721,6 +907,7 @@ export function SuggestionsPage() {
               onChange={(value) => {
                 setLifecycleFilter(value ?? "");
                 setSuggestionTypeFilter("");
+                setSuggestionsPagination((current) => ({ ...current, current: 1 }));
               }}
               options={lifecycleOptions}
               placeholder="全部状态"
@@ -747,6 +934,7 @@ export function SuggestionsPage() {
           result={refreshResult}
           detail={refreshTaskDetail.data}
           loading={refresh.isPending || refreshTaskDetail.isFetching}
+          returnTo={returnToSuggestionsPath}
         />
 
         <Card size="small" title="数据更新与建议状态">
@@ -810,12 +998,55 @@ export function SuggestionsPage() {
           </Space>
         </Card>
 
+        <Card size="small" title="策略学习与建议质量">
+          <Space direction="vertical" size="middle" className="full-width">
+            <Alert
+              type="info"
+              showIcon
+              message="这里展示历史操作学习结果、回测状态和是否已启用；未启用策略只作为证据，不会生成项目管理建议。"
+            />
+            <Space wrap className="workflow-actions">
+              <Button
+                icon={<ReloadOutlined />}
+                loading={suggestionQuality.isFetching}
+                onClick={() => {
+                  void suggestionQuality.refetch();
+                }}
+              >
+                刷新学习质量
+              </Button>
+            </Space>
+            {suggestionQuality.error ? <Alert type="error" showIcon message={(suggestionQuality.error as Error).message} /> : null}
+            <SummaryPanel
+              result={suggestionQuality.data}
+              loading={suggestionQuality.isLoading}
+              detailsCollapsed
+              showArtifactPath={false}
+              showRawJson={false}
+            />
+          </Space>
+        </Card>
+
         {suggestions.error ? <Alert type="error" showIcon message={(suggestions.error as Error).message} /> : null}
         <SummaryPanel result={suggestions.data} loading={suggestions.isLoading} detailsCollapsed showArtifactPath={false} showRawJson={false} />
 
         <div ref={suggestionListRef}>
-        <Card size="small" title="建议列表与下一步">
+        <Card size="small" title="建议处理区">
           <Space direction="vertical" size="middle" className="full-width">
+            <Alert
+              type="info"
+              showIcon
+              message="当前建议快照"
+              description={
+                <Space size={[8, 8]} wrap>
+                  <Tag>生成时间：{suggestionGeneratedAt || "未提供"}</Tag>
+                  <Tag>实时巡检日期：{suggestionPatrolDate || "未找到"}</Tag>
+                  <Tag>有消耗账户：{suggestionSpentAccountCount || "0"}</Tag>
+                  <Tag>建议对象账户：{suggestionTargetAccountCount || "0"}</Tag>
+                  <Tag>来源：{suggestedSourceLabels}</Tag>
+                </Space>
+              }
+            />
             <Alert
               type="info"
               showIcon
@@ -829,6 +1060,8 @@ export function SuggestionsPage() {
                 onChange={(value) => {
                   setSuggestionTypeFilter(value as SuggestionTypeFilter);
                   updateSuggestionSearch({ suggestion_type: String(value) });
+                  setSuggestionsPagination((current) => ({ ...current, current: 1 }));
+                  setActiveLane("");
                   updateCreatePlanRequest({ selected_suggestion_ids: [] });
                   updateProjectRequest({ selected_suggestion_ids: [] });
                 }}
@@ -846,7 +1079,13 @@ export function SuggestionsPage() {
               loading={suggestions.isLoading}
               columns={suggestionColumns}
               dataSource={visibleSuggestionRows}
-              pagination={{ pageSize: 8, showSizeChanger: true }}
+              pagination={{
+                ...suggestionsPagination,
+                showSizeChanger: true,
+                pageSizeOptions: ["8", "10", "20", "50", "100"],
+                onChange: (current, pageSize) => setSuggestionsPagination({ current, pageSize }),
+                onShowSizeChange: (_current, pageSize) => setSuggestionsPagination({ current: 1, pageSize }),
+              }}
               size="small"
               scroll={{ x: "max-content" }}
               expandable={{
@@ -855,6 +1094,8 @@ export function SuggestionsPage() {
                     <Descriptions.Item label="原始建议 ID">{rowText(row, "建议 ID")}</Descriptions.Item>
                     <Descriptions.Item label="来源文件">{rowText(row, "来源文件")}</Descriptions.Item>
                     <Descriptions.Item label="命中策略">{rowText(row, "命中策略") || "未提供"}</Descriptions.Item>
+                    <Descriptions.Item label="学习依据">{rowText(row, "学习依据") || "未提供"}</Descriptions.Item>
+                    <Descriptions.Item label="动作取舍">{rowText(row, "动作取舍") || "未提供"}</Descriptions.Item>
                     <Descriptions.Item label="推荐模式">{rowText(row, "推荐模式") || "不涉及"}</Descriptions.Item>
                     <Descriptions.Item label="计划预览">{rowText(row, "计划预览") || "未生成"}</Descriptions.Item>
                     <Descriptions.Item label="执行前复核">{rowText(row, "执行前复核") || "未进入"}</Descriptions.Item>
@@ -868,13 +1109,17 @@ export function SuggestionsPage() {
                 onChange: (keys) => {
                   const keySet = new Set(keys.map(String));
                   const selectedRows = suggestionRows.filter((row) => keySet.has(rowText(row, "建议 ID")));
+                  const nextCreateIds = selectedRows.filter(isCreateSuggestionRow).map((row) => rowText(row, "建议 ID"));
+                  const nextProjectUpdateIds = selectedRows.filter(isProjectUpdateSuggestionRow).map((row) => rowText(row, "建议 ID"));
                   updateCreatePlanRequest({
-                    selected_suggestion_ids: selectedRows.filter(isCreateSuggestionRow).map((row) => rowText(row, "建议 ID")),
+                    selected_suggestion_ids: nextCreateIds,
                   });
                   updateProjectRequest({
-                    selected_suggestion_ids: selectedRows.filter(isProjectUpdateSuggestionRow).map((row) => rowText(row, "建议 ID")),
+                    selected_suggestion_ids: nextProjectUpdateIds,
                   });
+                  setActiveLane(nextProjectUpdateIds.length ? "project-update" : nextCreateIds.length ? "create-plan" : "");
                 },
+                preserveSelectedRowKeys: true,
                 getCheckboxProps: (row) => ({
                   disabled: !isSelectableSuggestionRow(row),
                 }),
@@ -883,6 +1128,88 @@ export function SuggestionsPage() {
             <Typography.Text type="secondary">
               已选择 {selectedCreateRows.length} 条扩量机会、{selectedProjectUpdateRows.length} 条项目管理建议；只读诊断不进入执行链路。
             </Typography.Text>
+            {hasSelectedSuggestions ? (
+              <div className="suggestion-action-bar">
+                <Space wrap align="center">
+                  <Typography.Text strong>
+                    已选 {selectedCreateCount} 条扩量机会、{selectedProjectUpdateCount} 条项目管理建议
+                  </Typography.Text>
+                  {selectedProjectUpdateCount > 0 ? (
+                    <Button
+                      type="primary"
+                      loading={preview.isPending}
+                      disabled={!canPreviewProjectUpdate}
+                      onClick={() => {
+                        focusWorkbenchLane("project-update");
+                        preview.mutate();
+                      }}
+                    >
+                      检查项目管理配置
+                    </Button>
+                  ) : null}
+                  {selectedCreateCount > 0 ? (
+                    <Button
+                      type="primary"
+                      loading={createPlanPreview.isPending}
+                      disabled={!canPreviewCreatePlan}
+                      onClick={() => {
+                        focusWorkbenchLane("create-plan");
+                        createPlanPreview.mutate();
+                      }}
+                    >
+                      检查创建计划
+                    </Button>
+                  ) : null}
+                  <Button onClick={clearSelectedSuggestions}>清空选择</Button>
+                </Space>
+              </div>
+            ) : null}
+            {selectedProjectUpdateRows.length > 0 ? (
+              <Alert
+                type={activeLane === "project-update" ? "success" : "info"}
+                showIcon
+                message={`已选 ${selectedProjectUpdateRows.length} 条项目管理建议`}
+                description="下一步检查项目管理配置，确认动作明细无误后再生成配置；真实执行仍在项目管理页输入确认。"
+                action={
+                  <Space wrap>
+                    <Button onClick={() => focusWorkbenchLane("project-update")}>查看管理配置区</Button>
+                    <Button
+                      type="primary"
+                      loading={preview.isPending}
+                      disabled={!canPreviewProjectUpdate}
+                      onClick={() => preview.mutate()}
+                    >
+                      检查项目管理配置
+                    </Button>
+                  </Space>
+                }
+              />
+            ) : null}
+            {selectedCreateRows.length > 0 ? (
+              <Alert
+                type={activeLane === "create-plan" ? "success" : "info"}
+                showIcon
+                message={`已选 ${selectedCreateRows.length} 条扩量机会`}
+                description={
+                  createPlanRequest.owner.trim()
+                    ? "下一步检查创建计划预览，再进入创建计划页人工确认。"
+                    : "请先填写负责人，再检查创建计划预览。"
+                }
+                action={
+                  <Space wrap>
+                    <Button onClick={() => focusWorkbenchLane("create-plan")}>查看创建计划区</Button>
+                    <Button
+                      type="primary"
+                      loading={createPlanPreview.isPending}
+                      disabled={!canPreviewCreatePlan}
+                      onClick={() => createPlanPreview.mutate()}
+                    >
+                      检查创建计划
+                    </Button>
+                  </Space>
+                }
+              />
+            ) : null}
             {lockedSelectedCreateSuggestionCount > 0 ? (
               <Alert
                 type="warning"
@@ -892,6 +1219,7 @@ export function SuggestionsPage() {
             ) : null}
             <Row gutter={[24, 16]}>
               <Col xs={24} xl={12}>
+                <div ref={createPlanPanelRef}>
                 <Space direction="vertical" size="small" className="full-width">
                   <Typography.Title level={4}>生成创建项目计划</Typography.Title>
                   <Alert
@@ -984,7 +1312,9 @@ export function SuggestionsPage() {
                       检查创建计划
                     </Button>
                     {createPlanPreviewReady ? (
-                      <Link to={`/create-plans?create_plan_preview_path=${encodeURIComponent(createPlanPreviewPath)}`}>
+                      <Link
+                        to={`/create-plans?create_plan_preview_path=${encodeURIComponent(createPlanPreviewPath)}&return_to=${encodeURIComponent(returnToSuggestionsPath)}`}
+                      >
                         <Button type="primary">去创建计划页确认</Button>
                       </Link>
                     ) : null}
@@ -998,8 +1328,10 @@ export function SuggestionsPage() {
                     showRawJson={false}
                   />
                 </Space>
+                </div>
               </Col>
               <Col xs={24} xl={12}>
+                <div ref={projectUpdatePanelRef}>
                 <Space direction="vertical" size="small" className="full-width">
                   <Typography.Title level={4}>生成项目管理配置</Typography.Title>
                   <Alert
@@ -1144,6 +1476,7 @@ export function SuggestionsPage() {
                   {generate.error ? <Alert type="error" showIcon message={(generate.error as Error).message} /> : null}
                   <SummaryPanel result={previewResult} loading={preview.isPending} detailsCollapsed showArtifactPath={false} showRawJson={false} />
                 </Space>
+                </div>
               </Col>
             </Row>
             {createPlanGroups.length > 1 ? (
@@ -1178,6 +1511,7 @@ export function SuggestionsPage() {
           result={generateResult}
           detail={taskDetail.data}
           loading={taskDetail.isFetching || generate.isPending}
+          returnTo={returnToSuggestionsPath}
         />
         {generatedProjectUpdatePath ? (
           <Alert
@@ -1188,7 +1522,7 @@ export function SuggestionsPage() {
               <Space direction="vertical" size="small">
                 <Typography.Text>{generatedProjectUpdatePath}</Typography.Text>
                 <Link
-                  to={`/project-management?project_update_path=${encodeURIComponent(generatedProjectUpdatePath)}&config_source=suggestions_generated`}
+                  to={`/project-management?project_update_path=${encodeURIComponent(generatedProjectUpdatePath)}&config_source=suggestions_generated&return_to=${encodeURIComponent(returnToSuggestionsPath)}`}
                 >
                   <Button type="primary">去项目管理页确认执行</Button>
                 </Link>

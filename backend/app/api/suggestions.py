@@ -10,6 +10,7 @@ from pydantic import Field
 from backend.app.services.suggestions import build_suggestions_list
 from backend.app.services.suggestions import build_suggestions_lifecycle
 from backend.app.services.suggestions import build_suggestions_overview
+from backend.app.services.suggestions import build_suggestions_quality
 from backend.app.services.suggestions import build_suggestions_backtest
 from backend.app.services.suggestions import build_suggestions_create_strategy_review
 from backend.app.services.suggestions import build_suggestions_create_plan_preview
@@ -131,6 +132,17 @@ def suggestions_daily_operations(request: Request, product_key: str = "") -> dic
 def suggestions_effect_review(request: Request, product_key: str = "") -> dict:
     settings = request.app.state.settings
     return build_suggestions_effect_review(
+        project_root=settings.project_root,
+        configs_dir=settings.configs_dir,
+        runs_dir=settings.runs_dir,
+        product_key=product_key,
+    )
+
+
+@router.get("/suggestions/quality")
+def suggestions_quality(request: Request, product_key: str = "") -> dict:
+    settings = request.app.state.settings
+    return build_suggestions_quality(
         project_root=settings.project_root,
         configs_dir=settings.configs_dir,
         runs_dir=settings.runs_dir,

@@ -483,6 +483,125 @@ def test_daily_report_pipeline_can_use_workbench_spend_discovery_before_detail_f
     assert result["steps"]["report_fetch"]["summary"]["transport_calls"] == 2
 
 
+def test_daily_report_pipeline_workbench_keyword_accounts_reach_detail_fetch(tmp_path):
+    db_path = tmp_path / "roibang.sqlite3"
+    csv_path = tmp_path / "accounts.csv"
+    snapshot_dir = tmp_path / "snapshots"
+    fixture_path = tmp_path / "openapi-responses.json"
+    session_path = tmp_path / "session.json"
+    bootstrap_database(db_path)
+    _write_accounts_csv(csv_path)
+    _write_workbench_session(session_path)
+    fixture_path.write_text(
+        json.dumps(
+            {
+                "responses": [
+                    {
+                        "endpoint_key": "report_custom",
+                        "report_preset": "promotion_daily",
+                        "advertiser_id": "1858371222574218",
+                        "page": 1,
+                        "response": {
+                            "code": 0,
+                            "data": {
+                                "rows": [
+                                    {
+                                        "dimensions": {
+                                            "stat_time": "2026-05-06",
+                                            "project_id": "project_existing",
+                                            "project_name": "0506_勇者突进_已有账户项目",
+                                            "promotion_id": "promotion_existing",
+                                            "promotion_name": "0506_勇者突进_已有账户单元",
+                                        },
+                                        "metrics": {"stat_cost": "86.5", "convert_cnt": "3"},
+                                    }
+                                ],
+                                "page_info": {"page": 1, "total_page": 1},
+                            },
+                        },
+                    },
+                    {
+                        "endpoint_key": "report_custom",
+                        "report_preset": "promotion_daily",
+                        "advertiser_id": "1859990000000001",
+                        "page": 1,
+                        "response": {
+                            "code": 0,
+                            "data": {
+                                "rows": [
+                                    {
+                                        "dimensions": {
+                                            "stat_time": "2026-05-06",
+                                            "project_id": "project_new",
+                                            "project_name": "0506_勇者突进_新发现账户项目",
+                                            "promotion_id": "promotion_new",
+                                            "promotion_name": "0506_勇者突进_新发现账户单元",
+                                        },
+                                        "metrics": {"stat_cost": "66.0", "convert_cnt": "2"},
+                                    }
+                                ],
+                                "page_info": {"page": 1, "total_page": 1},
+                            },
+                        },
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    def workbench_opener(_url, _body, _headers, _timeout_seconds):
+        return HttpResponse(
+            200,
+            {
+                "code": 0,
+                "data": {
+                    "list": [
+                        {
+                            "advertiser_id": "1858371222574218",
+                            "advertiser_name": "黑旗-勇者突进-微小-傲星-306",
+                            "metrics": {"stat_cost": "1,252.22"},
+                        },
+                        {
+                            "advertiser_id": "1859990000000001",
+                            "advertiser_name": "黑旗-勇者突进-微小-傲星-999",
+                            "metrics": {"stat_cost": "888.88"},
+                        },
+                    ],
+                    "pagination": {"page": 1, "limit": 100, "total": 2, "hasMore": False},
+                },
+                "msg": "",
+            },
+        )
+
+    request = _workbench_discovery_pipeline_request(csv_path, snapshot_dir, fixture_path, session_path)
+    request["daily_report_pipeline"]["active_account_discovery"]["allow_keyword_accounts"] = True
+    request["daily_report_pipeline"]["report_fetch"]["openapi"]["endpoints"] = ["report_custom"]
+
+    result = run_daily_report_pipeline_request(
+        request,
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        today=date(2026, 5, 7),
+        workbench_opener=workbench_opener,
+    )
+
+    snapshot_payload = json.loads((snapshot_dir / "2026-05-06.json").read_text(encoding="utf-8"))
+    account_ids = {account["advertiser_id"] for account in snapshot_payload["accounts"]}
+    assert result["ok"] is True
+    assert result["summary"]["active_accounts_discovered"] == 2
+    assert result["summary"]["detail_fetch_account_count"] == 2
+    assert result["steps"]["active_account_discovery"]["summary"]["active_accounts_upserted"] == 2
+    assert result["steps"]["report_fetch"]["summary"]["account_count"] == 2
+    assert account_ids == {"1858371222574218", "1859990000000001"}
+    with sqlite3.connect(db_path) as conn:
+        account = conn.execute(
+            "SELECT account_name, product, source FROM account_pool WHERE advertiser_id = '1859990000000001'"
+        ).fetchone()
+    assert account == ("黑旗-勇者突进-微小-傲星-999", "勇者突进", "daily_report_pipeline.active_account_discovery")
+
+
 def test_daily_report_pipeline_falls_back_to_openapi_discovery_when_workbench_fails(tmp_path):
     db_path = tmp_path / "roibang.sqlite3"
     csv_path = tmp_path / "accounts.csv"

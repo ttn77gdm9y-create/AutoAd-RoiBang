@@ -1,7 +1,9 @@
 import { Alert, Collapse, Descriptions, Empty, Progress, Space, Table, Tabs, Tag, Typography } from "antd";
+import type { TableProps } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import type { KeyboardEvent } from "react";
 import type { ReactNode } from "react";
+import { useEffect, useState } from "react";
 
 import type { ChineseResult } from "../types/api";
 import { RawJsonDrawer } from "./RawJsonDrawer";
@@ -21,6 +23,14 @@ type SummaryPanelProps = {
 };
 
 type KeyedSummaryRow = SummaryRow & { __row_key: string };
+
+type PagedSummaryTableProps = {
+  columns: ColumnsType<KeyedSummaryRow>;
+  dataSource: KeyedSummaryRow[];
+  loading?: boolean;
+  rowClassName?: string;
+  onRow?: TableProps<KeyedSummaryRow>["onRow"];
+};
 
 const riskColor: Record<string, string> = {
   low: "green",
@@ -91,6 +101,37 @@ function compareSortableValues(left: SummaryRow[string], right: SummaryRow[strin
   return leftValue.localeCompare(rightValue, "zh-Hans-CN");
 }
 
+function PagedSummaryTable({ columns, dataSource, loading = false, rowClassName = "", onRow }: PagedSummaryTableProps) {
+  const [pagination, setPagination] = useState({ current: 1, pageSize: 20 });
+
+  useEffect(() => {
+    setPagination((current) => {
+      const maxPage = Math.max(1, Math.ceil(dataSource.length / current.pageSize));
+      return current.current > maxPage ? { ...current, current: maxPage } : current;
+    });
+  }, [dataSource.length]);
+
+  return (
+    <Table<KeyedSummaryRow>
+      rowKey="__row_key"
+      loading={loading}
+      columns={columns}
+      dataSource={dataSource}
+      pagination={{
+        ...pagination,
+        showSizeChanger: true,
+        pageSizeOptions: ["10", "20", "50", "100"],
+        onChange: (current, pageSize) => setPagination({ current, pageSize }),
+        onShowSizeChange: (_current, pageSize) => setPagination({ current: 1, pageSize }),
+      }}
+      size="small"
+      scroll={{ x: "max-content" }}
+      rowClassName={rowClassName}
+      onRow={onRow}
+    />
+  );
+}
+
 export function SummaryPanel({
   result,
   loading = false,
@@ -107,7 +148,7 @@ export function SummaryPanel({
   }
 
   const sortableColumnSet = new Set(sortableColumns);
-  const columns: ColumnsType<SummaryRow> = (result?.table.columns ?? []).map((column) => {
+  const columns: ColumnsType<KeyedSummaryRow> = (result?.table.columns ?? []).map((column) => {
     const sortable = sortableColumnSet.has(column);
     return {
       title: column,
@@ -121,7 +162,7 @@ export function SummaryPanel({
   });
   const tableRows = withRowKeys(result?.table.rows ?? [], "main");
   const sectionItems = (result?.sections ?? []).map((section) => {
-    const sectionColumns: ColumnsType<SummaryRow> = section.table.columns.map((column) => ({
+    const sectionColumns: ColumnsType<KeyedSummaryRow> = section.table.columns.map((column) => ({
       title: column,
       dataIndex: column,
       key: column,
@@ -132,27 +173,19 @@ export function SummaryPanel({
       key: section.title,
       label: section.title,
       children: (
-        <Table
-          rowKey="__row_key"
+        <PagedSummaryTable
           columns={sectionColumns}
           dataSource={sectionRows}
-          pagination={{ pageSize: 20, showSizeChanger: true }}
-          size="small"
-          scroll={{ x: "max-content" }}
         />
       ),
     };
   });
 
   const mainTable = (
-    <Table
-      rowKey="__row_key"
+    <PagedSummaryTable
       loading={loading}
       columns={columns}
       dataSource={tableRows}
-      pagination={{ pageSize: 20, showSizeChanger: true }}
-      size="small"
-      scroll={{ x: "max-content" }}
       rowClassName={onRowClick ? "summary-row-clickable" : ""}
       onRow={(record) =>
         onRowClick

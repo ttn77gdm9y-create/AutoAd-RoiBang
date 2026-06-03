@@ -376,6 +376,131 @@ def _write_local_db_suggestions_fixture(tmp_path: Path) -> None:
         )
 
 
+def _write_learned_control_strategy_fixture(tmp_path: Path) -> None:
+    _write_json(
+        tmp_path / "configs" / "learned-strategies" / "demo-game.learned.local.json",
+        {
+            "workflow": "strategy_learning",
+            "runtime_contract": {
+                "strategy_source": "learned_strategy_only",
+                "runtime_metric_source": "realtime_patrol_snapshot",
+                "historical_data_usage": "learning_and_evidence_only",
+                "allow_builtin_default_project_actions": False,
+                "execution_enabled": False,
+            },
+            "strategies": [
+                {
+                    "strategy_id": "approved-delete-low-recent",
+                    "strategy_version": "2026-06-01",
+                    "status": "approved",
+                    "enabled": True,
+                    "action": "suggest_delete_project",
+                    "action_label": "删除项目",
+                    "scope": {"type": "product", "product_key": "demo-game", "product": "演示游戏"},
+                    "sample_counts": {"total": 120, "product": 20, "with_pre_metrics": 18},
+                    "second_stage_learning": {
+                        "backtest": {"status": "passed", "positive_outcome_rate": 0.75}
+                    },
+                    "中文摘要": "演示游戏删除项目策略已人工批准，仅处理已关闭低消耗无转化项目。",
+                    "control_strategy_rule": {
+                        "rule_id": "delete_project_closed_low_recent",
+                        "parameters": {"lookback_days": 2, "max_stat_cost": 100, "max_convert_cnt": 0},
+                    },
+                },
+                {
+                    "strategy_id": "approved-pause-low-roi",
+                    "strategy_version": "2026-06-01",
+                    "status": "approved",
+                    "enabled": True,
+                    "action": "pause_project",
+                    "action_label": "暂停项目",
+                    "scope": {"type": "product", "product_key": "demo-game", "product": "演示游戏"},
+                    "sample_counts": {"total": 100, "product": 12, "with_pre_metrics": 10},
+                    "second_stage_learning": {
+                        "backtest": {"status": "passed", "positive_outcome_rate": 0.6}
+                    },
+                    "中文摘要": "演示游戏暂停项目策略已人工批准，仅处理实时低 ROI 且达到消耗转化门槛项目。",
+                    "control_strategy_rule": {
+                        "rule_id": "pause_project_low_first_day_roi",
+                        "parameters": {"min_cost": 500, "min_conversions": 2, "max_roi_1day": 0.25},
+                    },
+                },
+                {
+                    "strategy_id": "approved-budget-low-roi",
+                    "strategy_version": "2026-06-01",
+                    "status": "approved",
+                    "enabled": True,
+                    "action": "suggest_lower_budget",
+                    "action_label": "下调预算",
+                    "scope": {"type": "product", "product_key": "demo-game", "product": "演示游戏"},
+                    "sample_counts": {"total": 40, "product": 8, "with_pre_metrics": 8},
+                    "second_stage_learning": {
+                        "backtest": {"status": "passed", "positive_outcome_rate": 0.55}
+                    },
+                    "中文摘要": "演示游戏调预算策略已人工批准。",
+                    "control_strategy_rule": {
+                        "rule_id": "adjust_project_budget_low_roi",
+                        "parameters": {
+                            "min_cost": 800,
+                            "min_conversions": 3,
+                            "max_roi_1day": 0.35,
+                            "budget_decrease_percent": 20,
+                        },
+                    },
+                },
+                {
+                    "strategy_id": "approved-bid-high-cpa",
+                    "strategy_version": "2026-06-01",
+                    "status": "approved",
+                    "enabled": True,
+                    "action": "suggest_lower_bid",
+                    "action_label": "下调出价",
+                    "scope": {"type": "product", "product_key": "demo-game", "product": "演示游戏"},
+                    "sample_counts": {"total": 45, "product": 9, "with_pre_metrics": 9},
+                    "second_stage_learning": {
+                        "backtest": {"status": "passed", "positive_outcome_rate": 0.65}
+                    },
+                    "中文摘要": "演示游戏调出价策略已人工批准。",
+                    "control_strategy_rule": {
+                        "rule_id": "adjust_project_bid_high_cpa",
+                        "parameters": {"min_cost": 1000, "min_conversions": 2, "max_cpa": 300, "bid_decrease_percent": 10},
+                    },
+                },
+                {
+                    "strategy_id": "candidate-bid-passed",
+                    "strategy_version": "2026-06-01",
+                    "status": "candidate_passed_backtest",
+                    "enabled": False,
+                    "action": "suggest_lower_bid",
+                    "action_label": "下调出价",
+                    "scope": {"type": "product", "product_key": "demo-game", "product": "演示游戏"},
+                    "sample_counts": {"total": 50, "product": 10, "with_pre_metrics": 10},
+                    "second_stage_learning": {
+                        "backtest": {"status": "passed", "positive_outcome_rate": 0.7}
+                    },
+                    "中文摘要": "该候选策略回测通过，但尚未人工启用。",
+                    "control_strategy_rule": {
+                        "rule_id": "adjust_project_bid_high_cpa",
+                        "parameters": {"min_cost": 900, "min_conversions": 2, "max_cpa": 320, "bid_decrease_percent": 8},
+                    },
+                },
+                {
+                    "strategy_id": "blocked-pause-mixed",
+                    "strategy_version": "2026-06-01",
+                    "status": "blocked_mixed_high_risk_samples",
+                    "enabled": False,
+                    "action": "pause_project",
+                    "action_label": "暂停项目",
+                    "scope": {"type": "product", "product_key": "demo-game", "product": "演示游戏"},
+                    "sample_counts": {"total": 90, "product": 11, "with_pre_metrics": 11},
+                    "blocking_reasons": ["高风险动作样本中有转化项目，不能自动推导为暂停规则。"],
+                    "中文摘要": "暂停候选被高风险样本混杂阻断。",
+                },
+            ],
+        },
+    )
+
+
 def _write_create_project_strategy_fixture(tmp_path: Path) -> None:
     _write_json(
         tmp_path / "configs" / "create-templates" / "demo-game.local.json",
@@ -915,7 +1040,9 @@ def test_suggestions_effect_review_endpoint_returns_adoption_and_backtest_summar
     assert "回测结论" in payload["table"]["columns"]
     assert Path(payload["artifact_path"]).exists()
     assert payload["raw"]["execution_enabled"] is False
-    assert payload["raw"]["source_suggestions_artifact_path"].endswith("latest.json")
+    source_path = Path(payload["raw"]["source_suggestions_artifact_path"])
+    assert source_path.exists()
+    assert source_path.name != "latest.json"
     assert any(section["title"] == "复盘口径" for section in payload["sections"])
 
 
@@ -1050,6 +1177,7 @@ def test_locked_create_project_suggestion_cannot_build_create_plan_preview_again
 def test_create_project_suggestion_preview_blocks_mixed_action_selection(tmp_path: Path):
     _write_suggestion_fixture(tmp_path)
     _write_local_db_suggestions_fixture(tmp_path)
+    _write_learned_control_strategy_fixture(tmp_path)
     _write_create_project_strategy_fixture(tmp_path)
     client = _client(tmp_path)
     suggestions_payload = client.get("/api/suggestions", params={"product_key": "demo-game"}).json()
@@ -1174,6 +1302,7 @@ def test_suggestions_list_uses_latest_account_pool_name_before_stale_suggestion_
 def test_suggestions_list_prefers_today_patrol_account_name_before_account_pool_name(tmp_path: Path):
     _write_suggestion_fixture(tmp_path)
     _write_local_db_suggestions_fixture(tmp_path)
+    _write_learned_control_strategy_fixture(tmp_path)
     db_path = tmp_path / "data" / "roibang_v2.sqlite3"
     with sqlite3.connect(db_path) as conn:
         conn.execute(
@@ -1197,24 +1326,41 @@ def test_suggestions_list_prefers_today_patrol_account_name_before_account_pool_
 def test_suggestions_list_prefers_local_db_suggestions_with_evidence_columns(tmp_path: Path):
     _write_suggestion_fixture(tmp_path)
     _write_local_db_suggestions_fixture(tmp_path)
+    _write_learned_control_strategy_fixture(tmp_path)
     client = _client(tmp_path)
 
     response = client.get("/api/suggestions", params={"product_key": "demo-game"})
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["artifact_path"].endswith("data/runs/rule_suggestions/latest.json")
+    artifact_path = Path(payload["artifact_path"])
+    latest_path = tmp_path / "data" / "runs" / "rule_suggestions" / "latest.json"
+    assert artifact_path.exists()
+    assert artifact_path.name != "latest.json"
+    assert latest_path.exists()
+    assert json.loads(artifact_path.read_text(encoding="utf-8"))["artifact_path"] == str(artifact_path)
+    assert json.loads(latest_path.read_text(encoding="utf-8"))["artifact_path"] == str(artifact_path)
     assert "数据来源" in payload["table"]["columns"]
     assert "关键指标" in payload["table"]["columns"]
+    assert "学习依据" in payload["table"]["columns"]
+    assert "动作取舍" in payload["table"]["columns"]
     rows = payload["table"]["rows"]
     local_delete = next(row for row in rows if row["建议动作"] == "删除项目" and row["数据来源"] == "本地控制策略")
     actions = {row["建议动作"]: row for row in rows if row["数据来源"] == "本地控制策略"}
+    assert not [
+        row
+        for row in rows
+        if row["数据来源"] == "投放巡检建议" and row["建议动作"] in {"删除项目", "暂停项目", "调预算", "调出价"}
+    ]
     assert local_delete["项目 ID"] == "p-local-delete"
     assert local_delete["账户名"] == "演示账户一"
     assert "消耗" in local_delete["关键指标"]
+    assert "approved-delete-low-recent" in local_delete["学习依据"]
+    assert "已启用学习策略" in local_delete["动作取舍"]
     assert actions["暂停项目"]["项目名"] == "演示游戏-本地动作项目"
-    assert actions["调预算"]["项目名"] == "演示游戏-本地动作项目"
-    assert actions["调出价"]["项目名"] == "演示游戏-本地动作项目"
+    assert "approved-pause-low-roi" in actions["暂停项目"]["学习依据"]
+    assert "调预算" not in actions
+    assert "调出价" not in actions
     assert actions["素材复用风险"]["项目 ID"] == "material-risk-1"
     assert actions["素材复用风险"]["可转动作 JSON"] == "只读诊断，不生成动作配置"
     assert actions["账户异常"]["账户 ID"] == "1003"
@@ -1222,6 +1368,65 @@ def test_suggestions_list_prefers_local_db_suggestions_with_evidence_columns(tmp
     assert actions["账户异常"]["可转动作 JSON"] == "只读诊断，不生成动作配置"
     assert {"label": "建议对象账户", "value": 1} in payload["summary"]["items"]
     assert {"label": "今日巡检有消耗账户", "value": 2} in payload["summary"]["items"]
+
+
+def test_suggestions_quality_endpoint_explains_learning_statuses(tmp_path: Path):
+    _write_suggestion_fixture(tmp_path)
+    _write_local_db_suggestions_fixture(tmp_path)
+    _write_learned_control_strategy_fixture(tmp_path)
+    client = _client(tmp_path)
+
+    response = client.get("/api/suggestions/quality", params={"product_key": "demo-game"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["title"] == "策略学习与建议质量"
+    assert payload["summary"]["execution_enabled"] is False
+    assert {"label": "学习策略", "value": 6} in payload["summary"]["items"]
+    assert {"label": "已启用策略", "value": 4} in payload["summary"]["items"]
+    assert {"label": "可进入建议", "value": 4} in payload["summary"]["items"]
+    assert any("通过回测但未启用" in warning for warning in payload["summary"]["warnings"])
+    rows = payload["table"]["rows"]
+    candidate = next(row for row in rows if row["策略"] == "candidate-bid-passed")
+    assert candidate["状态"] == "候选：回测通过"
+    assert candidate["启用"] == "否"
+    assert candidate["可进入建议"] == "否"
+    blocked = next(row for row in rows if row["策略"] == "blocked-pause-mixed")
+    assert blocked["状态"] == "阻断：高风险样本混杂"
+    assert "有转化项目" in blocked["阻断原因"]
+    assert payload["raw"]["中文摘要"].startswith("策略学习与建议质量")
+
+
+def test_suggestions_list_blocks_builtin_local_project_actions_without_learned_strategy(tmp_path: Path):
+    _write_suggestion_fixture(tmp_path)
+    _write_local_db_suggestions_fixture(tmp_path)
+    client = _client(tmp_path)
+
+    response = client.get("/api/suggestions", params={"product_key": "demo-game"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    rows = payload["table"]["rows"]
+    assert not [
+        row
+        for row in rows
+        if row["数据来源"] == "本地控制策略"
+        and row["建议动作"] in {"删除项目", "暂停项目", "调预算", "调出价"}
+    ]
+    assert any(row["数据来源"] == "本地控制策略" and row["建议动作"] == "素材复用风险" for row in rows)
+    assert any(row["数据来源"] == "本地控制策略" and row["建议动作"] == "账户异常" for row in rows)
+
+
+def test_suggestions_list_reuses_snapshot_when_content_is_unchanged(tmp_path: Path):
+    _write_suggestion_fixture(tmp_path)
+    _write_local_db_suggestions_fixture(tmp_path)
+    client = _client(tmp_path)
+
+    first = client.get("/api/suggestions", params={"product_key": "demo-game"}).json()
+    second = client.get("/api/suggestions", params={"product_key": "demo-game"}).json()
+
+    assert first["artifact_path"] == second["artifact_path"]
+    assert Path(first["artifact_path"]).name != "latest.json"
 
 
 def test_suggestions_list_limits_project_actions_to_allowed_today_patrol_accounts(tmp_path: Path):
@@ -1393,6 +1598,29 @@ def test_suggestions_project_update_preview_blocks_readonly_selected_suggestion(
     assert result["summary"]["blocking_reasons"] == ["建议 watch-1 是只读建议，不能生成项目管理配置。"]
 
 
+def test_suggestions_project_update_preview_explains_missing_snapshot_suggestion(tmp_path: Path):
+    suggestions_path = _write_suggestion_fixture(tmp_path)
+    client = _client(tmp_path)
+
+    response = client.post(
+        "/api/suggestions/project-update/preview",
+        json={
+            "suggestions_artifact_path": str(suggestions_path),
+            "project_update_id": "suggestions-missing-id-001",
+            "operator": "运营A",
+            "selected_suggestion_ids": ["missing-suggestion"],
+            "output_path": "configs/project-updates/suggestions-missing-id.local.json",
+        },
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["summary"]["status"] == "blocked"
+    assert result["summary"]["blocking_reasons"] == [
+        "建议 missing-suggestion 不在当前建议来源快照中；请返回投放建议工作台刷新建议后重新选择。"
+    ]
+
+
 def test_suggestions_project_update_preview_blocks_adjustment_without_ratio(tmp_path: Path):
     suggestions_path = _write_suggestion_fixture(tmp_path)
     payload = json.loads(suggestions_path.read_text(encoding="utf-8"))
@@ -1433,6 +1661,7 @@ def test_suggestions_project_update_preview_blocks_adjustment_without_ratio(tmp_
 def test_suggestions_project_update_preview_maps_legacy_action_filters_to_local_suggestions(tmp_path: Path):
     _write_suggestion_fixture(tmp_path)
     _write_local_db_suggestions_fixture(tmp_path)
+    _write_learned_control_strategy_fixture(tmp_path)
     client = _client(tmp_path)
 
     suggestions_response = client.get("/api/suggestions", params={"product_key": "demo-game"})
@@ -1454,13 +1683,13 @@ def test_suggestions_project_update_preview_maps_legacy_action_filters_to_local_
     assert response.status_code == 200
     payload = response.json()
     assert payload["summary"]["status"] == "planned"
-    assert {"label": "动作数", "value": 4} in payload["summary"]["items"]
+    assert {"label": "动作数", "value": 1} in payload["summary"]["items"]
     rows = payload["table"]["rows"]
-    assert [row["动作"] for row in rows] == ["暂停项目", "暂停项目", "调预算", "调出价"]
+    assert [row["动作"] for row in rows] == ["暂停项目"]
     local_rows = [row for row in rows if row["项目名"] == "演示游戏-本地动作项目"]
     patrol_rows = [row for row in rows if row["项目名"] == "演示游戏-关闭候选"]
-    assert [row["动作"] for row in local_rows] == ["暂停项目", "调预算", "调出价"]
-    assert [row["动作"] for row in patrol_rows] == ["暂停项目"]
+    assert [row["动作"] for row in local_rows] == ["暂停项目"]
+    assert patrol_rows == []
 
 
 def test_suggestions_ai_draft_returns_chinese_explanations_and_draft_json_without_execution(tmp_path: Path):

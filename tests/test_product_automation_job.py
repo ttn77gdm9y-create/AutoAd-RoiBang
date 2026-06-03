@@ -83,6 +83,9 @@ def test_builds_daily_report_sync_request_from_product_config(tmp_path: Path):
     request = build_product_job_request(_product(tmp_path), "daily_report_sync", target_date="yesterday")
     cfg = request["daily_report_pipeline"]
 
+    assert cfg["active_account_discovery"]["allow_keyword_accounts"] is True
+    assert cfg["active_account_discovery"]["product"] == "点点英雄"
+    assert cfg["active_account_discovery"]["platform"] == "WECHAT_GAME"
     assert cfg["active_account_discovery"]["workbench"]["keyword"] == "点点英雄"
     assert cfg["report_fetch"]["product"] == "点点英雄"
     assert cfg["report_fetch"]["output"]["snapshot_dir"] == "data/snapshots/report/diandian-hero-daily"

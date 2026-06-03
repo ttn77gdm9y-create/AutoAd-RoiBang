@@ -309,6 +309,9 @@ def build_product_job_request(
                 "active_account_discovery": {
                     "enabled": True,
                     "source": "workbench_account_list",
+                    "allow_keyword_accounts": True,
+                    "product": product_name,
+                    "platform": platform,
                     "min_spend": 0,
                     "fallback_to_openapi": True,
                     "openapi": {"page_size": 100},
