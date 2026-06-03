@@ -323,6 +323,21 @@ function renderParameterControl({
       </Space>
     );
   }
+  if (parameter.control === "select") {
+    return (
+      <select
+        className="workflow-param-control workflow-native-select"
+        value={value || parameter.default}
+        onChange={(event) => onChange(event.target.value)}
+      >
+        {(parameter.options ?? []).map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    );
+  }
   return <Input value={value} onChange={(event) => onChange(event.target.value)} placeholder={parameter.default} />;
 }
 

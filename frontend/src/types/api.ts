@@ -80,6 +80,7 @@ export type WorkflowParameter = {
   required: boolean;
   description: string;
   control?: "product_select" | "date_select" | "text" | string;
+  options?: { label: string; value: string }[];
 };
 
 export type WorkflowLatestStatus = {

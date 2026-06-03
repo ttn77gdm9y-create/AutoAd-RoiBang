@@ -82,6 +82,51 @@ def test_workflow_run_catalog_includes_business_controls_and_latest_status(tmp_p
     assert workflows["operation_log_sync"]["latest_status"]["summary"] == operation_row["最近结果"]
 
 
+def test_gravity_probe_catalog_uses_business_select_controls(tmp_path):
+    app = create_app(project_root=tmp_path)
+    client = TestClient(app)
+
+    response = client.get("/api/workflow-runs/catalog")
+
+    assert response.status_code == 200
+    payload = response.json()
+    workflows = {item["workflow_id"]: item for item in payload["raw"]["workflows"]}
+    parameters = {item["name"]: item for item in workflows["gravity_api_probe"]["parameters"]}
+    assert parameters["probe_scope"]["control"] == "select"
+    assert parameters["probe_scope"]["options"] == [
+        {"label": "本地鉴权与文档字段核验", "value": "local_contract"},
+        {"label": "外部只读接口探测", "value": "readonly_api"},
+    ]
+    assert parameters["sample_limit"]["control"] == "select"
+
+    preview = client.post(
+        "/api/workflow-runs/gravity_api_probe/preview",
+        json={"request": {"probe_scope": "readonly_api", "sample_limit": "5"}},
+    )
+
+    assert preview.status_code == 200
+    preview_payload = preview.json()
+    items = {item["label"]: item["value"] for item in preview_payload["summary"]["items"]}
+    assert items["探测范围"] == "外部只读接口探测"
+    assert items["样本数量"] == "5 条"
+    assert preview_payload["table"]["rows"][0]["参数"] == "引力 Token 文件：data/gravity_token.json；探测范围：外部只读接口探测；样本数量：5 条"
+    command = preview_payload["raw"]["command"]
+    assert "--probe-scope" in command
+    assert "readonly_api" in command
+    assert "--sample-limit" in command
+    assert "5" in command
+
+    blocked = client.post(
+        "/api/workflow-runs/gravity_api_probe/preview",
+        json={"request": {"probe_scope": "readonly_api", "sample_limit": "2"}},
+    )
+
+    assert blocked.status_code == 200
+    blocked_payload = blocked.json()
+    assert blocked_payload["summary"]["status"] == "blocked"
+    assert "样本数量只能选择" in blocked_payload["summary"]["blocking_reasons"][0]
+
+
 def test_workflow_preview_blocks_unknown_parameters(tmp_path):
     app = create_app(project_root=tmp_path)
     client = TestClient(app)

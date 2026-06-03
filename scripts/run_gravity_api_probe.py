@@ -18,12 +18,19 @@ from roibang_v2.workflows.gravity_api_probe import run_gravity_api_probe
 
 
 def run_from_args(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Probe Gravity material library auth safely.")
+    parser = argparse.ArgumentParser(description="Probe Gravity material library fields safely.")
     parser.add_argument("--auth-file", default="data/gravity_token.json")
     parser.add_argument("--runs-dir", default="data/runs")
+    parser.add_argument("--probe-scope", default="local_contract", choices=["local_contract", "readonly_api"])
+    parser.add_argument("--sample-limit", default=3, type=int)
     args = parser.parse_args(argv)
 
-    result = run_gravity_api_probe(auth_file=args.auth_file, runs_dir=args.runs_dir)
+    result = run_gravity_api_probe(
+        auth_file=args.auth_file,
+        runs_dir=args.runs_dir,
+        probe_scope=args.probe_scope,
+        sample_limit=args.sample_limit,
+    )
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if bool(result.get("ok")) else 1
 

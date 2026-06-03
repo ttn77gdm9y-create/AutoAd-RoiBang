@@ -183,6 +183,28 @@ body {
   width: 100%;
 }
 
+.workflow-native-select {
+  height: 32px;
+  padding: 4px 11px;
+  border: 1px solid #d8dee6;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #172026;
+  font: inherit;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.workflow-native-select:hover {
+  border-color: #1d6f62;
+}
+
+.workflow-native-select:focus {
+  border-color: #1d6f62;
+  outline: 2px solid rgba(29, 111, 98, 0.18);
+  outline-offset: 1px;
+}
+
 .workflow-date-control {
   width: 100%;
 }

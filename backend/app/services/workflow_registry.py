@@ -19,6 +19,7 @@ class WorkflowParameter:
     required: bool = False
     description: str = ""
     control: str = "text"
+    options: tuple[dict[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -65,7 +66,32 @@ GRAVITY_AUTH_FILE_PARAM = WorkflowParameter(
     label="引力 Token 文件",
     default="data/gravity_token.json",
     required=False,
-    description="只读取本地鉴权文件，不上传素材。",
+    description="只读取本地鉴权文件；结果中不会展示 token 明文。",
+)
+GRAVITY_PROBE_SCOPE_PARAM = WorkflowParameter(
+    name="probe_scope",
+    label="探测范围",
+    default="local_contract",
+    required=False,
+    description="本地核验不访问外部接口；外部只读探测只访问查询接口，不上传素材。",
+    control="select",
+    options=(
+        {"label": "本地鉴权与文档字段核验", "value": "local_contract"},
+        {"label": "外部只读接口探测", "value": "readonly_api"},
+    ),
+)
+GRAVITY_SAMPLE_LIMIT_PARAM = WorkflowParameter(
+    name="sample_limit",
+    label="样本数量",
+    default="3",
+    required=False,
+    description="只读取少量样本用于字段核验，不做素材同步入库。",
+    control="select",
+    options=(
+        {"label": "1 条", "value": "1"},
+        {"label": "3 条", "value": "3"},
+        {"label": "5 条", "value": "5"},
+    ),
 )
 
 
@@ -129,7 +155,7 @@ WORKFLOW_CATALOG: tuple[WorkflowDefinition, ...] = (
         operation_type="gravity_api_probe",
         latest_workflow="gravity_api_probe",
         run_kind="gravity_api_probe",
-        parameters=(GRAVITY_AUTH_FILE_PARAM,),
+        parameters=(GRAVITY_AUTH_FILE_PARAM, GRAVITY_PROBE_SCOPE_PARAM, GRAVITY_SAMPLE_LIMIT_PARAM),
     ),
 )
 
@@ -214,6 +240,7 @@ def workflow_catalog_result(*, project_root: str | Path | None = None) -> dict[s
                             "required": parameter.required,
                             "description": parameter.description,
                             "control": parameter.control,
+                            "options": list(parameter.options),
                         }
                         for parameter in item.parameters
                     ],
@@ -413,8 +440,15 @@ def normalize_workflow_request(definition: WorkflowDefinition, request: dict[str
     for parameter in definition.parameters:
         value = request.get(parameter.name, parameter.default)
         text = str(value or "").strip()
+        if not text and parameter.default and parameter.control == "select":
+            text = parameter.default
         if parameter.required and not text:
             blocking_reasons.append(f"请填写{parameter.label}")
+        if parameter.options and text:
+            allowed_values = {str(option.get("value") or "") for option in parameter.options}
+            if text not in allowed_values:
+                allowed_labels = "、".join(str(option.get("label") or option.get("value") or "") for option in parameter.options)
+                blocking_reasons.append(f"{parameter.label}只能选择：{allowed_labels}")
         normalized[parameter.name] = text
     return normalized, blocking_reasons
 
@@ -456,6 +490,10 @@ def build_workflow_command(definition: WorkflowDefinition, request: dict[str, st
             request.get("auth_file", "") or "data/gravity_token.json",
             "--runs-dir",
             "data/runs",
+            "--probe-scope",
+            request.get("probe_scope", "") or "local_contract",
+            "--sample-limit",
+            request.get("sample_limit", "") or "3",
         ]
     raise RuntimeError(f"未配置工作流命令：{definition.workflow_id}")
 
@@ -490,7 +528,7 @@ def workflow_preview_result(
                 {"label": "真实投放动作", "value": "否"},
                 {"label": "AI 自动运行", "value": "允许" if definition.ai_auto_run and not definition.true_action else "不允许"},
                 *[
-                    {"label": parameter.label, "value": normalized_request.get(parameter.name, "") or "全部/默认"}
+                    {"label": parameter.label, "value": _parameter_display_value(parameter, normalized_request.get(parameter.name, ""))}
                     for parameter in definition.parameters
                 ],
             ],
@@ -531,9 +569,25 @@ def blocked_unknown_workflow_result(workflow_id: str) -> dict[str, Any]:
 def _request_text(definition: WorkflowDefinition, request: dict[str, str]) -> str:
     pieces = []
     for parameter in definition.parameters:
-        value = request.get(parameter.name, "") or "全部/默认"
+        value = _parameter_display_value(parameter, request.get(parameter.name, ""))
         pieces.append(f"{parameter.label}：{value}")
     return "；".join(pieces)
+
+
+def _parameter_display_value(parameter: WorkflowParameter, value: str) -> str:
+    text = _text(value)
+    if parameter.options:
+        for option in parameter.options:
+            if _text(option.get("value")) == text:
+                return _text(option.get("label")) or text
+    if parameter.control == "product_select" and not text:
+        return "全部启用产品"
+    if parameter.control == "date_select":
+        if text == "today":
+            return "今天"
+        if text == "yesterday":
+            return "昨天"
+    return text or "全部/默认"
 
 
 def _risk_label(value: str) -> str:
