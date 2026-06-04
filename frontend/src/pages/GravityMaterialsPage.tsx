@@ -47,10 +47,12 @@ const emptyBinding: BindingForm = {
   folder_name: "",
 };
 
+const qualificationStatLabels = ["素材数", "可用于后续", "不可用", "缺 MD5", "已上传", "未上传", "有表现数据"];
+
 export function GravityMaterialsPage() {
   const queryClient = useQueryClient();
   const [selectedProduct, setSelectedProduct] = useState("");
-  const [statusFilter, setStatusFilter] = useState("active");
+  const [statusFilter, setStatusFilter] = useState("eligible");
   const [keyword, setKeyword] = useState("");
   const [bindingForm, setBindingForm] = useState<BindingForm>(emptyBinding);
   const [saveResult, setSaveResult] = useState<ChineseResult | undefined>();
@@ -79,6 +81,7 @@ export function GravityMaterialsPage() {
   const productOptions = useMemo(() => productNameOptions(filters.data), [filters.data]);
   const albumOptions = useMemo(() => albumNodeOptions(albums.data), [albums.data]);
   const bindingRows = useMemo(() => bindingRowsFromResult(bindings.data), [bindings.data]);
+  const qualificationStats = useMemo(() => summaryLookup(materials.data), [materials.data]);
   const materialRows = materials.data?.table.rows ?? [];
 
   const saveBinding = useMutation({
@@ -138,6 +141,14 @@ export function GravityMaterialsPage() {
           showIcon
           message="这里只读同步引力素材并写入本地素材库；不会上传素材、创建广告、修改预算、出价或项目状态。"
         />
+        <div className="gravity-qualification-strip">
+          {qualificationStatLabels.map((label) => (
+            <div className="gravity-qualification-tile" key={label}>
+              <span>{label}</span>
+              <strong>{statValue(qualificationStats.get(label))}</strong>
+            </div>
+          ))}
+        </div>
         <Row gutter={[16, 16]} align="top">
           <Col xs={24} xl={9}>
             <Card size="small" title="产品-专辑绑定">
@@ -227,7 +238,7 @@ export function GravityMaterialsPage() {
             ) : null}
           </Col>
           <Col xs={24} xl={15}>
-            <Card size="small" title="素材列表">
+            <Card size="small" title="素材资格明细">
               <Space direction="vertical" size="middle" className="full-width">
                 <Row gutter={[12, 12]}>
                   <Col xs={24} md={8}>
@@ -235,8 +246,13 @@ export function GravityMaterialsPage() {
                       className="full-width"
                       value={statusFilter}
                       options={[
-                        { label: "只看可用素材", value: "active" },
-                        { label: "只看停用素材", value: "inactive" },
+                        { label: "可用于后续", value: "eligible" },
+                        { label: "不可用", value: "ineligible" },
+                        { label: "缺 MD5", value: "missing_md5" },
+                        { label: "已上传", value: "uploaded" },
+                        { label: "未上传", value: "not_uploaded" },
+                        { label: "有表现数据", value: "has_performance" },
+                        { label: "本地停用", value: "inactive" },
                         { label: "全部素材", value: "" },
                       ]}
                       onChange={setStatusFilter}
@@ -295,24 +311,73 @@ function bindingRowsFromResult(result?: ChineseResult): BindingRow[] {
   return Array.isArray(result?.raw.bindings) ? (result?.raw.bindings as BindingRow[]) : [];
 }
 
+function summaryLookup(result?: ChineseResult): Map<string, string | number | boolean | null> {
+  return new Map((result?.summary.items ?? []).map((item) => [item.label, item.value]));
+}
+
+function statValue(value: string | number | boolean | null | undefined): string | number {
+  if (value === undefined || value === null || value === "") {
+    return 0;
+  }
+  return typeof value === "boolean" ? (value ? "是" : "否") : value;
+}
+
 function materialColumns(): ColumnsType<MaterialRow> {
   return [
     { title: "产品", dataIndex: "产品", width: 120 },
     { title: "专辑", dataIndex: "专辑", width: 140 },
     { title: "文件夹", dataIndex: "文件夹", width: 140 },
-    { title: "素材名", dataIndex: "素材名", width: 180 },
-    { title: "引力素材 ID", dataIndex: "引力素材 ID", width: 160 },
-    { title: "MD5", dataIndex: "MD5", width: 180 },
+    { title: "素材名", dataIndex: "素材名", width: 180, ellipsis: true },
+    { title: "引力素材 ID", dataIndex: "引力素材 ID", width: 160, ellipsis: true },
+    { title: "MD5", dataIndex: "MD5", width: 180, ellipsis: true, render: renderEmpty },
     {
       title: "状态",
       dataIndex: "状态",
       width: 88,
-      render: (value) => <Tag color={String(value) === "可用" ? "green" : "orange"}>{String(value || "未知")}</Tag>,
+      render: (value) => <Tag color={materialStatusColor(value)}>{String(value || "未知")}</Tag>,
     },
+    {
+      title: "资格状态",
+      dataIndex: "资格状态",
+      width: 118,
+      render: (value) => <Tag color={String(value) === "可用于后续" ? "green" : "orange"}>{String(value || "未知")}</Tag>,
+    },
+    {
+      title: "不可用原因",
+      dataIndex: "不可用原因",
+      width: 180,
+      ellipsis: true,
+      render: (value) => (value ? <Typography.Text type="danger">{String(value)}</Typography.Text> : <Typography.Text type="secondary">-</Typography.Text>),
+    },
+    {
+      title: "上传状态",
+      dataIndex: "上传状态",
+      width: 106,
+      render: (value) => <Tag color={String(value) === "已上传" ? "blue" : "default"}>{String(value || "未上传")}</Tag>,
+    },
+    { title: "媒体素材 ID", dataIndex: "媒体素材 ID", width: 150, ellipsis: true, render: renderEmpty },
     { title: "消耗", dataIndex: "消耗", width: 92 },
     { title: "展示", dataIndex: "展示", width: 92 },
     { title: "点击", dataIndex: "点击", width: 92 },
     { title: "转化", dataIndex: "转化", width: 92 },
     { title: "同步时间", dataIndex: "同步时间", width: 180 },
   ];
+}
+
+function renderEmpty(value: unknown) {
+  return value ? String(value) : <Typography.Text type="secondary">-</Typography.Text>;
+}
+
+function materialStatusColor(value: unknown): string {
+  const text = String(value || "");
+  if (text === "可用" || text === "1") {
+    return "green";
+  }
+  if (text.includes("拒审") || text.includes("不通过")) {
+    return "red";
+  }
+  if (text === "禁用" || text === "停用" || text === "2") {
+    return "orange";
+  }
+  return "default";
 }

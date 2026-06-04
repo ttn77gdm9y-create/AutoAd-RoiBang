@@ -150,6 +150,35 @@ body {
   outline-offset: 2px;
 }
 
+.gravity-qualification-strip {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(112px, 1fr));
+  gap: 12px;
+}
+
+.gravity-qualification-tile {
+  min-height: 82px;
+  padding: 14px 16px;
+  border: 1px solid #d8dee6;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.gravity-qualification-tile span {
+  display: block;
+  color: #667085;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.gravity-qualification-tile strong {
+  display: block;
+  margin-top: 8px;
+  color: #20242a;
+  font-size: 24px;
+  line-height: 1.15;
+}
+
 .full-width,
 .confirm-panel {
   width: 100%;
@@ -341,6 +370,10 @@ body {
 
   .bulk-edit-grid {
     grid-template-columns: 1fr;
+  }
+
+  .gravity-qualification-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .workflow-select {

@@ -110,9 +110,110 @@ def test_gravity_materials_list_reads_local_gravity_source_materials(tmp_path: P
     assert row["引力素材 ID"] == "gravity-m-1"
     assert row["MD5"] == "md5-a"
     assert row["状态"] == "可用"
+    assert row["资格状态"] == "可用于后续"
+    assert row["不可用原因"] == ""
+    assert row["媒体素材 ID"] == ""
+    assert row["上传状态"] == "未上传"
     assert row["消耗"] == 12.5
     assert row["转化"] == 1
     assert payload["raw"]["materials"][0]["source_advertiser_id"] == "gravity_engine_182"
+
+
+def test_gravity_materials_list_summarizes_and_filters_qualification(tmp_path: Path):
+    db_path = tmp_path / "data" / "roibang_v2.sqlite3"
+    bootstrap_database(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            """
+            INSERT INTO product_source_materials (
+              product, source_advertiser_id, organization_id, material_id,
+              video_id, name, material_type, review_status, signature,
+              duration, file_size, create_time, tag_ids_json, is_active,
+              first_seen_at, last_seen_at, cost_lookback, score,
+              payload_json, source, synced_at
+            ) VALUES (
+              '点点英雄', 'gravity_engine_182', '182', ?,
+              ?, ?, 'video', ?, ?,
+              15, 2048, '2026-06-01T10:00:00+08:00', '[]', ?,
+              'now', 'now', ?, 0,
+              ?, 'gravity_engine', 'now'
+            )
+            """,
+            [
+                (
+                    "gravity-ok",
+                    "",
+                    "可用素材",
+                    "可用",
+                    "md5-ok",
+                    1,
+                    12.5,
+                    '{"album_name":"点点英雄专辑","folder_name":"6月新素材","status":1}',
+                ),
+                (
+                    "gravity-missing-md5",
+                    "",
+                    "缺MD5素材",
+                    "可用",
+                    "",
+                    1,
+                    0,
+                    '{"album_name":"点点英雄专辑","folder_name":"6月新素材","status":1}',
+                ),
+                (
+                    "gravity-disabled",
+                    "",
+                    "禁用素材",
+                    "禁用",
+                    "md5-disabled",
+                    1,
+                    0,
+                    '{"album_name":"点点英雄专辑","folder_name":"6月新素材","status":2}',
+                ),
+                (
+                    "gravity-uploaded",
+                    "v123456789ABC",
+                    "已上传素材",
+                    "可用",
+                    "md5-uploaded",
+                    1,
+                    0,
+                    '{"album_name":"点点英雄专辑","folder_name":"6月新素材","status":1}',
+                ),
+            ],
+        )
+
+    response = _client(tmp_path).get("/api/gravity-materials/materials", params={"product": "点点英雄"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    items = {item["label"]: item["value"] for item in payload["summary"]["items"]}
+    assert items["素材数"] == 4
+    assert items["可用于后续"] == 2
+    assert items["不可用"] == 2
+    assert items["缺 MD5"] == 1
+    assert items["已上传"] == 1
+    assert items["未上传"] == 3
+    assert items["有表现数据"] == 1
+    by_id = {row["引力素材 ID"]: row for row in payload["table"]["rows"]}
+    assert by_id["gravity-missing-md5"]["资格状态"] == "不可用"
+    assert by_id["gravity-missing-md5"]["不可用原因"] == "缺少 MD5"
+    assert by_id["gravity-disabled"]["不可用原因"] == "引力状态为禁用"
+    assert by_id["gravity-uploaded"]["上传状态"] == "已上传"
+    assert by_id["gravity-uploaded"]["媒体素材 ID"] == "v123456789ABC"
+
+    filtered = _client(tmp_path).get(
+        "/api/gravity-materials/materials",
+        params={"product": "点点英雄", "status": "missing_md5"},
+    )
+
+    assert filtered.status_code == 200
+    filtered_payload = filtered.json()
+    filtered_items = {item["label"]: item["value"] for item in filtered_payload["summary"]["items"]}
+    filtered_rows = filtered_payload["table"]["rows"]
+    assert filtered_items["素材数"] == 4
+    assert filtered_items["缺 MD5"] == 1
+    assert [row["引力素材 ID"] for row in filtered_rows] == ["gravity-missing-md5"]
 
 
 def test_gravity_album_tree_reads_latest_probe_artifact_for_binding_options(tmp_path: Path):

@@ -201,6 +201,16 @@ WORKFLOW_CATALOG: tuple[WorkflowDefinition, ...] = (
         run_kind="gravity_material_sync",
         parameters=(GRAVITY_SYNC_PRODUCT_PARAM, GRAVITY_AUTH_FILE_PARAM, GRAVITY_SYNC_PAGE_SIZE_PARAM, GRAVITY_SYNC_MAX_PAGES_PARAM),
     ),
+    WorkflowDefinition(
+        workflow_id="gravity_material_qualification",
+        name="引力素材资格汇总",
+        category="引力素材库",
+        description="基于本地引力素材计算可用于后续、不可用、缺 MD5、已上传等资格汇总，不上传素材、不创建广告。",
+        operation_type="gravity_material_qualification",
+        latest_workflow="gravity_material_qualification",
+        run_kind="gravity_material_qualification",
+        parameters=(GRAVITY_SYNC_PRODUCT_PARAM,),
+    ),
 )
 
 
@@ -423,6 +433,12 @@ def _summary_metric_parts(summary: dict[str, Any]) -> list[str]:
         ("source_material_count", "源素材"),
         ("rollup_rows_written", "汇总行"),
         ("suggestion_count", "建议"),
+        ("material_count", "素材"),
+        ("eligible_count", "可用于后续"),
+        ("ineligible_count", "不可用"),
+        ("missing_md5_count", "缺 MD5"),
+        ("uploaded_count", "已上传"),
+        ("not_uploaded_count", "未上传"),
     ]
     parts = []
     for key, label in mapping:
@@ -568,6 +584,15 @@ def build_workflow_command(definition: WorkflowDefinition, request: dict[str, st
                 request.get("max_pages", "") or "20",
             ]
         )
+        return command
+    if definition.run_kind == "gravity_material_qualification":
+        command = [
+            _python(),
+            "scripts/run_gravity_material_qualification.py",
+        ]
+        product = request.get("product", "")
+        if product:
+            command.extend(["--product", product])
         return command
     raise RuntimeError(f"未配置工作流命令：{definition.workflow_id}")
 

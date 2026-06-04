@@ -8,6 +8,9 @@ from typing import Any
 from backend.app.services.artifacts import find_latest_artifact
 from backend.app.services.artifacts import read_json
 from roibang_v2.db.bootstrap import bootstrap_database
+from roibang_v2.materials.gravity_qualification import matches_qualification_filter
+from roibang_v2.materials.gravity_qualification import qualification_summary
+from roibang_v2.materials.gravity_qualification import qualify_gravity_material
 
 
 def database_path(project_root: str | Path) -> Path:
@@ -143,8 +146,11 @@ def list_gravity_materials(
 ) -> dict[str, Any]:
     db_path = database_path(project_root)
     bootstrap_database(db_path)
+    summary_rows = _material_rows(db_path, product=product, status="", keyword=keyword, limit=500)
     rows = _material_rows(db_path, product=product, status=status, keyword=keyword, limit=limit)
+    counts = qualification_summary(summary_rows)
     latest_sync = _latest_sync(project_root)
+    latest_qualification = _latest_qualification(project_root)
     return {
         "summary": {
             "title": "引力素材库",
@@ -152,14 +158,38 @@ def list_gravity_materials(
             "risk_level": "low",
             "execution_enabled": False,
             "items": [
-                {"label": "素材数", "value": len(rows)},
+                {"label": "素材数", "value": len(summary_rows)},
+                {"label": "可用于后续", "value": counts["eligible_count"]},
+                {"label": "不可用", "value": counts["ineligible_count"]},
+                {"label": "缺 MD5", "value": counts["missing_md5_count"]},
+                {"label": "已上传", "value": counts["uploaded_count"]},
+                {"label": "未上传", "value": counts["not_uploaded_count"]},
+                {"label": "有表现数据", "value": counts["has_performance_count"]},
                 {"label": "最近同步", "value": latest_sync.get("status_label") or "暂无"},
+                {"label": "最近资格汇总", "value": latest_qualification.get("status_label") or "暂无"},
             ],
             "warnings": ["这里只展示本地已同步的引力素材；不会上传素材、不会创建广告。"],
             "blocking_reasons": [],
         },
         "table": {
-            "columns": ["产品", "专辑", "文件夹", "素材名", "引力素材 ID", "MD5", "状态", "消耗", "展示", "点击", "转化", "同步时间"],
+            "columns": [
+                "产品",
+                "专辑",
+                "文件夹",
+                "素材名",
+                "引力素材 ID",
+                "MD5",
+                "状态",
+                "资格状态",
+                "不可用原因",
+                "上传状态",
+                "媒体素材 ID",
+                "消耗",
+                "展示",
+                "点击",
+                "转化",
+                "同步时间",
+            ],
             "rows": [
                 {
                     "产品": item["product"],
@@ -169,6 +199,10 @@ def list_gravity_materials(
                     "引力素材 ID": item["material_id"],
                     "MD5": item["signature"],
                     "状态": item["review_status"],
+                    "资格状态": item["qualification_status"],
+                    "不可用原因": item["qualification_reason"],
+                    "上传状态": item["upload_status"],
+                    "媒体素材 ID": item["video_id"],
                     "消耗": item["stat_cost"],
                     "展示": item["show_cnt"],
                     "点击": item["click_cnt"],
@@ -191,10 +225,23 @@ def list_gravity_materials(
                         }
                     ],
                 },
-            }
+            },
+            {
+                "title": "最近资格汇总",
+                "table": {
+                    "columns": ["状态", "结果文件", "中文摘要"],
+                    "rows": [
+                        {
+                            "状态": latest_qualification.get("status_label") or "暂无",
+                            "结果文件": latest_qualification.get("artifact_path") or "",
+                            "中文摘要": latest_qualification.get("summary") or "",
+                        }
+                    ],
+                },
+            },
         ],
         "artifact_path": "",
-        "raw": {"materials": rows, "latest_sync": latest_sync},
+        "raw": {"materials": rows, "qualification_summary": counts, "latest_sync": latest_sync, "latest_qualification": latest_qualification},
     }
 
 
@@ -243,6 +290,9 @@ def _binding_rows(db_path: Path, *, product: str, active_only: bool) -> list[dic
 
 
 def _material_rows(db_path: Path, *, product: str, status: str, keyword: str, limit: int) -> list[dict[str, Any]]:
+    normalized_limit = max(1, min(500, int(limit or 100)))
+    qualification_filters = {"eligible", "ineligible", "missing_md5", "uploaded", "not_uploaded", "has_performance"}
+    sql_limit = 500 if status in qualification_filters else normalized_limit
     clauses = ["psm.source = 'gravity_engine'"]
     params: list[Any] = []
     if product:
@@ -256,14 +306,14 @@ def _material_rows(db_path: Path, *, product: str, status: str, keyword: str, li
         clauses.append("(psm.name LIKE ? OR psm.material_id LIKE ? OR psm.signature LIKE ?)")
         like = f"%{keyword}%"
         params.extend([like, like, like])
-    params.append(max(1, min(500, int(limit or 100))))
+    params.append(sql_limit)
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             f"""
             SELECT
               psm.product, psm.source_advertiser_id, psm.organization_id,
-              psm.material_id, psm.name, psm.review_status, psm.signature,
+              psm.material_id, psm.video_id, psm.name, psm.review_status, psm.signature,
               psm.is_active, psm.synced_at, psm.payload_json,
               COALESCE(MAX(psmr.stat_cost), psm.cost_lookback, 0) AS stat_cost,
               COALESCE(MAX(psmr.show_cnt), 0) AS show_cnt,
@@ -277,14 +327,16 @@ def _material_rows(db_path: Path, *, product: str, status: str, keyword: str, li
             WHERE {" AND ".join(clauses)}
             GROUP BY
               psm.product, psm.source_advertiser_id, psm.organization_id,
-              psm.material_id, psm.name, psm.review_status, psm.signature,
+              psm.material_id, psm.video_id, psm.name, psm.review_status, psm.signature,
               psm.is_active, psm.synced_at, psm.payload_json, psm.cost_lookback
             ORDER BY psm.is_active DESC, stat_cost DESC, psm.synced_at DESC, psm.material_id ASC
             LIMIT ?
             """,
             tuple(params),
         ).fetchall()
-    return [_material_payload(dict(row)) for row in rows]
+    hydrated_rows = [_material_payload(dict(row)) for row in rows]
+    filtered_rows = [row for row in hydrated_rows if matches_qualification_filter(row, status)]
+    return filtered_rows[:normalized_limit]
 
 
 def _material_payload(row: dict[str, Any]) -> dict[str, Any]:
@@ -295,15 +347,25 @@ def _material_payload(row: dict[str, Any]) -> dict[str, Any]:
         "album_name": _text(payload.get("album_name")),
         "folder_id": _text(payload.get("folder_id")),
         "folder_name": _text(payload.get("folder_name")),
+        "gravity_status": _text(payload.get("status")),
         "stat_cost": float(row.get("stat_cost") or 0),
         "show_cnt": float(row.get("show_cnt") or 0),
         "click_cnt": float(row.get("click_cnt") or 0),
         "convert_cnt": float(row.get("convert_cnt") or 0),
+        **qualify_gravity_material({**row, "gravity_status": _text(payload.get("status"))}),
     }
 
 
 def _latest_sync(project_root: str | Path) -> dict[str, Any]:
-    artifact = find_latest_artifact(Path(project_root) / "data" / "runs", "gravity_material_sync")
+    return _latest_workflow(project_root, "gravity_material_sync")
+
+
+def _latest_qualification(project_root: str | Path) -> dict[str, Any]:
+    return _latest_workflow(project_root, "gravity_material_qualification")
+
+
+def _latest_workflow(project_root: str | Path, workflow: str) -> dict[str, Any]:
+    artifact = find_latest_artifact(Path(project_root) / "data" / "runs", workflow)
     if not artifact:
         return {}
     payload = read_json(artifact)
