@@ -179,6 +179,25 @@ body {
   line-height: 1.15;
 }
 
+.gravity-upload-card {
+  margin-top: 16px;
+}
+
+.gravity-upload-control {
+  margin-top: 6px;
+}
+
+.gravity-upload-help {
+  display: block;
+  margin-top: 6px;
+  line-height: 1.45;
+}
+
+.gravity-upload-actions {
+  width: 100%;
+  margin-top: 6px;
+}
+
 .full-width,
 .confirm-panel {
   width: 100%;

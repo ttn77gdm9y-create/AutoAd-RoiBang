@@ -2,15 +2,21 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import sys
 from pathlib import Path
 from typing import Any
 
 from backend.app.services.artifacts import find_latest_artifact
 from backend.app.services.artifacts import read_json
+from roibang_v2.ui.background_tasks import build_runner_command
+from roibang_v2.ui.background_tasks import build_task_record
+from roibang_v2.ui.background_tasks import start_runner
+from roibang_v2.ui.background_tasks import write_task_record
 from roibang_v2.db.bootstrap import bootstrap_database
 from roibang_v2.materials.gravity_qualification import matches_qualification_filter
 from roibang_v2.materials.gravity_qualification import qualification_summary
 from roibang_v2.materials.gravity_qualification import qualify_gravity_material
+from roibang_v2.workflows.gravity_upload_to_account import build_gravity_upload_preview
 
 
 def database_path(project_root: str | Path) -> Path:
@@ -266,6 +272,170 @@ def gravity_album_tree(*, project_root: str | Path) -> dict[str, Any]:
     }
 
 
+def build_gravity_upload_preview_result(*, project_root: str | Path, body: dict[str, Any]) -> dict[str, Any]:
+    root = Path(project_root)
+    db_path = database_path(root)
+    bootstrap_database(db_path)
+    return build_gravity_upload_preview(body, db_path=db_path, runs_dir=root / "data" / "runs")
+
+
+def start_gravity_upload_task(*, project_root: str | Path, body: dict[str, Any]) -> dict[str, Any]:
+    root = Path(project_root)
+    runs_dir = root / "data" / "runs"
+    preview_path = _text(body.get("preview_path"))
+    auth_file = _text(body.get("auth_file")) or "data/gravity_token.json"
+    command = [
+        sys.executable,
+        "scripts/run_gravity_upload_to_account.py",
+        "--preview-path",
+        preview_path,
+        "--auth-file",
+        auth_file,
+        "--execute",
+    ]
+    task = build_task_record(
+        runs_dir=runs_dir,
+        operation_type="gravity_material_upload",
+        command=command,
+        cwd=str(root),
+        request={"preview_path": preview_path, "auth_file": auth_file},
+    )
+    task_path = write_task_record(runs_dir, task)
+    pid = start_runner(build_runner_command(task_path), cwd=root)
+    task["pid"] = pid
+    write_task_record(runs_dir, task)
+    return {
+        "summary": {
+            "title": "引力素材上传任务",
+            "status": "queued",
+            "risk_level": "high",
+            "execution_enabled": True,
+            "items": [
+                {"label": "任务 ID", "value": task["task_id"]},
+                {"label": "任务状态", "value": task["status"]},
+                {"label": "预览文件", "value": preview_path},
+            ],
+            "warnings": ["真实上传任务已提交；可在当前页面或任务中心查看进度和结果。"],
+            "blocking_reasons": [],
+        },
+        "table": {
+            "columns": ["任务 ID", "任务内容", "预览文件", "状态"],
+            "rows": [
+                {
+                    "任务 ID": task["task_id"],
+                    "任务内容": "引力素材上传",
+                    "预览文件": preview_path,
+                    "状态": "已排队",
+                }
+            ],
+        },
+        "artifact_path": str(task_path),
+        "task": task,
+        "raw": {"task": task},
+    }
+
+
+def start_gravity_upload_status_refresh_task(*, project_root: str | Path, body: dict[str, Any]) -> dict[str, Any]:
+    root = Path(project_root)
+    runs_dir = root / "data" / "runs"
+    task_id = _text(body.get("task_id"))
+    auth_file = _text(body.get("auth_file")) or "data/gravity_token.json"
+    if not task_id:
+        return _blocked_result("引力素材上传状态刷新未启动", ["缺少引力上传 task_id"])
+    command = [
+        sys.executable,
+        "scripts/run_gravity_upload_status_poll.py",
+        "--task-id",
+        task_id,
+        "--auth-file",
+        auth_file,
+    ]
+    task = build_task_record(
+        runs_dir=runs_dir,
+        operation_type="gravity_upload_status_poll",
+        command=command,
+        cwd=str(root),
+        request={"task_id": task_id, "auth_file": auth_file},
+    )
+    task_path = write_task_record(runs_dir, task)
+    pid = start_runner(build_runner_command(task_path), cwd=root)
+    task["pid"] = pid
+    write_task_record(runs_dir, task)
+    return {
+        "summary": {
+            "title": "引力素材上传状态刷新任务",
+            "status": "queued",
+            "risk_level": "low",
+            "execution_enabled": False,
+            "items": [
+                {"label": "任务 ID", "value": task["task_id"]},
+                {"label": "引力任务 ID", "value": task_id},
+                {"label": "任务状态", "value": task["status"]},
+            ],
+            "warnings": ["这是只读状态刷新；不会上传素材、不会创建广告。"],
+            "blocking_reasons": [],
+        },
+        "table": {
+            "columns": ["任务 ID", "任务内容", "引力任务 ID", "状态"],
+            "rows": [
+                {
+                    "任务 ID": task["task_id"],
+                    "任务内容": "刷新引力素材上传状态",
+                    "引力任务 ID": task_id,
+                    "状态": "已排队",
+                }
+            ],
+        },
+        "artifact_path": str(task_path),
+        "task": task,
+        "raw": {"task": task},
+    }
+
+
+def gravity_upload_status_result(*, project_root: str | Path, task_id: str, title: str) -> dict[str, Any]:
+    db_path = database_path(project_root)
+    bootstrap_database(db_path)
+    rows = _upload_task_rows(db_path, task_id=task_id)
+    completed_count = sum(1 for row in rows if row["status"] == "completed")
+    failed_count = sum(1 for row in rows if row["status"] == "failed")
+    running_count = sum(1 for row in rows if row["status"] in {"pending", "uploading"})
+    return {
+        "summary": {
+            "title": title,
+            "status": "loaded" if rows else "empty",
+            "risk_level": "low",
+            "execution_enabled": False,
+            "items": [
+                {"label": "上传记录", "value": len(rows)},
+                {"label": "已完成", "value": completed_count},
+                {"label": "进行中", "value": running_count},
+                {"label": "失败", "value": failed_count},
+            ],
+            "warnings": [] if rows else ["没有找到这个引力上传任务记录。"],
+            "blocking_reasons": [],
+        },
+        "table": {
+            "columns": ["产品", "账户名", "账户 ID", "引力素材 ID", "MD5", "引力任务 ID", "状态", "媒体素材 ID", "失败原因"],
+            "rows": [
+                {
+                    "产品": row["product"],
+                    "账户名": row["target_account_name"],
+                    "账户 ID": row["target_advertiser_id"],
+                    "引力素材 ID": row["gravity_material_id"],
+                    "MD5": row["signature"],
+                    "引力任务 ID": row["gravity_task_id"],
+                    "状态": _upload_status_label(row["status"]),
+                    "媒体素材 ID": row["video_id"],
+                    "失败原因": row["fail_reason"],
+                }
+                for row in rows
+            ],
+        },
+        "artifact_path": "",
+        "raw": {"rows": rows, "task_id": task_id},
+    }
+
+
 def _binding_rows(db_path: Path, *, product: str, active_only: bool) -> list[dict[str, Any]]:
     clauses = []
     params: list[Any] = []
@@ -287,6 +457,34 @@ def _binding_rows(db_path: Path, *, product: str, active_only: bool) -> list[dic
             tuple(params),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def _upload_task_rows(db_path: Path, *, task_id: str) -> list[dict[str, Any]]:
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT product, gravity_material_id, signature, target_advertiser_id,
+                   target_account_name, gravity_task_id, status, video_id,
+                   material_id_in_account, fail_reason, preview_artifact_path,
+                   response_payload_json, created_at, updated_at
+            FROM gravity_upload_tasks
+            WHERE gravity_task_id = ?
+            ORDER BY updated_at DESC, target_advertiser_id, gravity_material_id
+            """,
+            (_text(task_id),),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _upload_status_label(status: str) -> str:
+    labels = {
+        "pending": "待上传",
+        "uploading": "上传中",
+        "completed": "已完成",
+        "failed": "失败",
+    }
+    return labels.get(_text(status), _text(status))
 
 
 def _material_rows(db_path: Path, *, product: str, status: str, keyword: str, limit: int) -> list[dict[str, Any]]:

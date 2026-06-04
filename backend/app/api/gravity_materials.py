@@ -5,12 +5,18 @@ from typing import Any
 from fastapi import APIRouter
 from fastapi import Request
 from pydantic import BaseModel
+from pydantic import Field
 
+from backend.app.safety.confirmation import require_execute_confirmation
+from backend.app.services.gravity_materials import build_gravity_upload_preview_result
 from backend.app.services.gravity_materials import delete_gravity_binding
 from backend.app.services.gravity_materials import gravity_album_tree
+from backend.app.services.gravity_materials import gravity_upload_status_result
 from backend.app.services.gravity_materials import list_gravity_bindings
 from backend.app.services.gravity_materials import list_gravity_materials
 from backend.app.services.gravity_materials import save_gravity_binding
+from backend.app.services.gravity_materials import start_gravity_upload_status_refresh_task
+from backend.app.services.gravity_materials import start_gravity_upload_task
 
 router = APIRouter()
 
@@ -21,6 +27,28 @@ class GravityBindingRequest(BaseModel):
     album_name: str
     folder_id: str = ""
     folder_name: str = ""
+
+
+class GravityUploadTargetAccount(BaseModel):
+    advertiser_id: str
+    account_name: str = ""
+
+
+class GravityUploadPreviewRequest(BaseModel):
+    product: str = ""
+    target_accounts: list[GravityUploadTargetAccount] = Field(default_factory=list)
+    material_ids: list[str] = Field(default_factory=list)
+
+
+class GravityUploadExecuteRequest(BaseModel):
+    preview_path: str
+    auth_file: str = "data/gravity_token.json"
+    confirmation: str
+
+
+class GravityUploadStatusRefreshRequest(BaseModel):
+    task_id: str
+    auth_file: str = "data/gravity_token.json"
 
 
 @router.get("/gravity-materials/bindings")
@@ -58,3 +86,46 @@ def gravity_material_rows(
 @router.get("/gravity-materials/albums")
 def gravity_material_albums(request: Request) -> dict[str, Any]:
     return gravity_album_tree(project_root=request.app.state.settings.project_root)
+
+
+@router.post("/gravity-materials/upload-preview")
+def gravity_material_upload_preview(request: Request, body: GravityUploadPreviewRequest) -> dict[str, Any]:
+    return build_gravity_upload_preview_result(
+        project_root=request.app.state.settings.project_root,
+        body=body.model_dump(),
+    )
+
+
+@router.post("/gravity-materials/upload-execute")
+def gravity_material_upload_execute(request: Request, body: GravityUploadExecuteRequest) -> dict[str, Any]:
+    require_execute_confirmation(body.confirmation)
+    return start_gravity_upload_task(
+        project_root=request.app.state.settings.project_root,
+        body=body.model_dump(),
+    )
+
+
+@router.post("/gravity-materials/upload-status-refresh")
+def gravity_material_upload_status_refresh(request: Request, body: GravityUploadStatusRefreshRequest) -> dict[str, Any]:
+    return start_gravity_upload_status_refresh_task(
+        project_root=request.app.state.settings.project_root,
+        body=body.model_dump(),
+    )
+
+
+@router.get("/gravity-materials/upload-status/{task_id}")
+def gravity_material_upload_status(request: Request, task_id: str) -> dict[str, Any]:
+    return gravity_upload_status_result(
+        project_root=request.app.state.settings.project_root,
+        task_id=task_id,
+        title="引力素材上传状态",
+    )
+
+
+@router.get("/gravity-materials/upload-result/{task_id}")
+def gravity_material_upload_result(request: Request, task_id: str) -> dict[str, Any]:
+    return gravity_upload_status_result(
+        project_root=request.app.state.settings.project_root,
+        task_id=task_id,
+        title="引力素材上传结果",
+    )

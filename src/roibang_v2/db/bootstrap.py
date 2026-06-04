@@ -208,6 +208,40 @@ def bootstrap_database(database_path: str | Path) -> None:
         )
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS gravity_upload_tasks (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              product TEXT NOT NULL DEFAULT '',
+              gravity_material_id TEXT NOT NULL,
+              signature TEXT NOT NULL DEFAULT '',
+              target_advertiser_id TEXT NOT NULL,
+              target_account_name TEXT NOT NULL DEFAULT '',
+              gravity_task_id TEXT NOT NULL DEFAULT '',
+              status TEXT NOT NULL DEFAULT 'pending',
+              video_id TEXT NOT NULL DEFAULT '',
+              material_id_in_account TEXT NOT NULL DEFAULT '',
+              fail_reason TEXT NOT NULL DEFAULT '',
+              preview_artifact_path TEXT NOT NULL DEFAULT '',
+              response_payload_json TEXT NOT NULL DEFAULT '{}',
+              created_at TEXT NOT NULL DEFAULT (datetime('now')),
+              updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+              UNIQUE(gravity_material_id, target_advertiser_id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_gravity_upload_tasks_status
+              ON gravity_upload_tasks (status, updated_at DESC)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_gravity_upload_tasks_target
+              ON gravity_upload_tasks (target_advertiser_id, status)
+            """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS material_source_mappings (
               product TEXT NOT NULL,
               source_advertiser_id TEXT NOT NULL,

@@ -106,6 +106,24 @@ class GravityMaterialClient:
             },
         )
 
+    def upload_material_to_account(self, *, advertiser_id: str, material_ids: list[str]) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/turbo_engine/api/v1/task/bytedance/upload_material/",
+            {
+                "material_list": [
+                    {
+                        "advertiser_id": advertiser_id,
+                        "material_id_list": material_ids,
+                    }
+                ]
+            },
+        )
+
+    def get_upload_material_status(self, *, task_id: str) -> dict[str, Any]:
+        query = urllib.parse.urlencode({"task_id": task_id})
+        return self._request("GET", f"/turbo_engine/api/v1/task/bytedance/upload_material/status/?{query}")
+
     def _request(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
         last_error: Exception | None = None
         for attempt in range(self.max_retries + 1):
