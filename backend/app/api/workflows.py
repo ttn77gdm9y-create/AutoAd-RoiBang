@@ -72,6 +72,11 @@ WORKFLOW_CATALOG = [
         "description": "查看引力素材库本地鉴权探测结果。",
     },
     {
+        "value": "gravity_material_sync",
+        "label": "引力素材同步入库",
+        "description": "查看引力素材只读同步、本地入库和素材表现写入结果。",
+    },
+    {
         "value": "project_update_execute",
         "label": "项目管理执行",
         "description": "查看项目删除、暂停、预算、出价等固定脚本执行结果。",

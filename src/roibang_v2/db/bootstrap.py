@@ -186,6 +186,28 @@ def bootstrap_database(database_path: str | Path) -> None:
         )
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS product_gravity_album_bindings (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              product TEXT NOT NULL,
+              album_id TEXT NOT NULL,
+              album_name TEXT NOT NULL,
+              folder_id TEXT NOT NULL DEFAULT '',
+              folder_name TEXT NOT NULL DEFAULT '',
+              is_active INTEGER NOT NULL DEFAULT 1,
+              created_at TEXT NOT NULL DEFAULT (datetime('now')),
+              updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+              UNIQUE(product, album_id, folder_id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_product_gravity_album_bindings_product
+              ON product_gravity_album_bindings (product, is_active, album_id, folder_id)
+            """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS material_source_mappings (
               product TEXT NOT NULL,
               source_advertiser_id TEXT NOT NULL,

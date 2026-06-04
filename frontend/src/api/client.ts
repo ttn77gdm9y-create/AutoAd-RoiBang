@@ -52,6 +52,14 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
   );
 }
 
+export async function apiDelete<T>(path: string): Promise<T> {
+  return fetchWithFallback<T>(path, (url) =>
+    fetch(url, {
+      method: "DELETE",
+    }),
+  );
+}
+
 export async function apiUpload<T>(path: string, file: File): Promise<T> {
   const body = new FormData();
   body.append("file", file);

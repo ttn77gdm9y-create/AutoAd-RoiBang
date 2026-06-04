@@ -170,6 +170,22 @@ CREATE TABLE IF NOT EXISTS product_source_material_metric_rollups (
 CREATE INDEX IF NOT EXISTS idx_product_source_material_rollup_rank
   ON product_source_material_metric_rollups (product, source_advertiser_id, window_key, stat_cost DESC);
 
+CREATE TABLE IF NOT EXISTS product_gravity_album_bindings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  product TEXT NOT NULL,
+  album_id TEXT NOT NULL,
+  album_name TEXT NOT NULL,
+  folder_id TEXT NOT NULL DEFAULT '',
+  folder_name TEXT NOT NULL DEFAULT '',
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(product, album_id, folder_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_product_gravity_album_bindings_product
+  ON product_gravity_album_bindings (product, is_active, album_id, folder_id);
+
 CREATE TABLE IF NOT EXISTS material_bindings (
   advertiser_id TEXT NOT NULL,
   project_id TEXT NOT NULL,

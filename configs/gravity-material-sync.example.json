@@ -1,0 +1,12 @@
+{
+  "gravity_material_sync": {
+    "auth_file": "data/gravity_token.json",
+    "product": "",
+    "page_size": 100,
+    "max_pages": 20,
+    "report_date_range": {
+      "start": "2026-05-02",
+      "end": "2026-06-01"
+    }
+  }
+}

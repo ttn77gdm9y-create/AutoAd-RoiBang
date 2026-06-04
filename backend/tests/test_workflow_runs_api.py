@@ -22,11 +22,13 @@ def test_workflow_run_catalog_exposes_only_safe_business_tasks(tmp_path):
     assert "操作日志同步" in names
     assert "同步数据并重算建议" in names
     assert "引力素材库只读探测" in names
+    assert "引力素材同步入库" in names
     assert {row["真实投放动作"] for row in rows} == {"否"}
     raw_text = json.dumps(payload["raw"], ensure_ascii=False)
     assert "upload_material" not in raw_text
     assert "create_live_execute" not in raw_text
     assert "project_update_execute" not in raw_text
+    assert "upload_material" not in raw_text
 
 
 def test_workflow_run_catalog_includes_business_controls_and_latest_status(tmp_path):
@@ -125,6 +127,48 @@ def test_gravity_probe_catalog_uses_business_select_controls(tmp_path):
     blocked_payload = blocked.json()
     assert blocked_payload["summary"]["status"] == "blocked"
     assert "样本数量只能选择" in blocked_payload["summary"]["blocking_reasons"][0]
+
+
+def test_gravity_material_sync_workflow_uses_fixed_safe_command(tmp_path):
+    app = create_app(project_root=tmp_path)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/workflow-runs/gravity_material_sync/preview",
+        json={"request": {"product": "点点英雄", "page_size": "100", "max_pages": "20"}},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["title"] == "引力素材同步入库运行预览"
+    assert payload["summary"]["execution_enabled"] is False
+    assert payload["table"]["rows"][0]["真实投放动作"] == "否"
+    assert payload["table"]["rows"][0]["参数"] == "产品：点点英雄；引力 Token 文件：data/gravity_token.json；每页素材数：100；最多页数：20"
+    command = payload["raw"]["command"]
+    assert command[1:] == [
+        "scripts/run_gravity_material_sync.py",
+        "--product",
+        "点点英雄",
+        "--auth-file",
+        "data/gravity_token.json",
+        "--page-size",
+        "100",
+        "--max-pages",
+        "20",
+    ]
+    assert "upload_material" not in " ".join(command)
+    assert "--execute" not in command
+
+
+def test_results_catalog_includes_gravity_material_sync(tmp_path):
+    app = create_app(project_root=tmp_path)
+    client = TestClient(app)
+
+    response = client.get("/api/workflows/catalog")
+
+    assert response.status_code == 200
+    labels_by_value = {item["value"]: item["label"] for item in response.json()["raw"]["workflows"]}
+    assert labels_by_value["gravity_material_sync"] == "引力素材同步入库"
 
 
 def test_gravity_probe_catalog_latest_status_says_token_state_and_blocking_reason(tmp_path):

@@ -33,6 +33,7 @@ export function WorkflowCenterPage() {
     queryFn: () => apiGet<ChineseResult>("/dashboard/filters"),
   });
   const productOptions = useMemo(() => rowsToProductOptions(filterCatalog.data), [filterCatalog.data]);
+  const productNameOptions = useMemo(() => rowsToProductNameOptions(filterCatalog.data), [filterCatalog.data]);
   const workflows = useMemo(() => workflowItemsFromCatalog(catalog.data), [catalog.data]);
   const selectedWorkflow = workflows.find((item) => item.workflow_id === selectedWorkflowId) ?? workflows[0];
   const activeTaskDetail = useQuery({
@@ -155,6 +156,7 @@ export function WorkflowCenterPage() {
                                 parameter,
                                 value: workflowRequest[parameter.name] ?? parameter.default,
                                 productOptions,
+                                productNameOptions,
                                 productOptionsLoading: filterCatalog.isLoading,
                                 onChange: (value) => updateRequest(parameter.name, value),
                               })}
@@ -271,12 +273,14 @@ function renderParameterControl({
   parameter,
   value,
   productOptions,
+  productNameOptions,
   productOptionsLoading,
   onChange,
 }: {
   parameter: WorkflowParameter;
   value: string;
   productOptions: { label: string; value: string }[];
+  productNameOptions: { label: string; value: string }[];
   productOptionsLoading: boolean;
   onChange: (value: string) => void;
 }) {
@@ -288,6 +292,19 @@ function renderParameterControl({
         value={value || allProductsValue}
         options={[{ label: "全部启用产品", value: allProductsValue }, ...productOptions]}
         onChange={(nextValue) => onChange(nextValue === allProductsValue ? "" : nextValue)}
+      />
+    );
+  }
+  if (parameter.control === "product_name_select") {
+    return (
+      <Select
+        className="workflow-param-control"
+        loading={productOptionsLoading}
+        allowClear
+        value={value || undefined}
+        options={productNameOptions}
+        placeholder="全部已绑定产品"
+        onChange={(nextValue) => onChange(nextValue ?? "")}
       />
     );
   }
@@ -372,6 +389,15 @@ function rowsToProductOptions(result?: ChineseResult) {
       label: String(row["显示名称"] ?? row["值"] ?? ""),
       value: String(row["值"] ?? ""),
     }));
+}
+
+function rowsToProductNameOptions(result?: ChineseResult) {
+  return (result?.table.rows ?? [])
+    .filter((row) => row["类型"] === "产品")
+    .map((row) => {
+      const label = String(row["显示名称"] ?? row["值"] ?? "");
+      return { label, value: label };
+    });
 }
 
 function parseDateValue(value: string): Dayjs | null {

@@ -93,6 +93,40 @@ GRAVITY_SAMPLE_LIMIT_PARAM = WorkflowParameter(
         {"label": "5 条", "value": "5"},
     ),
 )
+GRAVITY_SYNC_PRODUCT_PARAM = WorkflowParameter(
+    name="product",
+    label="产品",
+    default="",
+    required=False,
+    description="为空时同步全部已绑定产品。",
+    control="product_name_select",
+)
+GRAVITY_SYNC_PAGE_SIZE_PARAM = WorkflowParameter(
+    name="page_size",
+    label="每页素材数",
+    default="100",
+    required=False,
+    description="分页读取引力素材列表；不上传素材。",
+    control="select",
+    options=(
+        {"label": "50", "value": "50"},
+        {"label": "100", "value": "100"},
+        {"label": "200", "value": "200"},
+    ),
+)
+GRAVITY_SYNC_MAX_PAGES_PARAM = WorkflowParameter(
+    name="max_pages",
+    label="最多页数",
+    default="20",
+    required=False,
+    description="限制单个绑定最多读取页数，避免一次同步过大。",
+    control="select",
+    options=(
+        {"label": "10", "value": "10"},
+        {"label": "20", "value": "20"},
+        {"label": "50", "value": "50"},
+    ),
+)
 
 
 WORKFLOW_CATALOG: tuple[WorkflowDefinition, ...] = (
@@ -156,6 +190,16 @@ WORKFLOW_CATALOG: tuple[WorkflowDefinition, ...] = (
         latest_workflow="gravity_api_probe",
         run_kind="gravity_api_probe",
         parameters=(GRAVITY_AUTH_FILE_PARAM, GRAVITY_PROBE_SCOPE_PARAM, GRAVITY_SAMPLE_LIMIT_PARAM),
+    ),
+    WorkflowDefinition(
+        workflow_id="gravity_material_sync",
+        name="引力素材同步入库",
+        category="引力素材库",
+        description="按产品-专辑绑定只读同步引力素材，写入本地素材池，不上传素材、不创建广告。",
+        operation_type="gravity_material_sync",
+        latest_workflow="gravity_material_sync",
+        run_kind="gravity_material_sync",
+        parameters=(GRAVITY_SYNC_PRODUCT_PARAM, GRAVITY_AUTH_FILE_PARAM, GRAVITY_SYNC_PAGE_SIZE_PARAM, GRAVITY_SYNC_MAX_PAGES_PARAM),
     ),
 )
 
@@ -506,6 +550,25 @@ def build_workflow_command(definition: WorkflowDefinition, request: dict[str, st
             "--sample-limit",
             request.get("sample_limit", "") or "3",
         ]
+    if definition.run_kind == "gravity_material_sync":
+        command = [
+            _python(),
+            "scripts/run_gravity_material_sync.py",
+        ]
+        product = request.get("product", "")
+        if product:
+            command.extend(["--product", product])
+        command.extend(
+            [
+                "--auth-file",
+                request.get("auth_file", "") or "data/gravity_token.json",
+                "--page-size",
+                request.get("page_size", "") or "100",
+                "--max-pages",
+                request.get("max_pages", "") or "20",
+            ]
+        )
+        return command
     raise RuntimeError(f"未配置工作流命令：{definition.workflow_id}")
 
 

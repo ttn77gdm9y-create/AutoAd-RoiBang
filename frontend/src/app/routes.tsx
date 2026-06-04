@@ -8,6 +8,7 @@ import {
   DatabaseOutlined,
   EditOutlined,
   ExclamationCircleOutlined,
+  FolderOpenOutlined,
   HistoryOutlined,
   LinkOutlined,
   PlayCircleOutlined,
@@ -23,6 +24,7 @@ import { AutomationHealthPage } from "../pages/AutomationHealthPage";
 import { CreatePlansPage } from "../pages/CreatePlansPage";
 import { DashboardPage } from "../pages/DashboardPage";
 import { ExecutionPage } from "../pages/ExecutionPage";
+import { GravityMaterialsPage } from "../pages/GravityMaterialsPage";
 import { OperationsPage } from "../pages/OperationsPage";
 import { ProductAutomationPage } from "../pages/ProductAutomationPage";
 import { ProjectManagementPage } from "../pages/ProjectManagementPage";
@@ -38,6 +40,7 @@ export const routeItems = [
   { key: "/accounts", label: "产品账户库", group: "核心业务", icon: <DatabaseOutlined />, element: <AccountsPage /> },
   { key: "/suggestions", label: "投放建议工作台", group: "核心业务", icon: <ExclamationCircleOutlined />, element: <SuggestionsPage /> },
   { key: "/workflow-center", label: "自动化工作台", group: "核心业务", icon: <ControlOutlined />, element: <WorkflowCenterPage /> },
+  { key: "/gravity-materials", label: "引力素材库", group: "核心业务", icon: <FolderOpenOutlined />, element: <GravityMaterialsPage /> },
   { key: "/create-plans", label: "创建计划", group: "核心业务", icon: <PlusSquareOutlined />, element: <CreatePlansPage /> },
   { key: "/project-management", label: "项目管理", group: "核心业务", icon: <ToolOutlined />, element: <ProjectManagementPage /> },
   { key: "/account-remarks", label: "账户备注", group: "核心业务", icon: <EditOutlined />, element: <AccountRemarksPage /> },
