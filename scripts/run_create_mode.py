@@ -49,6 +49,7 @@ def _request_from_args(args: argparse.Namespace) -> dict:
             "target_accounts": accounts,
             "cpa_bid": args.cpa_bid or "",
             "roi_coefficient": args.roi_coefficient or "",
+            "material_source": args.material_source or "",
         }
     }
     if args.template_catalog:
@@ -70,6 +71,7 @@ def run_from_args(argv: list[str] | None = None) -> int:
     parser.add_argument("--owner", default="郭靖")
     parser.add_argument("--cpa-bid", help="本次项目出价；为空时不写入创建计划。")
     parser.add_argument("--roi-coefficient", help="本次 ROI 系数；为空时不写入创建计划。")
+    parser.add_argument("--material-source", choices=["source_account", "gravity_engine"], default="")
     parser.add_argument("--policy", default="policies/create-policy.example.json")
     parser.add_argument("--template-catalog", default="")
     args = parser.parse_args(argv)

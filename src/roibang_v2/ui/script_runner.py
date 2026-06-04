@@ -118,6 +118,7 @@ def build_create_plan_command(
     template_catalog: str = "",
     cpa_bid: str = "",
     roi_coefficient: str = "",
+    material_source: str = "",
 ) -> list[str]:
     account_ids = _split_accounts(accounts)
     if not account_ids:
@@ -144,6 +145,8 @@ def build_create_plan_command(
         command.extend(["--cpa-bid", cpa_bid.strip()])
     if roi_coefficient.strip():
         command.extend(["--roi-coefficient", roi_coefficient.strip()])
+    if material_source.strip():
+        command.extend(["--material-source", material_source.strip()])
     for account in account_ids:
         command.extend(["--account", account])
     return command

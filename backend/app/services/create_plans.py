@@ -24,6 +24,12 @@ from backend.app.services.accounts_store import load_accounts
 from backend.app.services.ui_labels import CREATE_MODE_LABELS
 from backend.app.services.ui_labels import create_mode_label
 
+MATERIAL_SOURCE_LABELS = {
+    "source_account": "源素材账户",
+    "source_material_account": "源素材账户",
+    "gravity_engine": "引力素材库",
+}
+
 
 def build_create_plan_generate_preview(request: dict[str, Any], *, project_root: str | Path) -> dict[str, Any]:
     mode = _text(request.get("mode") or request.get("mode_key"))
@@ -35,6 +41,8 @@ def build_create_plan_generate_preview(request: dict[str, Any], *, project_root:
     template_catalog = _text(request.get("template_catalog"))
     cpa_bid = _text(request.get("cpa_bid"))
     roi_coefficient = _text(request.get("roi_coefficient"))
+    material_source = _material_source(request)
+    material_source_label = _material_source_label(material_source)
     advertiser_ids, account_source, account_warnings = _resolve_generate_accounts(request, project_root=project_root)
     validation_reasons = _generate_validation_reasons(
         mode=mode,
@@ -42,6 +50,8 @@ def build_create_plan_generate_preview(request: dict[str, Any], *, project_root:
         template_catalog=template_catalog,
         advertiser_ids=advertiser_ids,
     )
+    if material_source not in {"source_account", "gravity_engine"}:
+        validation_reasons.append("素材来源只能选择源素材账户或引力素材库")
     if validation_reasons:
         return _blocked_generate_preview(mode, product_name, owner, target_date, validation_reasons, request)
     if roi_coefficient and not _is_7r_mode(mode):
@@ -65,6 +75,7 @@ def build_create_plan_generate_preview(request: dict[str, Any], *, project_root:
             template_catalog=template_catalog,
             cpa_bid=cpa_bid,
             roi_coefficient=roi_coefficient,
+            material_source="" if material_source == "source_account" else material_source,
         )
     except ValueError as exc:
         return _blocked_generate_preview(mode, product_name, owner, target_date, str(exc), request)
@@ -75,6 +86,7 @@ def build_create_plan_generate_preview(request: dict[str, Any], *, project_root:
             "账户名": account_name_for(account_names, advertiser_id),
             "创建模式": mode,
             "产品": product_name,
+            "素材来源": material_source_label,
             "负责人": owner,
             "目标日期": target_date,
             "出价": cpa_bid,
@@ -94,6 +106,7 @@ def build_create_plan_generate_preview(request: dict[str, Any], *, project_root:
                 {"label": "模式来源", "value": mode_metadata["source"]},
                 {"label": "模式文件", "value": mode_metadata["path"]},
                 {"label": "产品", "value": product_name},
+                {"label": "素材来源", "value": material_source_label},
                 {"label": "账户数", "value": len(advertiser_ids)},
                 {"label": "账户来源", "value": _account_source_label(account_source)},
                 {"label": "负责人", "value": owner},
@@ -101,12 +114,17 @@ def build_create_plan_generate_preview(request: dict[str, Any], *, project_root:
             ],
             "warnings": [
                 *account_warnings,
+                *(
+                    ["引力素材库模式只使用已上传完成且已回填媒体素材 ID 的素材；本步骤不会上传素材。"]
+                    if material_source == "gravity_engine"
+                    else []
+                ),
                 "这里只生成创建计划 JSON，不会创建项目、单元或绑定素材。",
             ],
             "blocking_reasons": [],
         },
         "table": {
-            "columns": ["账户 ID", "账户名", "创建模式", "产品", "负责人", "目标日期", "出价", "ROI 系数"],
+            "columns": ["账户 ID", "账户名", "创建模式", "产品", "素材来源", "负责人", "目标日期", "出价", "ROI 系数"],
             "rows": rows,
         },
         "artifact_path": "",
@@ -118,6 +136,7 @@ def build_create_plan_generate_preview(request: dict[str, Any], *, project_root:
             "account_source": account_source,
             "product": product_name,
             "product_key": product_key,
+            "material_source": material_source,
             "mode_metadata": mode_metadata,
         },
     }
@@ -584,6 +603,7 @@ def _build_plan_preview_result(
                 {"label": "固定模板", "value": template_name},
                 {"label": "模板文件", "value": template_path},
                 {"label": "创建计划 JSON", "value": plan_path},
+                {"label": "素材来源", "value": _material_source_label(_text(summary.get("material_source")) or "source_account")},
                 {"label": "账户数", "value": _int(summary.get("target_account_count"))},
                 {"label": "项目数", "value": _int(summary.get("planned_project_count"))},
                 {"label": "单元数", "value": _int(summary.get("planned_unit_count"))},
@@ -1039,6 +1059,7 @@ def _record_generate_operation(
         "mode_key": _text(request.get("mode") or request.get("mode_key")),
         "display_name": _display_create_mode(request),
         "template_catalog_path": _text(request.get("template_catalog")),
+        "material_source": _material_source(request),
         "account_source": _text(raw.get("account_source")) or "manual",
         "accounts": [{"advertiser_id": advertiser_id} for advertiser_id in resolved_accounts],
         "review": {
@@ -1443,6 +1464,17 @@ def _display_create_mode(request: dict[str, Any]) -> str:
     product_name = _text(request.get("product") or request.get("product_name"))
     mode_label = create_mode_label(mode)
     return f"{product_name}{mode_label}" if product_name and mode_label != "未指定模式" else mode_label
+
+
+def _material_source(request: dict[str, Any]) -> str:
+    source = _text(request.get("material_source"))
+    if not source or source == "source_material_account":
+        return "source_account"
+    return source
+
+
+def _material_source_label(source: str) -> str:
+    return MATERIAL_SOURCE_LABELS.get(_text(source), "未知素材来源")
 
 
 def _text(value: Any) -> str:

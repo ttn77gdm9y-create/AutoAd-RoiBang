@@ -134,6 +134,7 @@ def build_create_plan_preview_from_review(value: dict[str, Any]) -> dict[str, An
         "planned_unit_count": _summary_value(review, "planned_unit_count", len(units)),
         "planned_material_count": _summary_value(review, "planned_material_count", 0),
         "source_material_count": _summary_value(review, "source_material_count", 0),
+        "material_source": _summary_value(review, "material_source", ""),
         "material_assignment_count": _summary_value(
             review,
             "material_assignment_count",

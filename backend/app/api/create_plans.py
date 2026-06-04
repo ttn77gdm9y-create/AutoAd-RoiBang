@@ -34,6 +34,7 @@ class CreatePlanPreviewRequest(BaseModel):
     template_catalog: str = ""
     cpa_bid: str = ""
     roi_coefficient: str = ""
+    material_source: str = ""
     extra: dict[str, Any] = Field(default_factory=dict)
 
 

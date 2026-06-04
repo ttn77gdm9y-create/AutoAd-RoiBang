@@ -45,6 +45,73 @@ def _seed_source_materials(db_path: Path, count: int = 80) -> None:
             )
 
 
+def _seed_gravity_materials_for_create_plan(db_path: Path) -> None:
+    bootstrap_database(db_path)
+    with sqlite3.connect(db_path) as conn:
+        rows = [
+            ("g-001", "引力素材001", "sig-g-001", 5000, 20),
+            ("g-002", "引力素材002", "sig-g-002", 3000, 8),
+            ("g-003", "引力素材003", "sig-g-003", 2000, 4),
+        ]
+        for material_id, name, signature, stat_cost, convert_cnt in rows:
+            conn.execute(
+                """
+                INSERT INTO materials (
+                  material_id, name, material_type, video_id,
+                  review_status, cost_lookback, score, source, synced_at
+                ) VALUES (?, ?, 'video', '', 'APPROVED', ?, ?, 'gravity_engine', 'now')
+                """,
+                (material_id, name, stat_cost, stat_cost),
+            )
+            conn.execute(
+                """
+                INSERT INTO product_source_materials (
+                  product, source_advertiser_id, organization_id, material_id,
+                  video_id, name, material_type, review_status, signature, is_active,
+                  cost_lookback, score, source, synced_at
+                ) VALUES ('勇者突进', 'gravity_engine_album_1', 'gravity_org', ?, '', ?, 'video', 'APPROVED', ?, 1, ?, ?, 'gravity_engine', 'now')
+                """,
+                (material_id, name, signature, stat_cost, stat_cost),
+            )
+            conn.execute(
+                """
+                INSERT INTO product_source_material_metric_rollups (
+                  product, source_advertiser_id, organization_id, window_key, window_days,
+                  period_start, period_end, material_id, material_type, source_video_id,
+                  name, review_status, signature, stat_cost, convert_cnt, source, synced_at
+                ) VALUES ('勇者突进', 'gravity_engine_album_1', 'gravity_org', 'last_60d', 60,
+                  '2026-03-15', '2026-05-13', ?, 'video', '', ?, 'APPROVED', ?, ?, ?, 'gravity_engine', 'now')
+                """,
+                (material_id, name, signature, stat_cost, convert_cnt),
+            )
+        upload_rows = [
+            ("g-001", "acc-1", "账户一", "completed", "vG01000000000001", "account-mat-1"),
+            ("g-001", "acc-2", "账户二", "completed", "vG02000000000002", "account-mat-2"),
+            ("g-002", "acc-1", "账户一", "uploading", "vG03000000000003", "account-mat-3"),
+            ("g-003", "acc-1", "账户一", "completed", "", "account-mat-4"),
+        ]
+        for material_id, advertiser_id, account_name, status, video_id, material_id_in_account in upload_rows:
+            conn.execute(
+                """
+                INSERT INTO gravity_upload_tasks (
+                  product, gravity_material_id, signature, target_advertiser_id, target_account_name,
+                  gravity_task_id, status, video_id, material_id_in_account, preview_artifact_path,
+                  created_at, updated_at
+                ) VALUES ('勇者突进', ?, ?, ?, ?, ?, ?, ?, ?, 'data/runs/gravity_upload_to_account/preview.json', 'now', 'now')
+                """,
+                (
+                    material_id,
+                    f"sig-{material_id}",
+                    advertiser_id,
+                    account_name,
+                    f"task-{material_id}-{advertiser_id}",
+                    status,
+                    video_id,
+                    material_id_in_account,
+                ),
+            )
+
+
 def _policy() -> dict:
     return {
         "project_naming": {
@@ -743,6 +810,76 @@ def test_create_mode_generates_strategy_plan_with_enabled_initial_status_and_ove
     assert plan["strategy"]["projects"][0]["units"][0]["operation"] == "ENABLE"
     assert "测新" in plan["strategy"]["projects"][0]["project_name"]
     assert Path(result["artifact_path"]).exists()
+
+
+def test_create_mode_can_use_completed_gravity_uploads_per_target_account(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    _seed_gravity_materials_for_create_plan(db_path)
+    mode_path = tmp_path / "wx_pay_general_gravity.json"
+    mode_path.write_text(
+        json.dumps(
+            {
+                "mode_key": "wx_pay_general_gravity",
+                "display_name": "每付通投引力素材",
+                "product": "勇者突进",
+                "platform": "WECHAT_GAME",
+                "template_key": "wx_pay_general",
+                "template_name_suffix": "引力素材",
+                "source_advertiser_id": "1856647522964490",
+                "organization_id": "1851650746645060",
+                "defaults": {
+                    "daily_budget": 10000,
+                    "cpa_bid": 111,
+                    "project_count": 1,
+                    "units_per_project": 1,
+                },
+                "material_requirements": {
+                    "material_type": "video",
+                    "materials_per_unit": 1,
+                    "dedupe_scope": "allow_reuse",
+                    "on_insufficient": "allow_reuse",
+                },
+                "material_selection": {"lookback_days": 60, "selection_type": "high_spend", "min_stat_cost": 0},
+                "initial_status": {"project_operation": "ENABLE", "unit_operation": "ENABLE"},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_create_mode_request(
+        {
+            "create_mode": {
+                "mode_config_path": str(mode_path),
+                "target_accounts": ["acc-1", "acc-2"],
+                "target_date": "2026-05-13",
+                "owner": "郭靖",
+                "material_source": "gravity_engine",
+            }
+        },
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        policy={"create_strategy_plan": _policy()},
+        template_catalog_path=Path("configs/create-templates/wx-mini-game.json"),
+    )
+
+    assert result["ok"] is True
+    plan = result["create_strategy_plan"]
+    assert plan["request"]["material_selection"]["source_scope"] == "gravity_engine"
+    assert plan["strategy"]["source"] == "gravity_upload_tasks"
+    materials_by_account = {}
+    for project in plan["strategy"]["projects"]:
+        unit_materials = project["units"][0]["materials"]
+        assert len(unit_materials) == 1
+        materials_by_account[project["advertiser_id"]] = unit_materials[0]
+    assert materials_by_account["acc-1"]["material_id"] == "g-001"
+    assert materials_by_account["acc-1"]["source_video_id"] == "vG01000000000001"
+    assert materials_by_account["acc-1"]["target_account_name"] == "账户一"
+    assert materials_by_account["acc-2"]["material_id"] == "g-001"
+    assert materials_by_account["acc-2"]["source_video_id"] == "vG02000000000002"
+    assert materials_by_account["acc-2"]["target_account_name"] == "账户二"
+    selected_ids = {material["material_id"] for material in materials_by_account.values()}
+    assert selected_ids == {"g-001"}
 
 
 def test_create_mode_allows_reuse_without_duplicate_material_inside_one_unit(tmp_path: Path):

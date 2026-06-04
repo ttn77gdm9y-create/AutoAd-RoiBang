@@ -258,6 +258,7 @@ def build_create_plan_review(plan_payload: dict[str, Any]) -> dict[str, Any]:
         "planned_unit_count": _int(plan_summary.get("planned_unit_count")),
         "planned_material_count": _int(plan_summary.get("planned_material_count")),
         "source_material_count": _int(plan_summary.get("source_material_count")),
+        "material_source": _text(plan_summary.get("material_source")),
         "violation_count": _int(plan_summary.get("violation_count")),
         "material_assignment_count": _int(details.get("material_assignment_count")),
         "unique_material_count": len(materials),

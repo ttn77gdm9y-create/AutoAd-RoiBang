@@ -163,12 +163,54 @@ def test_create_plan_preview_returns_chinese_summary(tmp_path):
     assert payload["summary"]["execution_enabled"] is False
     assert {"label": "创建模式", "value": "wx_pay_male_random_materials"} in payload["summary"]["items"]
     assert {"label": "产品", "value": "点点英雄"} in payload["summary"]["items"]
+    assert {"label": "素材来源", "value": "源素材账户"} in payload["summary"]["items"]
     assert {"label": "账户数", "value": 2} in payload["summary"]["items"]
-    assert payload["table"]["columns"] == ["账户 ID", "账户名", "创建模式", "产品", "负责人", "目标日期", "出价", "ROI 系数"]
+    assert payload["table"]["columns"] == [
+        "账户 ID",
+        "账户名",
+        "创建模式",
+        "产品",
+        "素材来源",
+        "负责人",
+        "目标日期",
+        "出价",
+        "ROI 系数",
+    ]
     assert payload["table"]["rows"][0]["账户 ID"] == "1001"
     assert payload["table"]["rows"][0]["账户名"] == "未配置账户名"
+    assert payload["table"]["rows"][0]["素材来源"] == "源素材账户"
     assert payload["raw"]["command"][1] == "scripts/run_create_mode.py"
     assert "--execute" not in payload["raw"]["command"]
+
+
+def test_create_plan_preview_can_select_gravity_material_source(tmp_path):
+    client = TestClient(create_app(project_root=tmp_path))
+
+    response = client.post(
+        "/api/create-plans/preview",
+        json={**_create_plan_request(), "material_source": "gravity_engine"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["status"] == "planned"
+    assert {"label": "素材来源", "value": "引力素材库"} in payload["summary"]["items"]
+    assert payload["table"]["columns"] == [
+        "账户 ID",
+        "账户名",
+        "创建模式",
+        "产品",
+        "素材来源",
+        "负责人",
+        "目标日期",
+        "出价",
+        "ROI 系数",
+    ]
+    assert payload["table"]["rows"][0]["素材来源"] == "引力素材库"
+    command = payload["raw"]["command"]
+    assert "--material-source" in command
+    assert command[command.index("--material-source") + 1] == "gravity_engine"
+    assert "--execute" not in command
 
 
 def test_create_plan_templates_lists_configured_template_catalogs(tmp_path):

@@ -1,5 +1,5 @@
 import { FileSearchOutlined, SafetyCertificateOutlined } from "@ant-design/icons";
-import { Alert, Button, Card, Col, Collapse, Form, Input, Modal, Row, Select, Space, Typography, message as antdMessage } from "antd";
+import { Alert, Button, Card, Col, Collapse, Form, Input, Modal, Row, Segmented, Select, Space, Typography, message as antdMessage } from "antd";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
@@ -22,7 +22,10 @@ type CreatePlanRequest = {
   template_catalog: string;
   cpa_bid: string;
   roi_coefficient: string;
+  material_source: MaterialSource;
 };
+
+type MaterialSource = "source_account" | "gravity_engine";
 
 type TaskResponse = ChineseResult & {
   task?: {
@@ -42,7 +45,17 @@ const defaultRequest: CreatePlanRequest = {
   template_catalog: "",
   cpa_bid: "",
   roi_coefficient: "",
+  material_source: "source_account",
 };
+
+const materialSourceOptions: Array<{ label: string; value: MaterialSource }> = [
+  { label: "源素材账户", value: "source_account" },
+  { label: "引力素材库", value: "gravity_engine" },
+];
+
+function normalizeMaterialSource(value: unknown): MaterialSource {
+  return value === "gravity_engine" ? "gravity_engine" : "source_account";
+}
 
 const fallbackCreateModeOptions = [
   { label: "每付男素材不限", value: "wx_pay_male_random_materials" },
@@ -149,6 +162,7 @@ function createPlanRequestFromSuggestionPreview(result?: ChineseResult): CreateP
     template_catalog: String(request.template_catalog ?? request.template_catalog_path ?? ""),
     cpa_bid: String(request.cpa_bid ?? ""),
     roi_coefficient: String(request.roi_coefficient ?? ""),
+    material_source: normalizeMaterialSource(request.material_source),
   };
 }
 
@@ -510,6 +524,27 @@ export function CreatePlansPage() {
                     onChange={(event) => setRequest({ ...request, roi_coefficient: event.target.value })}
                     placeholder={is7rSelected ? "7R 项目可填写" : "非 7R 模式不可填写"}
                   />
+                </Form.Item>
+              </Col>
+              <Col xs={24}>
+                <Form.Item label="素材来源">
+                  <Space direction="vertical" size="small" className="full-width">
+                    <Segmented
+                      value={request.material_source}
+                      options={materialSourceOptions}
+                      onChange={(value) => setRequest({ ...request, material_source: normalizeMaterialSource(value) })}
+                    />
+                    {request.material_source === "gravity_engine" ? (
+                      <Alert
+                        type="info"
+                        showIcon
+                        message="只使用已经上传完成并回填媒体素材 ID 的引力素材；这里不会上传素材。"
+                        description="如果目标账户还没有完成上传的引力素材，系统会阻止生成创建计划。"
+                      />
+                    ) : (
+                      <Typography.Text type="secondary">继续使用产品配置里的源素材账户素材池。</Typography.Text>
+                    )}
+                  </Space>
                 </Form.Item>
               </Col>
               <Col xs={24} lg={12}>

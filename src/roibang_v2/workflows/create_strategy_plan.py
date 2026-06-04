@@ -112,6 +112,14 @@ def _selection_policy(request: dict[str, Any]) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
+def _material_source_scope(request: dict[str, Any]) -> str:
+    selection = _selection_policy(request)
+    source_scope = str(selection.get("source_scope") or "").strip()
+    if source_scope in {"gravity_engine", "source_material_account"}:
+        return source_scope
+    return "source_material_account"
+
+
 def _candidate_min_stat_cost(request: dict[str, Any], policy: dict[str, Any]) -> float:
     selection = _selection_policy(request)
     return max(_float_value(policy.get("min_candidate_stat_cost"), 0), _float_value(selection.get("min_stat_cost"), 0))
@@ -285,11 +293,96 @@ def _target_existing_material_ids_by_account(
     return existing
 
 
+def _gravity_candidate_rows(*, db_path: str | Path, request: dict[str, Any], policy: dict[str, Any]) -> list[dict[str, Any]]:
+    requirements = _material_requirements(request)
+    selection = _selection_policy(request)
+    lookback_days = _int_value(selection.get("lookback_days"), 0)
+    material_type = str(requirements.get("material_type") or "video")
+    target_account_ids = [
+        str(account.get("advertiser_id") or "").strip()
+        for account in _target_accounts(request)
+        if str(account.get("advertiser_id") or "").strip()
+    ]
+    if not target_account_ids:
+        return []
+    placeholders = ",".join("?" for _ in target_account_ids)
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            f"""
+            SELECT
+              psm.material_id,
+              psm.material_type,
+              gut.video_id AS source_video_id,
+              psm.name,
+              psm.review_status,
+              psm.source,
+              psm.signature,
+              gut.target_advertiser_id,
+              gut.target_account_name,
+              gut.material_id_in_account AS target_material_id,
+              gut.status AS upload_status,
+              COALESCE(MAX(CASE WHEN psmr.window_days = ? THEN psmr.stat_cost END), MAX(psmr.stat_cost), psm.cost_lookback, 0) AS stat_cost,
+              COALESCE(MAX(CASE WHEN psmr.window_days = ? THEN psmr.convert_cnt END), MAX(psmr.convert_cnt), 0) AS convert_cnt,
+              psm.score,
+              psm.create_time,
+              psm.first_seen_at,
+              COALESCE(MAX(CASE WHEN psmr.window_days = ? THEN psmr.first_seen_metric_date END), MAX(psmr.first_seen_metric_date), '') AS first_seen_metric_date,
+              COALESCE(
+                MAX(CASE WHEN (psmr.window_key = 'all_history' OR psmr.window_days = 0) AND psmr.effective_create_date != '' THEN psmr.effective_create_date END),
+                MIN(CASE WHEN psmr.effective_create_date != '' THEN psmr.effective_create_date END),
+                psm.create_time,
+                psm.first_seen_at,
+                ''
+              ) AS effective_create_date,
+              COALESCE(
+                MAX(CASE WHEN (psmr.window_key = 'all_history' OR psmr.window_days = 0) AND psmr.effective_create_date_source != '' THEN psmr.effective_create_date_source END),
+                MAX(CASE WHEN psmr.effective_create_date_source != '' THEN psmr.effective_create_date_source END),
+                ''
+              ) AS effective_create_date_source
+            FROM product_source_materials psm
+            JOIN gravity_upload_tasks gut
+              ON gut.product = psm.product
+             AND gut.gravity_material_id = psm.material_id
+            LEFT JOIN product_source_material_metric_rollups psmr
+              ON psmr.product = psm.product
+             AND psmr.source_advertiser_id = psm.source_advertiser_id
+             AND psmr.material_id = psm.material_id
+            WHERE psm.product = ?
+              AND psm.source = 'gravity_engine'
+              AND psm.material_type = ?
+              AND psm.is_active = 1
+              AND gut.status = 'completed'
+              AND gut.video_id != ''
+              AND gut.target_advertiser_id IN ({placeholders})
+            GROUP BY
+              psm.material_id, psm.material_type, gut.video_id, psm.name,
+              psm.review_status, psm.source, psm.signature, gut.target_advertiser_id,
+              gut.target_account_name, gut.material_id_in_account, gut.status,
+              psm.cost_lookback, psm.score, psm.create_time, psm.first_seen_at
+            """,
+            (
+                lookback_days,
+                lookback_days,
+                lookback_days,
+                str(request.get("product") or ""),
+                material_type,
+                *target_account_ids,
+            ),
+        ).fetchall()
+    normalized = []
+    for index, row in enumerate(rows, start=1):
+        normalized.append({"rank": index, **dict(row), "source_scope": "gravity_engine"})
+    return _sort_candidate_rows(_filter_candidate_rows_for_request(normalized, request=request, policy=policy), request=request)
+
+
 def _candidate_rows(*, db_path: str | Path, request: dict[str, Any], policy: dict[str, Any]) -> list[dict[str, Any]]:
     selected_materials = request.get("selected_materials")
     if isinstance(selected_materials, list) and selected_materials:
         rows = [dict(row) for row in selected_materials if isinstance(row, dict)]
         return _sort_candidate_rows(_filter_candidate_rows_for_request(rows, request=request, policy=policy), request=request)
+    if _material_source_scope(request) == "gravity_engine":
+        return _gravity_candidate_rows(db_path=db_path, request=request, policy=policy)
     requirements = _material_requirements(request)
     selection = _selection_policy(request)
     lookback_days = _int_value(selection.get("lookback_days"), 0)
@@ -492,6 +585,16 @@ def _material_entry(row: dict[str, Any]) -> dict[str, Any]:
         entry["effective_create_date_source"] = str(row.get("effective_create_date_source") or "").strip()
     if str(row.get("source") or "").strip():
         entry["source"] = str(row.get("source") or "").strip()
+    if str(row.get("source_scope") or "").strip():
+        entry["source_scope"] = str(row.get("source_scope") or "").strip()
+    if str(row.get("target_advertiser_id") or "").strip():
+        entry["target_advertiser_id"] = str(row.get("target_advertiser_id") or "").strip()
+    if str(row.get("target_account_name") or "").strip():
+        entry["target_account_name"] = str(row.get("target_account_name") or "").strip()
+    if str(row.get("target_material_id") or "").strip():
+        entry["target_material_id"] = str(row.get("target_material_id") or "").strip()
+    if str(row.get("upload_status") or "").strip():
+        entry["upload_status"] = str(row.get("upload_status") or "").strip()
     return entry
 
 
@@ -532,6 +635,9 @@ def _next_candidate(
         best_reuse_key: tuple[int, int] | None = None
         for order, row in enumerate(candidates):
             material_id = str(row.get("material_id") or "")
+            row_target_advertiser_id = str(row.get("target_advertiser_id") or "").strip()
+            if row_target_advertiser_id and row_target_advertiser_id != advertiser_id:
+                continue
             if material_id in used_unit_material_ids:
                 continue
             if material_id in existing_material_ids:
@@ -736,6 +842,7 @@ def _summary(
         "planned_unit_count": len(units),
         "planned_material_count": len(material_ids),
         "source_material_count": source_material_count,
+        "material_source": _material_source_scope(request),
         "violation_count": len(violations),
     }
 
@@ -750,6 +857,7 @@ def build_create_strategy_plan(
     request_id = str(cfg.get("request_id") or "").strip()
     if not request_id:
         raise ValueError("create strategy plan requires request_id")
+    material_source_scope = _material_source_scope(cfg)
     candidates = _candidate_rows(db_path=db_path, request=cfg, policy=policy)
     existing_by_account = _target_existing_material_ids_by_account(db_path=db_path, request=cfg, policy=policy)
     source_material_count = _usable_source_material_count(
@@ -778,7 +886,8 @@ def build_create_strategy_plan(
         ),
         "request": cfg,
         "strategy": {
-            "source": "product_source_materials",
+            "source": "gravity_upload_tasks" if material_source_scope == "gravity_engine" else "product_source_materials",
+            "material_source": material_source_scope,
             "source_advertiser_id": str(cfg.get("source_advertiser_id") or ""),
             "projects": projects,
         },

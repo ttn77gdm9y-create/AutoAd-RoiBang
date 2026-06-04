@@ -35,6 +35,12 @@ MODE_ALIASES = {
 }
 
 DEFAULT_TEMPLATE_CATALOG_PATH = Path("configs/create-templates/wx-mini-game.json")
+MATERIAL_SOURCE_SCOPES = {
+    "": "",
+    "source_account": "source_material_account",
+    "source_material_account": "source_material_account",
+    "gravity_engine": "gravity_engine",
+}
 
 AMBIGUOUS_MODE_ALIASES = {
     "7r放量": "7R 放量需要指定通投或男，并指定历史/近期，例如 7R 通投历史放量 / 7R 通投近期放量",
@@ -67,6 +73,13 @@ def _cfg(request: dict[str, Any]) -> dict[str, Any]:
 
 def _text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _material_source_scope(value: Any) -> str:
+    source = _text(value)
+    if source not in MATERIAL_SOURCE_SCOPES:
+        raise ValueError(f"unsupported material_source: {source}")
+    return MATERIAL_SOURCE_SCOPES[source]
 
 
 def _compact_mode_alias(value: str) -> str:
@@ -366,9 +379,12 @@ def _material_requirements(mode_config: dict[str, Any]) -> dict[str, Any]:
     return requirements
 
 
-def _material_selection(mode_config: dict[str, Any]) -> dict[str, Any]:
+def _material_selection(mode_config: dict[str, Any], *, material_source: str = "") -> dict[str, Any]:
     value = mode_config.get("material_selection")
     selection = dict(value) if isinstance(value, dict) else {}
+    source_scope = _material_source_scope(material_source)
+    if source_scope:
+        selection["source_scope"] = source_scope
     selection_type = _text(selection.get("selection_type")) or "high_spend"
     selection.setdefault("source_scope", "source_material_account")
     selection.setdefault("min_stat_cost", 1000 if selection_type == "high_spend" else 0)
@@ -427,6 +443,7 @@ def build_create_mode_request(
     template = _template(template_catalog, template_key)
     mode_key = _text(mode_config.get("mode_key"))
     target_date = _text(cfg.get("target_date"))
+    material_source_scope = _material_source_scope(cfg.get("material_source"))
     batch_generated_at = _text(cfg.get("batch_generated_at")) or _now_iso()
     target_accounts = _target_accounts(cfg, defaults)
     batch_code = _text(cfg.get("batch_code")) or _batch_code(
@@ -459,7 +476,7 @@ def build_create_mode_request(
         "batch_generated_at": batch_generated_at,
         "target_accounts": target_accounts,
         "material_requirements": _material_requirements(mode_config),
-        "material_selection": _material_selection(mode_config),
+        "material_selection": _material_selection(mode_config, material_source=material_source_scope),
         "field_defaults": _field_defaults(mode_config, template, defaults),
         "project_name_template": _text(
             (mode_config.get("naming") if isinstance(mode_config.get("naming"), dict) else {}).get("project_name_template")

@@ -277,6 +277,7 @@ def test_create_strategy_plan_allocates_candidate_materials_without_duplicates(t
         "planned_unit_count": 2,
         "planned_material_count": 4,
         "source_material_count": 4,
+        "material_source": "source_material_account",
         "violation_count": 0,
     }
     units = plan["strategy"]["projects"][0]["units"]
