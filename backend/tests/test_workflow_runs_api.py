@@ -127,6 +127,43 @@ def test_gravity_probe_catalog_uses_business_select_controls(tmp_path):
     assert "样本数量只能选择" in blocked_payload["summary"]["blocking_reasons"][0]
 
 
+def test_gravity_probe_catalog_latest_status_says_token_state_and_blocking_reason(tmp_path):
+    runs_dir = tmp_path / "data" / "runs" / "gravity_api_probe"
+    runs_dir.mkdir(parents=True)
+    artifact_path = runs_dir / "20260603T154608Z.json"
+    artifact_path.write_text(
+        json.dumps(
+            {
+                "ok": False,
+                "workflow": "gravity_api_probe",
+                "status": "blocked",
+                "external_api_calls": 0,
+                "summary": {
+                    "auth_file_exists": True,
+                    "auth_field_status": "完整",
+                    "token_status": "expired",
+                    "token_status_label": "已过期",
+                    "probe_scope_label": "外部只读接口探测",
+                },
+                "blocking_reasons": ["Token 已过期：2026-06-03T08:00:00+08:00"],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    app = create_app(project_root=tmp_path)
+    client = TestClient(app)
+
+    response = client.get("/api/workflow-runs/catalog")
+
+    assert response.status_code == 200
+    rows = {row["工作流 ID"]: row for row in response.json()["table"]["rows"]}
+    assert rows["gravity_api_probe"]["最近状态"] == "已阻止"
+    assert rows["gravity_api_probe"]["最近结果"] == (
+        "Token 已过期，阻塞原因 Token 已过期：2026-06-03T08:00:00+08:00，外部只读调用 0"
+    )
+
+
 def test_workflow_preview_blocks_unknown_parameters(tmp_path):
     app = create_app(project_root=tmp_path)
     client = TestClient(app)

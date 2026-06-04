@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import base64
 import json
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime
 from datetime import timedelta
+from datetime import timezone
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +15,8 @@ from roibang_v2.runs import write_run_artifact
 
 WORKFLOW = "gravity_api_probe"
 
-REQUIRED_AUTH_FIELDS = ("jwt_token", "gravity_cid", "gravity_email", "gravity_id")
+REQUIRED_GRAVITY_HEADER_FIELDS = ("gravity_cid", "gravity_email", "gravity_id")
+AUTH_TOKEN_FIELDS = ("authorization", "Authorization", "jwt_token")
 BASE_URL = "https://api-insight.gravity-engine.com"
 REPORT_METRICS = ["AdCost", "AdShow", "AdClick", "AdConvert"]
 UPLOAD_STATUS_PROBE_TASK_ID = "readonly-probe-no-upload"
@@ -27,7 +30,7 @@ class GravityApiHttpClient:
     def __init__(self, auth_payload: dict[str, Any], *, base_url: str = BASE_URL) -> None:
         self.base_url = base_url.rstrip("/")
         self.headers = {
-            "Authorization": f"Bearer {str(auth_payload.get('jwt_token') or '').strip()}",
+            "Authorization": _authorization_header(auth_payload),
             "gravity_cid": str(auth_payload.get("gravity_cid") or "").strip(),
             "gravity_email": str(auth_payload.get("gravity_email") or "").strip(),
             "gravity_id": str(auth_payload.get("gravity_id") or "").strip(),
@@ -109,11 +112,19 @@ def run_gravity_api_probe(
     if auth_payload is None:
         blocking_reasons.append(f"未找到引力 Token 文件：{auth_path}")
         auth_payload = {}
-    missing_fields = [field for field in REQUIRED_AUTH_FIELDS if not str(auth_payload.get(field) or "").strip()]
+    parse_error = str(auth_payload.get("_parse_error") or "").strip()
+    if parse_error and not blocking_reasons:
+        blocking_reasons.append(f"引力 Token 文件格式错误：{parse_error}")
+    missing_fields = _missing_auth_fields(auth_payload)
     if missing_fields and not blocking_reasons:
         blocking_reasons.append(f"引力 Token 文件缺少字段：{', '.join(missing_fields)}")
-    if str(auth_payload.get("jwt_token") or "").strip():
+    token_status = _token_status(auth_payload)
+    if token_status["status"] == "expired" and not blocking_reasons:
+        blocking_reasons.append(f"Token 已过期：{token_status['expires_at']}")
+    if _auth_token(auth_payload):
         warnings.append("已发现本地引力 Token；结果中不会展示 token 明文。")
+    if token_status["status"] == "unknown_expiry" and not blocking_reasons:
+        warnings.append("Token 字段完整，但无法从本地解析有效期；会继续按只读探测处理。")
     if not blocking_reasons:
         warnings.append("本探测不上传素材、不创建广告、不修改投放。")
 
@@ -150,16 +161,28 @@ def run_gravity_api_probe(
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "execution_enabled": False,
         "external_api_calls": external_api_calls,
-        "中文摘要": _summary_text(ok=ok, auth_path=auth_path, missing_fields=missing_fields, scope=normalized_scope, calls=external_api_calls),
+        "中文摘要": _summary_text(
+            ok=ok,
+            auth_path=auth_path,
+            blocking_reasons=blocking_reasons,
+            scope=normalized_scope,
+            calls=external_api_calls,
+        ),
         "summary": {
             "auth_file_exists": auth_path.exists(),
             "auth_file": str(auth_path),
+            "auth_field_status": "完整" if not missing_fields and not parse_error and auth_path.exists() else "缺失",
+            "auth_token_field": _auth_token_field(auth_payload),
+            "token_status": token_status["status"],
+            "token_status_label": token_status["label"],
+            "token_expires_at": token_status["expires_at"],
+            "token_remaining_seconds": token_status["remaining_seconds"],
             "gravity_cid": str(auth_payload.get("gravity_cid") or ""),
             "gravity_email": str(auth_payload.get("gravity_email") or ""),
             "gravity_id": str(auth_payload.get("gravity_id") or ""),
             "gravity_super": str(auth_payload.get("gravity_super") or "false"),
+            "token_present": bool(_auth_token(auth_payload)),
             "jwt_token_present": bool(str(auth_payload.get("jwt_token") or "").strip()),
-            "jwt_token_length": len(str(auth_payload.get("jwt_token") or "")),
             "missing_field_count": len(missing_fields),
             "probe_scope": normalized_scope,
             "probe_scope_label": PROBE_SCOPE_LABELS[normalized_scope],
@@ -195,6 +218,64 @@ def _read_auth(path: Path) -> dict[str, Any] | None:
     except json.JSONDecodeError as exc:
         return {"_parse_error": str(exc)}
     return value if isinstance(value, dict) else {"_parse_error": "Token 文件不是 JSON 对象"}
+
+
+def _missing_auth_fields(auth_payload: dict[str, Any]) -> list[str]:
+    missing = [field for field in REQUIRED_GRAVITY_HEADER_FIELDS if not str(auth_payload.get(field) or "").strip()]
+    if not _auth_token(auth_payload):
+        missing.append("authorization 或 jwt_token")
+    return missing
+
+
+def _auth_token_field(auth_payload: dict[str, Any]) -> str:
+    for field in AUTH_TOKEN_FIELDS:
+        if str(auth_payload.get(field) or "").strip():
+            return field
+    return ""
+
+
+def _auth_token(auth_payload: dict[str, Any]) -> str:
+    field = _auth_token_field(auth_payload)
+    return str(auth_payload.get(field) or "").strip() if field else ""
+
+
+def _authorization_header(auth_payload: dict[str, Any]) -> str:
+    token = _auth_token(auth_payload)
+    if not token:
+        return "Bearer "
+    if token.lower().startswith("bearer "):
+        return token
+    return f"Bearer {token}"
+
+
+def _jwt_token_value(auth_payload: dict[str, Any]) -> str:
+    token = _auth_token(auth_payload)
+    if token.lower().startswith("bearer "):
+        return token[7:].strip()
+    return token
+
+
+def _token_status(auth_payload: dict[str, Any]) -> dict[str, Any]:
+    token = _jwt_token_value(auth_payload)
+    if not token:
+        return {"status": "missing", "label": "缺失", "expires_at": "", "remaining_seconds": None}
+    parts = token.split(".")
+    if len(parts) < 2:
+        return {"status": "unknown_expiry", "label": "有效期待确认", "expires_at": "", "remaining_seconds": None}
+    try:
+        payload_segment = parts[1] + "=" * (-len(parts[1]) % 4)
+        decoded = base64.urlsafe_b64decode(payload_segment.encode("ascii"))
+        payload = json.loads(decoded.decode("utf-8"))
+        exp = int(payload.get("exp"))
+    except (ValueError, TypeError, json.JSONDecodeError, UnicodeDecodeError, base64.binascii.Error):
+        return {"status": "unknown_expiry", "label": "有效期待确认", "expires_at": "", "remaining_seconds": None}
+
+    now = int(datetime.now(timezone.utc).timestamp())
+    remaining = exp - now
+    expires_at = datetime.fromtimestamp(exp, tz=timezone.utc).astimezone().isoformat(timespec="seconds")
+    if remaining <= 0:
+        return {"status": "expired", "label": "已过期", "expires_at": expires_at, "remaining_seconds": remaining}
+    return {"status": "usable", "label": "可用", "expires_at": expires_at, "remaining_seconds": remaining}
 
 
 def _probe_readonly_apis(client: Any, *, sample_limit: int) -> dict[str, Any]:
@@ -462,7 +543,8 @@ def _report_has_metrics(payload: dict[str, Any]) -> bool:
 
 def _sanitized_payload(payload: Any) -> Any:
     if isinstance(payload, dict):
-        return {key: _sanitized_payload(value) for key, value in payload.items() if key not in {"jwt_token", "Authorization", "access_token"}}
+        secret_keys = {"jwt_token", "authorization", "access_token"}
+        return {key: _sanitized_payload(value) for key, value in payload.items() if str(key).lower() not in secret_keys}
     if isinstance(payload, list):
         return [_sanitized_payload(item) for item in payload]
     return payload
@@ -489,11 +571,10 @@ def _normalize_sample_limit(value: int | str) -> int:
     return min(5, max(1, parsed))
 
 
-def _summary_text(*, ok: bool, auth_path: Path, missing_fields: list[str], scope: str, calls: int) -> str:
+def _summary_text(*, ok: bool, auth_path: Path, blocking_reasons: list[str], scope: str, calls: int) -> str:
     if ok:
         if scope == "readonly_api":
             return f"引力素材库外部只读探测已完成：访问 {calls} 个只读接口；未上传素材、未创建广告、未修改投放。"
         return f"引力素材库本地鉴权与文档字段核验已完成：{auth_path} 可读取；未访问外部接口，未执行上传、创建或改投放动作。"
-    if missing_fields:
-        return f"引力素材库本地鉴权探测被阻止：缺少 {', '.join(missing_fields)}。"
-    return f"引力素材库本地鉴权探测被阻止：未找到 {auth_path}。"
+    reason = "；".join(blocking_reasons) if blocking_reasons else f"未找到 {auth_path}"
+    return f"引力素材库只读探测被阻止：{reason}。"

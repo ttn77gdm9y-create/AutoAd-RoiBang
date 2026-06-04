@@ -1,7 +1,10 @@
+import base64
 import json
 import subprocess
+import time
 from pathlib import Path
 
+from roibang_v2.workflows.gravity_api_probe import GravityApiHttpClient
 from roibang_v2.workflows.gravity_api_probe import run_gravity_api_probe
 
 
@@ -85,6 +88,107 @@ class FakeGravityClient:
     def get_upload_material_status(self, *, task_id: str) -> dict:
         self.calls.append(f"get_upload_material_status:{task_id}")
         return {"code": 404, "msg": "任务不存在", "data": {}}
+
+
+def _jwt_with_exp(exp: int) -> str:
+    def encode(payload: dict) -> str:
+        raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+    return f"{encode({'alg': 'none', 'typ': 'JWT'})}.{encode({'exp': exp})}.signature"
+
+
+def test_gravity_http_client_accepts_document_authorization_field():
+    bare_token = "document-token-value"
+    bearer_token = "Bearer already-prefixed-token"
+
+    bare_client = GravityApiHttpClient(
+        {
+            "authorization": bare_token,
+            "gravity_cid": "182",
+            "gravity_email": "hongen@example.com",
+            "gravity_id": "406",
+            "gravity_super": "false",
+        }
+    )
+    bearer_client = GravityApiHttpClient(
+        {
+            "authorization": bearer_token,
+            "gravity_cid": "182",
+            "gravity_email": "hongen@example.com",
+            "gravity_id": "406",
+            "gravity_super": "false",
+        }
+    )
+
+    assert bare_client.headers["Authorization"] == "Bearer document-token-value"
+    assert bearer_client.headers["Authorization"] == bearer_token
+
+
+def test_gravity_api_probe_accepts_document_token_file_without_exposing_authorization(tmp_path: Path):
+    token = _jwt_with_exp(int(time.time()) + 3600)
+    auth_file = tmp_path / "gravity_token.json"
+    auth_file.write_text(
+        json.dumps(
+            {
+                "authorization": token,
+                "gravity_cid": "182",
+                "gravity_email": "hongen@example.com",
+                "gravity_id": "406",
+                "gravity_super": "false",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_gravity_api_probe(
+        auth_file=auth_file,
+        runs_dir=tmp_path / "runs",
+        probe_scope="local_contract",
+    )
+
+    serialized = json.dumps(result, ensure_ascii=False)
+    assert result["ok"] is True
+    assert result["summary"]["auth_field_status"] == "完整"
+    assert result["summary"]["token_status"] == "usable"
+    assert result["summary"]["token_status_label"] == "可用"
+    assert result["external_api_calls"] == 0
+    assert token not in serialized
+    assert "authorization" not in result["raw"]
+
+
+def test_gravity_api_probe_blocks_expired_document_token_before_external_calls(tmp_path: Path):
+    token = _jwt_with_exp(int(time.time()) - 60)
+    auth_file = tmp_path / "gravity_token.json"
+    auth_file.write_text(
+        json.dumps(
+            {
+                "authorization": f"Bearer {token}",
+                "gravity_cid": "182",
+                "gravity_email": "hongen@example.com",
+                "gravity_id": "406",
+                "gravity_super": "false",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    client = FakeGravityClient()
+
+    result = run_gravity_api_probe(
+        auth_file=auth_file,
+        runs_dir=tmp_path / "runs",
+        probe_scope="readonly_api",
+        client=client,
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "blocked"
+    assert result["external_api_calls"] == 0
+    assert "Token 已过期" in "；".join(result["blocking_reasons"])
+    assert client.calls == []
+    assert token not in json.dumps(result, ensure_ascii=False)
 
 
 def test_gravity_api_probe_verifies_document_fields_without_uploading(tmp_path: Path):

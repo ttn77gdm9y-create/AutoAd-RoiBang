@@ -333,6 +333,17 @@ def _latest_status_summary(payload: dict[str, Any]) -> str:
     result = _first_result(payload)
     parsed_summary = _dict(_dict(result.get("parsed_stdout")).get("summary"))
     parts: list[str] = []
+    if _text(payload.get("workflow")) == "gravity_api_probe":
+        token_status = _text(summary.get("token_status_label"))
+        if token_status:
+            parts.append(f"Token {token_status}")
+        elif _text(summary.get("auth_field_status")):
+            parts.append(f"鉴权字段 {summary.get('auth_field_status')}")
+        blocking_reasons = payload.get("blocking_reasons")
+        if isinstance(blocking_reasons, list) and blocking_reasons:
+            first_reason = _text(blocking_reasons[0])
+            if first_reason:
+                parts.append(f"阻塞原因 {first_reason}")
     product = _text(result.get("product")) or _text(summary.get("product"))
     if product:
         parts.append(product)
