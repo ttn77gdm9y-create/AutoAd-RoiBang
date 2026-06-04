@@ -22,6 +22,7 @@ def test_workflow_run_catalog_exposes_only_safe_business_tasks(tmp_path):
     assert "操作日志同步" in names
     assert "同步数据并重算建议" in names
     assert "引力素材库只读探测" in names
+    assert "引力 Token 获取/刷新" in names
     assert "引力素材同步入库" in names
     assert "引力素材资格汇总" in names
     assert {row["真实投放动作"] for row in rows} == {"否"}
@@ -130,6 +131,46 @@ def test_gravity_probe_catalog_uses_business_select_controls(tmp_path):
     assert "样本数量只能选择" in blocked_payload["summary"]["blocking_reasons"][0]
 
 
+def test_gravity_token_refresh_workflow_uses_fixed_safe_command(tmp_path):
+    app = create_app(project_root=tmp_path)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/workflow-runs/gravity_token_refresh/preview",
+        json={
+            "request": {
+                "auth_file": "data/gravity_token.json",
+                "username_env": "GRAVITY_USERNAME",
+                "password_env": "GRAVITY_PASSWORD",
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["title"] == "引力 Token 获取/刷新运行预览"
+    assert payload["summary"]["risk_level"] == "medium"
+    assert payload["summary"]["execution_enabled"] is False
+    assert payload["table"]["rows"][0]["真实投放动作"] == "否"
+    assert payload["table"]["rows"][0]["AI 自动运行"] == "不允许"
+    assert payload["table"]["rows"][0]["参数"] == (
+        "引力 Token 文件：data/gravity_token.json；账号环境变量：GRAVITY_USERNAME；密码环境变量：GRAVITY_PASSWORD"
+    )
+    command = payload["raw"]["command"]
+    assert command[1:] == [
+        "scripts/run_gravity_token_refresh.py",
+        "--auth-file",
+        "data/gravity_token.json",
+        "--username-env",
+        "GRAVITY_USERNAME",
+        "--password-env",
+        "GRAVITY_PASSWORD",
+    ]
+    assert "upload_material" not in " ".join(command)
+    assert "--execute" not in command
+    assert "--password" not in command
+
+
 def test_gravity_material_sync_workflow_uses_fixed_safe_command(tmp_path):
     app = create_app(project_root=tmp_path)
     client = TestClient(app)
@@ -194,6 +235,7 @@ def test_results_catalog_includes_gravity_material_sync(tmp_path):
 
     assert response.status_code == 200
     labels_by_value = {item["value"]: item["label"] for item in response.json()["raw"]["workflows"]}
+    assert labels_by_value["gravity_token_refresh"] == "引力 Token 获取/刷新"
     assert labels_by_value["gravity_material_sync"] == "引力素材同步入库"
     assert labels_by_value["gravity_material_qualification"] == "引力素材资格汇总"
 
@@ -311,3 +353,4 @@ def test_results_catalog_includes_workflow_center_result_types(tmp_path):
     assert labels_by_value["product_automation_job_source_material_rollup"] == "源素材表现汇总"
     assert labels_by_value["suggestions_refresh"] == "同步数据并重算建议"
     assert labels_by_value["gravity_api_probe"] == "引力素材库只读探测"
+    assert labels_by_value["gravity_token_refresh"] == "引力 Token 获取/刷新"

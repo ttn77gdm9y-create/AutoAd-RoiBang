@@ -68,6 +68,20 @@ GRAVITY_AUTH_FILE_PARAM = WorkflowParameter(
     required=False,
     description="只读取本地鉴权文件；结果中不会展示 token 明文。",
 )
+GRAVITY_USERNAME_ENV_PARAM = WorkflowParameter(
+    name="username_env",
+    label="账号环境变量",
+    default="GRAVITY_USERNAME",
+    required=False,
+    description="只传环境变量名称，不在页面填写账号。",
+)
+GRAVITY_PASSWORD_ENV_PARAM = WorkflowParameter(
+    name="password_env",
+    label="密码环境变量",
+    default="GRAVITY_PASSWORD",
+    required=False,
+    description="只传环境变量名称，不在页面填写密码。",
+)
 GRAVITY_PROBE_SCOPE_PARAM = WorkflowParameter(
     name="probe_scope",
     label="探测范围",
@@ -190,6 +204,18 @@ WORKFLOW_CATALOG: tuple[WorkflowDefinition, ...] = (
         latest_workflow="gravity_api_probe",
         run_kind="gravity_api_probe",
         parameters=(GRAVITY_AUTH_FILE_PARAM, GRAVITY_PROBE_SCOPE_PARAM, GRAVITY_SAMPLE_LIMIT_PARAM),
+    ),
+    WorkflowDefinition(
+        workflow_id="gravity_token_refresh",
+        name="引力 Token 获取/刷新",
+        category="引力素材库",
+        description="通过固定 headless 浏览器脚本获取引力接口 Token，只写本地鉴权文件，不上传素材、不创建广告。",
+        operation_type="gravity_token_refresh",
+        latest_workflow="gravity_token_refresh",
+        run_kind="gravity_token_refresh",
+        parameters=(GRAVITY_AUTH_FILE_PARAM, GRAVITY_USERNAME_ENV_PARAM, GRAVITY_PASSWORD_ENV_PARAM),
+        ai_auto_run=False,
+        risk_level="medium",
     ),
     WorkflowDefinition(
         workflow_id="gravity_material_sync",
@@ -398,6 +424,18 @@ def _latest_status_summary(payload: dict[str, Any]) -> str:
             first_reason = _text(blocking_reasons[0])
             if first_reason:
                 parts.append(f"阻塞原因 {first_reason}")
+    if _text(payload.get("workflow")) == "gravity_token_refresh":
+        token_status = _text(summary.get("token_status_label"))
+        if token_status:
+            parts.append(f"Token {token_status}")
+        auth_file = _text(summary.get("auth_file"))
+        if auth_file:
+            parts.append(f"文件 {auth_file}")
+        blocking_reasons = payload.get("blocking_reasons")
+        if isinstance(blocking_reasons, list) and blocking_reasons:
+            first_reason = _text(blocking_reasons[0])
+            if first_reason:
+                parts.append(f"阻塞原因 {first_reason}")
     product = _text(result.get("product")) or _text(summary.get("product"))
     if product:
         parts.append(product)
@@ -566,6 +604,17 @@ def build_workflow_command(definition: WorkflowDefinition, request: dict[str, st
             "--sample-limit",
             request.get("sample_limit", "") or "3",
         ]
+    if definition.run_kind == "gravity_token_refresh":
+        return [
+            _python(),
+            "scripts/run_gravity_token_refresh.py",
+            "--auth-file",
+            request.get("auth_file", "") or "data/gravity_token.json",
+            "--username-env",
+            request.get("username_env", "") or "GRAVITY_USERNAME",
+            "--password-env",
+            request.get("password_env", "") or "GRAVITY_PASSWORD",
+        ]
     if definition.run_kind == "gravity_material_sync":
         command = [
             _python(),
@@ -612,6 +661,7 @@ def workflow_preview_result(
             "分类": definition.category,
             "参数": _request_text(definition, normalized_request),
             "真实投放动作": "否",
+            "AI 自动运行": "允许" if definition.ai_auto_run and not definition.true_action else "不允许",
             "启动方式": "固定脚本",
         }
     ]
@@ -634,7 +684,7 @@ def workflow_preview_result(
             "warnings": [] if can_run else ["该任务暂不能启动，请先处理阻断原因。"],
             "blocking_reasons": blocking_reasons,
         },
-        "table": {"columns": ["任务名称", "分类", "参数", "真实投放动作", "启动方式"], "rows": rows},
+        "table": {"columns": ["任务名称", "分类", "参数", "真实投放动作", "AI 自动运行", "启动方式"], "rows": rows},
         "artifact_path": "",
         "raw": {
             "workflow_id": definition.workflow_id,

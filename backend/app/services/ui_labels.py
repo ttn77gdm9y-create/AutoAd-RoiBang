@@ -16,6 +16,7 @@ OPERATION_LABELS = {
     "dry_run_probe": "连通性检查",
     "frontend_operation_log": "前端操作日志",
     "gravity_api_probe": "引力素材库只读探测",
+    "gravity_token_refresh": "引力 Token 获取/刷新",
     "gravity_material_upload": "引力素材上传",
     "gravity_material_qualification": "引力素材资格汇总",
     "gravity_material_sync": "引力素材同步入库",

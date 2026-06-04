@@ -7,6 +7,7 @@ __pycache__/
 data/*.sqlite3
 data/*.sqlite
 data/*.db
+data/gravity_token.json
 data/runs/**/*.json
 data/runs/**/*.jsonl
 data/runs/**/*.log
