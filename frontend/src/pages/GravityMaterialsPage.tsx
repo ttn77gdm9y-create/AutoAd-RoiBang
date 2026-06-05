@@ -1,7 +1,8 @@
 import { DeleteOutlined, FileSearchOutlined, ReloadOutlined, SaveOutlined, SyncOutlined } from "@ant-design/icons";
-import { Alert, Button, Card, Col, Form, Input, Row, Select, Space, Table, Tag, Typography, message as antdMessage } from "antd";
+import { Alert, Button, Card, Col, Form, Input, Row, Select, Space, Steps, Table, Tag, Typography, message as antdMessage } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
@@ -12,6 +13,7 @@ import { InlineTaskStatus } from "../components/WorkflowScaffold";
 import { EXECUTE_CONFIRMATION_PHRASE } from "../constants/safety";
 import type { ChineseResult, TaskDetailResponse } from "../types/api";
 import { isTaskActive, isTaskCompleted, taskStatus } from "../utils/workflowState";
+import { buildAlbumChoiceGroups, flattenAlbumChoiceGroups, type AlbumChoiceGroup, type AlbumChoiceOption, type TargetAlbumRow } from "./gravityMaterialsOptions";
 
 type BindingForm = {
   product: string;
@@ -31,24 +33,6 @@ type BindingRow = {
   is_active: number;
 };
 
-type AlbumNode = {
-  "专辑/文件夹 ID": string;
-  "名称": string;
-  "层级": number;
-  album_id?: string;
-  album_name?: string;
-  folder_id?: string;
-  folder_name?: string;
-};
-
-type TargetAlbumRow = AlbumNode & {
-  "目标专辑": string;
-  "匹配状态": string;
-  "匹配数量": number;
-  "可自动绑定": string;
-  "候选"?: AlbumNode[];
-};
-
 type MaterialRow = Record<string, string | number | boolean | null>;
 
 type UploadAccountOption = {
@@ -57,6 +41,13 @@ type UploadAccountOption = {
   account_name: string;
   product: string;
   status: string;
+};
+
+type AlbumSelectOption = {
+  label: ReactNode;
+  value?: string;
+  searchText?: string;
+  options?: AlbumSelectOption[];
 };
 
 type TaskResponse = ChineseResult & {
@@ -75,7 +66,25 @@ const emptyBinding: BindingForm = {
   folder_name: "",
 };
 
-const qualificationStatLabels = ["素材数", "可用于后续", "不可用", "缺 MD5", "已上传", "未上传", "有表现数据"];
+const qualificationStatsConfig = [
+  { label: "素材数", lookup: "素材数" },
+  { label: "可用于后续", lookup: "可用于后续" },
+  { label: "不可用", lookup: "不可用" },
+  { label: "缺 MD5", lookup: "缺 MD5" },
+  { label: "已推送", lookup: "已上传" },
+  { label: "未推送", lookup: "未上传" },
+  { label: "有表现数据", lookup: "有表现数据" },
+];
+const materialScopeOptions = [
+  { label: "可用于后续", value: "eligible" },
+  { label: "不可用", value: "ineligible" },
+  { label: "缺 MD5", value: "missing_md5" },
+  { label: "已推送", value: "uploaded" },
+  { label: "未推送", value: "not_uploaded" },
+  { label: "有表现数据", value: "has_performance" },
+  { label: "本地停用", value: "inactive" },
+  { label: "全部素材", value: "" },
+];
 
 export function GravityMaterialsPage() {
   const queryClient = useQueryClient();
@@ -118,8 +127,10 @@ export function GravityMaterialsPage() {
   });
 
   const productOptions = useMemo(() => productNameOptions(filters.data), [filters.data]);
-  const albumOptions = useMemo(() => albumNodeOptions(albums.data), [albums.data]);
   const targetAlbumRows = useMemo(() => targetAlbumRowsFromResult(albums.data), [albums.data]);
+  const albumChoiceGroups = useMemo(() => buildAlbumChoiceGroups(targetAlbumRows), [targetAlbumRows]);
+  const albumOptions = useMemo(() => flattenAlbumChoiceGroups(albumChoiceGroups), [albumChoiceGroups]);
+  const albumSelectOptions = useMemo(() => renderAlbumSelectOptions(albumChoiceGroups), [albumChoiceGroups]);
   const bindingRows = useMemo(() => bindingRowsFromResult(bindings.data), [bindings.data]);
   const qualificationStats = useMemo(() => summaryLookup(materials.data), [materials.data]);
   const uploadAccountOptions = useMemo(() => accountOptionsFromResult(accounts.data, selectedProduct), [accounts.data, selectedProduct]);
@@ -156,6 +167,9 @@ export function GravityMaterialsPage() {
   const canConfirmUpload = uploadPreviewResult?.summary.status === "ready_for_confirmation" && uploadRequiredCount > 0;
   const uploadTaskCurrentStatus = taskStatus(uploadTaskDetail.data, uploadExecuteResult);
   const statusRefreshCurrentStatus = taskStatus(statusRefreshTaskDetail.data, uploadStatusRefreshResult);
+  const totalMaterials = statNumber(qualificationStats.get("素材数"));
+  const hasBinding = bindingRows.length > 0;
+  const currentGravityStep = selectedUploadMaterialIds.length ? 3 : totalMaterials > 0 ? 2 : hasBinding ? 1 : 0;
 
   useEffect(() => {
     if (!gravityTaskIds.length) {
@@ -201,7 +215,7 @@ export function GravityMaterialsPage() {
       setUploadPreviewResult(result);
       setUploadExecuteResult(undefined);
       setUploadStatusRefreshResult(undefined);
-      antdMessage.success("上传预览已生成，请核对明细");
+      antdMessage.success("推送预览已生成，请核对明细");
     },
   });
   const executeUpload = useMutation({
@@ -215,7 +229,7 @@ export function GravityMaterialsPage() {
       setUploadExecuteResult(result);
       setUploadStatusRefreshResult(undefined);
       await queryClient.invalidateQueries({ queryKey: ["tasks"] });
-      antdMessage.success("上传任务已提交，本页会显示进度和结果");
+      antdMessage.success("推送任务已提交，本页会显示进度和结果");
     },
   });
   const refreshUploadStatus = useMutation({
@@ -289,22 +303,33 @@ export function GravityMaterialsPage() {
           showIcon
           message="这里只读同步引力素材并写入本地素材库；不会上传素材、创建广告、修改预算、出价或项目状态。"
         />
+        <Steps
+          size="small"
+          className="gravity-material-steps"
+          current={currentGravityStep}
+          items={[
+            { title: "绑定来源", description: "选产品和引力专辑" },
+            { title: "同步入库", description: "只读拉取到本地" },
+            { title: "查看素材", description: "看资格和表现" },
+            { title: "生成推送预览", description: "真实动作前复核" },
+          ]}
+        />
         <div className="gravity-qualification-strip">
-          {qualificationStatLabels.map((label) => (
-            <div className="gravity-qualification-tile" key={label}>
-              <span>{label}</span>
-              <strong>{statValue(qualificationStats.get(label))}</strong>
+          {qualificationStatsConfig.map((item) => (
+            <div className="gravity-qualification-tile" key={item.label}>
+              <span>{item.label}</span>
+              <strong>{statValue(qualificationStats.get(item.lookup))}</strong>
             </div>
           ))}
         </div>
         <Row gutter={[16, 16]} align="top">
           <Col xs={24} xl={9}>
-            <Card size="small" title="产品-专辑绑定">
+            <Card size="small" title="绑定素材来源">
               <Space direction="vertical" size="middle" className="full-width">
                 <Alert
                   type="info"
                   showIcon
-                  message="这里只展示允许同步的目标专辑；原始专辑/文件夹仅保留在折叠技术明细中，避免误选其他游戏素材。"
+                  message="先告诉系统：这个产品只从哪些引力专辑或文件夹同步素材。这里只展示允许同步的 3 个目标专辑，避免误选其他游戏素材。"
                 />
                 <Table<TargetAlbumRow>
                   rowKey={(row) => row["目标专辑"]}
@@ -313,20 +338,28 @@ export function GravityMaterialsPage() {
                   pagination={false}
                   dataSource={targetAlbumRows}
                   columns={[
-                    { title: "目标专辑", dataIndex: "目标专辑" },
                     {
-                      title: "匹配",
+                      title: "目标专辑",
+                      dataIndex: "目标专辑",
+                      render: (value, row) => (
+                        <Space direction="vertical" size={2}>
+                          <Typography.Text strong>{String(value || "")}</Typography.Text>
+                          <Typography.Text type="secondary">{Number(row["匹配数量"] || 0)} 个可选范围</Typography.Text>
+                        </Space>
+                      ),
+                    },
+                    {
+                      title: "状态",
                       dataIndex: "匹配状态",
-                      width: 96,
+                      width: 76,
                       render: (value) => <Tag color={targetAlbumStatusColor(value)}>{String(value || "未知")}</Tag>,
                     },
-                    { title: "数量", dataIndex: "匹配数量", width: 64 },
                     {
                       title: "操作",
-                      width: 80,
+                      width: 96,
                       render: (_, row) => (
                         <Button size="small" disabled={row["匹配状态"] !== "已匹配"} onClick={() => fillBindingFromTarget(row)}>
-                          填入
+                          填入专辑
                         </Button>
                       ),
                     },
@@ -348,12 +381,18 @@ export function GravityMaterialsPage() {
                     <Select
                       showSearch
                       loading={albums.isLoading}
-                      options={albumOptions}
-                      placeholder="只选择目标专辑或其匹配候选"
+                      options={albumSelectOptions}
+                      popupMatchSelectWidth={560}
+                      placeholder="选择整个专辑，或只选择它下面的文件夹"
+                      filterOption={(input, option) =>
+                        String((option as { searchText?: string } | undefined)?.searchText ?? "")
+                          .toLowerCase()
+                          .includes(input.toLowerCase())
+                      }
                       onChange={selectAlbumNode}
                     />
                     <Typography.Text type="secondary" className="allowed-account-help">
-                      没有选项时，先到自动化工作台运行“引力素材库只读探测”。
+                      选专辑 = 同步整个专辑；选文件夹 = 只同步这个文件夹。没有选项时，先到自动化工作台运行“引力素材库只读探测”。
                     </Typography.Text>
                   </Form.Item>
                   <Row gutter={[12, 0]}>
@@ -380,9 +419,14 @@ export function GravityMaterialsPage() {
                       </Form.Item>
                     </Col>
                   </Row>
-                  <Button icon={<SaveOutlined />} type="primary" loading={saveBinding.isPending} onClick={() => saveBinding.mutate()}>
-                    保存绑定
-                  </Button>
+                  <Space wrap>
+                    <Button icon={<SaveOutlined />} type="primary" loading={saveBinding.isPending} onClick={() => saveBinding.mutate()}>
+                      保存绑定
+                    </Button>
+                    <Link to="/workflow-center">
+                      <Button icon={<SyncOutlined />}>去同步入库</Button>
+                    </Link>
+                  </Space>
                 </Form>
                 <Table<BindingRow>
                   rowKey="id"
@@ -417,28 +461,35 @@ export function GravityMaterialsPage() {
             ) : null}
           </Col>
           <Col xs={24} xl={15}>
-            <Card size="small" title="素材资格明细">
+            <Card size="small" title="本地素材库">
               <Space direction="vertical" size="middle" className="full-width">
+                {!hasBinding ? <Alert type="info" showIcon message="先在左侧保存产品和引力专辑/文件夹绑定；绑定后再运行同步入库。" /> : null}
+                {hasBinding && totalMaterials === 0 ? (
+                  <Alert
+                    type="info"
+                    showIcon
+                    message="已经有绑定，但本地还没有同步到素材。下一步去自动化工作台运行“引力素材同步入库”。"
+                    action={
+                      <Link to="/workflow-center">
+                        <Button size="small" icon={<SyncOutlined />}>
+                          去同步
+                        </Button>
+                      </Link>
+                    }
+                  />
+                ) : null}
                 <Row gutter={[12, 12]}>
                   <Col xs={24} md={8}>
-                    <Select
-                      className="full-width"
-                      value={statusFilter}
-                      options={[
-                        { label: "可用于后续", value: "eligible" },
-                        { label: "不可用", value: "ineligible" },
-                        { label: "缺 MD5", value: "missing_md5" },
-                        { label: "已上传", value: "uploaded" },
-                        { label: "未上传", value: "not_uploaded" },
-                        { label: "有表现数据", value: "has_performance" },
-                        { label: "本地停用", value: "inactive" },
-                        { label: "全部素材", value: "" },
-                      ]}
-                      onChange={setStatusFilter}
-                    />
+                    <Space direction="vertical" size={4} className="full-width">
+                      <Typography.Text strong>素材范围</Typography.Text>
+                      <Select className="full-width" value={statusFilter} options={materialScopeOptions} onChange={setStatusFilter} />
+                    </Space>
                   </Col>
                   <Col xs={24} md={16}>
-                    <Input.Search value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索素材名 / 引力素材 ID / MD5" />
+                    <Space direction="vertical" size={4} className="full-width">
+                      <Typography.Text strong>搜索素材</Typography.Text>
+                      <Input.Search value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索素材名 / 引力素材 ID / MD5" />
+                    </Space>
                   </Col>
                 </Row>
                 <Table<MaterialRow>
@@ -465,12 +516,25 @@ export function GravityMaterialsPage() {
                 />
               </Space>
             </Card>
-            <Card size="small" title="上传到目标账户" className="gravity-upload-card">
+            <Card
+              size="small"
+              title={
+                <Space wrap>
+                  <span>推送引力素材到巨量账户</span>
+                  <Tag color="orange">真实媒体动作</Tag>
+                </Space>
+              }
+              className="gravity-upload-card"
+            >
               <Space direction="vertical" size="middle" className="full-width">
                 <Alert
-                  type="warning"
+                  type={selectedUploadMaterialIds.length && targetAccountIds.length ? "warning" : "info"}
                   showIcon
-                  message="上传素材到巨量账户是真实媒体动作。必须先生成预览并核对账户名、账户 ID、素材 ID、MD5；真实上传前还要输入“确认执行”。"
+                  message={
+                    selectedUploadMaterialIds.length && targetAccountIds.length
+                      ? "这一步会把已选引力素材推送到所选巨量账户素材库。生成预览后必须核对账户名、账户 ID、素材 ID、MD5；真实推送前还要输入“确认执行”。"
+                      : "这是后续步骤：先在本地素材库勾选可用素材，再选择目标巨量账户。不会创建广告、不会改预算、不会启动投放。"
+                  }
                 />
                 <Row gutter={[12, 12]} align="bottom">
                   <Col xs={24} md={10}>
@@ -491,7 +555,7 @@ export function GravityMaterialsPage() {
                       }}
                     />
                     <Typography.Text type="secondary" className="gravity-upload-help">
-                      账户来自产品账户库；预览和结果会同时显示账户 ID 与账户名。
+                      账户来自产品账户库，只展示启用账户；预览和结果会同时显示账户 ID 与账户名。
                     </Typography.Text>
                   </Col>
                   <Col xs={24} md={7}>
@@ -504,7 +568,7 @@ export function GravityMaterialsPage() {
                   <Col xs={24} md={7}>
                     <Space wrap className="gravity-upload-actions">
                       <Button icon={<FileSearchOutlined />} loading={previewUpload.isPending} disabled={!canPreviewUpload} onClick={() => previewUpload.mutate()}>
-                        生成上传预览
+                        生成推送预览
                       </Button>
                       <Tag color={selectedUploadMaterialIds.length ? "blue" : "default"}>已选素材 {selectedUploadMaterialIds.length}</Tag>
                     </Space>
@@ -521,7 +585,7 @@ export function GravityMaterialsPage() {
                     footer={
                       canConfirmUpload ? (
                         <ConfirmExecutePanel
-                          buttonText="确认并上传素材"
+                          buttonText="确认并推送素材"
                           disabled={executeUpload.isPending || Boolean(uploadExecuteResult) || isTaskActive(uploadTaskCurrentStatus)}
                           onConfirm={() => executeUpload.mutate()}
                         />
@@ -535,7 +599,7 @@ export function GravityMaterialsPage() {
               </Space>
             </Card>
             <InlineTaskStatus
-              title="当前上传任务"
+              title="当前推送任务"
               taskId={uploadTaskId}
               workflow="gravity_upload_to_account"
               result={uploadExecuteResult}
@@ -544,12 +608,12 @@ export function GravityMaterialsPage() {
               returnTo="/gravity-materials"
             />
             {gravityTaskIds.length || uploadStatus.data || uploadStatusRefreshResult ? (
-              <Card size="small" title="上传状态复盘" className="gravity-upload-card">
+              <Card size="small" title="推送状态复盘" className="gravity-upload-card">
                 <Space direction="vertical" size="middle" className="full-width">
                   <Alert
                     type="info"
                     showIcon
-                    message="上传是异步任务。刷新状态只查询引力 task，并在本地素材库已同步到合法媒体素材 ID 后回填账本；不会再次上传素材。"
+                    message="推送是异步任务。刷新状态只查询引力 task，并在本地素材库已同步到合法媒体素材 ID 后回填账本；不会再次推送素材。"
                   />
                   <Row gutter={[12, 12]} align="bottom">
                     <Col xs={24} md={12}>
@@ -609,21 +673,24 @@ function productNameOptions(result?: ChineseResult) {
     });
 }
 
-function albumNodeOptions(result?: ChineseResult) {
-  const nodes = targetAlbumRowsFromResult(result).flatMap((target) => (Array.isArray(target["候选"]) ? target["候选"] : []));
-  return nodes.map((node) => {
-    const id = String(node["专辑/文件夹 ID"] ?? "");
-    const name = String(node["名称"] ?? "");
-    const level = Number(node["层级"] ?? 1);
-    return {
-      value: `${id}:${level}`,
-      label: `${"  ".repeat(Math.max(0, level - 1))}${name}（${id}）`,
-      album_id: String(node.album_id ?? id),
-      album_name: String(node.album_name ?? name),
-      folder_id: String(node.folder_id ?? ""),
-      folder_name: String(node.folder_name ?? ""),
-    };
-  });
+function renderAlbumSelectOptions(groups: AlbumChoiceGroup[]): AlbumSelectOption[] {
+  return groups.map((group) => ({
+    label: <span className="gravity-album-select-group">专辑：{group.label}</span>,
+    searchText: group.targetAlbum,
+    options: group.options.map((option) => ({
+      value: option.value,
+      searchText: option.searchText,
+      label: (
+        <Space direction="vertical" size={0} className="gravity-album-select-option">
+          <Space size={8} wrap>
+            <Tag color={option.optionType === "album" ? "blue" : "default"}>{option.optionType === "album" ? "专辑" : "文件夹"}</Tag>
+            <Typography.Text>{option.label}</Typography.Text>
+          </Space>
+          <Typography.Text type="secondary">{option.subLabel}</Typography.Text>
+        </Space>
+      ),
+    })),
+  }));
 }
 
 function targetAlbumRowsFromResult(result?: ChineseResult): TargetAlbumRow[] {
@@ -711,6 +778,11 @@ function statValue(value: string | number | boolean | null | undefined): string 
   return typeof value === "boolean" ? (value ? "是" : "否") : value;
 }
 
+function statNumber(value: string | number | boolean | null | undefined): number {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function materialColumns(): ColumnsType<MaterialRow> {
   return [
     { title: "产品", dataIndex: "产品", width: 120 },
@@ -739,10 +811,10 @@ function materialColumns(): ColumnsType<MaterialRow> {
       render: (value) => (value ? <Typography.Text type="danger">{String(value)}</Typography.Text> : <Typography.Text type="secondary">-</Typography.Text>),
     },
     {
-      title: "上传状态",
+      title: "推送状态",
       dataIndex: "上传状态",
       width: 106,
-      render: (value) => <Tag color={String(value) === "已上传" ? "blue" : "default"}>{String(value || "未上传")}</Tag>,
+      render: (value) => <Tag color={String(value) === "已上传" ? "blue" : "default"}>{renderPushStatus(value)}</Tag>,
     },
     { title: "媒体素材 ID", dataIndex: "媒体素材 ID", width: 150, ellipsis: true, render: renderEmpty },
     { title: "消耗", dataIndex: "消耗", width: 92 },
@@ -751,6 +823,17 @@ function materialColumns(): ColumnsType<MaterialRow> {
     { title: "转化", dataIndex: "转化", width: 92 },
     { title: "同步时间", dataIndex: "同步时间", width: 180 },
   ];
+}
+
+function renderPushStatus(value: unknown): string {
+  const text = String(value || "");
+  if (text === "已上传") {
+    return "已推送";
+  }
+  if (text === "未上传" || !text) {
+    return "未推送";
+  }
+  return text;
 }
 
 function renderEmpty(value: unknown) {

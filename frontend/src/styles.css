@@ -156,6 +156,13 @@ body {
   gap: 12px;
 }
 
+.gravity-material-steps {
+  padding: 16px;
+  border: 1px solid #d8dee6;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
 .gravity-qualification-tile {
   min-height: 82px;
   padding: 14px 16px;
@@ -196,6 +203,17 @@ body {
 .gravity-upload-actions {
   width: 100%;
   margin-top: 6px;
+}
+
+.gravity-album-select-group {
+  color: #334155;
+  font-weight: 700;
+}
+
+.gravity-album-select-option {
+  width: 100%;
+  padding: 2px 0;
+  line-height: 1.35;
 }
 
 .full-width,
@@ -393,6 +411,10 @@ body {
 
   .gravity-qualification-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .gravity-material-steps {
+    padding: 12px;
   }
 
   .workflow-select {
