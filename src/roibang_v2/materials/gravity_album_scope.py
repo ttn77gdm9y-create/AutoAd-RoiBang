@@ -40,7 +40,10 @@ def load_target_album_names(project_root: str | Path | None = None, *, fallback:
 def target_album_match_rows(nodes: list[dict[str, Any]], target_names: list[str]) -> list[dict[str, Any]]:
     rows = []
     for target_name in target_names:
-        matches = [node for node in nodes if _node_matches_target(node, target_name)]
+        candidates = [node for node in nodes if _node_in_target_album(node, target_name)]
+        matches = [node for node in nodes if _node_display_name_matches_target(node, target_name)]
+        if not matches:
+            matches = candidates
         selected = matches[0] if len(matches) == 1 else {}
         rows.append(
             {
@@ -55,7 +58,7 @@ def target_album_match_rows(nodes: list[dict[str, Any]], target_names: list[str]
                 "folder_id": _text(selected.get("folder_id")),
                 "folder_name": _text(selected.get("folder_name")),
                 "可自动绑定": "是" if len(matches) == 1 else "否",
-                "候选": matches,
+                "候选": candidates,
             }
         )
     return rows
@@ -99,7 +102,7 @@ def _target_names_from_payload(payload: Any) -> list[str]:
     return names
 
 
-def _node_matches_target(node: dict[str, Any], target_name: str) -> bool:
+def _node_in_target_album(node: dict[str, Any], target_name: str) -> bool:
     target = normalize_album_name(target_name)
     candidates = {
         normalize_album_name(node.get("名称")),
@@ -107,6 +110,10 @@ def _node_matches_target(node: dict[str, Any], target_name: str) -> bool:
         normalize_album_name(node.get("folder_name")),
     }
     return target in candidates
+
+
+def _node_display_name_matches_target(node: dict[str, Any], target_name: str) -> bool:
+    return normalize_album_name(node.get("名称")) == normalize_album_name(target_name)
 
 
 def _match_status(count: int) -> str:

@@ -304,9 +304,30 @@ def test_gravity_album_tree_marks_required_target_album_scope(tmp_path: Path):
                             "code": 0,
                             "data": {
                                 "tree": [
-                                    {"id": "target-1", "label": "黑旗-奇门(塔防)", "children": []},
-                                    {"id": "target-2", "label": "魔兽开箱子", "children": []},
-                                    {"id": "target-3", "label": "黑旗-6480咸鱼-微小合集", "children": []},
+                                    {
+                                        "id": "target-1",
+                                        "label": "黑旗-奇门(塔防)",
+                                        "children": [
+                                            {"id": "target-1-folder-1", "label": "基础素材"},
+                                            {"id": "target-1-folder-2", "label": "外包"},
+                                        ],
+                                    },
+                                    {
+                                        "id": "target-2",
+                                        "label": "魔兽开箱子",
+                                        "children": [
+                                            {"id": "target-2-folder-1", "label": "基础物料"},
+                                            {"id": "target-2-folder-2", "label": "咕哒子"},
+                                        ],
+                                    },
+                                    {
+                                        "id": "target-3",
+                                        "label": "黑旗-6480咸鱼-微小合集",
+                                        "children": [
+                                            {"id": "target-3-folder-1", "label": "点点英雄基础素材"},
+                                            {"id": "target-3-folder-2", "label": "郭靖"},
+                                        ],
+                                    },
                                     {"id": "other-1", "label": "其他游戏素材", "children": []},
                                 ]
                             },
@@ -324,7 +345,7 @@ def test_gravity_album_tree_marks_required_target_album_scope(tmp_path: Path):
     assert response.status_code == 200
     payload = response.json()
     items = {item["label"]: item["value"] for item in payload["summary"]["items"]}
-    assert items["原始专辑/文件夹"] == 4
+    assert items["原始专辑/文件夹"] == 10
     assert items["目标专辑"] == 3
     assert items["已匹配目标"] == 3
     target_rows = payload["raw"]["target_albums"]
@@ -335,6 +356,8 @@ def test_gravity_album_tree_marks_required_target_album_scope(tmp_path: Path):
     ]
     assert {row["匹配状态"] for row in target_rows} == {"已匹配"}
     assert [row["专辑/文件夹 ID"] for row in target_rows] == ["target-1", "target-2", "target-3"]
+    assert [row["匹配数量"] for row in target_rows] == [1, 1, 1]
+    assert [row["可自动绑定"] for row in target_rows] == ["是", "是", "是"]
 
 
 def test_gravity_upload_preview_api_returns_chinese_confirmation_plan(tmp_path: Path):
