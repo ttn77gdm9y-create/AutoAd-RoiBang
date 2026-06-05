@@ -277,6 +277,40 @@ def test_gravity_probe_catalog_latest_status_says_token_state_and_blocking_reaso
     )
 
 
+def test_gravity_token_catalog_latest_status_explains_missing_env_plainly(tmp_path):
+    runs_dir = tmp_path / "data" / "runs" / "gravity_token_refresh"
+    runs_dir.mkdir(parents=True)
+    artifact_path = runs_dir / "20260605T025401Z.json"
+    artifact_path.write_text(
+        json.dumps(
+            {
+                "ok": False,
+                "workflow": "gravity_token_refresh",
+                "status": "blocked",
+                "external_api_calls": 0,
+                "summary": {
+                    "auth_file": "data/gravity_token.json",
+                    "auth_file_exists": False,
+                    "token_status_label": "缺失",
+                    "token_present": False,
+                },
+                "blocking_reasons": ["缺少环境变量：GRAVITY_USERNAME、GRAVITY_PASSWORD"],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    app = create_app(project_root=tmp_path)
+    client = TestClient(app)
+
+    response = client.get("/api/workflow-runs/catalog")
+
+    assert response.status_code == 200
+    rows = {row["工作流 ID"]: row for row in response.json()["table"]["rows"]}
+    assert rows["gravity_token_refresh"]["最近状态"] == "已阻塞"
+    assert rows["gravity_token_refresh"]["最近结果"] == "缺少引力登录环境变量，未访问引力，未生成 Token，未执行业务动作"
+
+
 def test_workflow_preview_blocks_unknown_parameters(tmp_path):
     app = create_app(project_root=tmp_path)
     client = TestClient(app)

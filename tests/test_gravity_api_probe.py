@@ -121,7 +121,7 @@ def test_gravity_http_client_accepts_document_authorization_field():
         }
     )
 
-    assert bare_client.headers["Authorization"] == "Bearer document-token-value"
+    assert bare_client.headers["Authorization"] == "document-token-value"
     assert bearer_client.headers["Authorization"] == bearer_token
 
 
@@ -236,6 +236,85 @@ def test_gravity_api_probe_verifies_document_fields_without_uploading(tmp_path: 
     sample_rows = sections["样本素材表"]["table"]["rows"]
     assert sample_rows[0]["素材 ID"] == "12574679499084152"
     assert sample_rows[0]["MD5"] == "14e44adaaef54e81fa256a12b4ff5c24"
+
+
+def test_gravity_api_probe_reads_real_album_tree_shape(tmp_path: Path):
+    class RealTreeClient(FakeGravityClient):
+        def get_album_tree(self) -> dict:
+            self.calls.append("get_album_tree")
+            return {
+                "code": 0,
+                "msg": "成功",
+                "data": {
+                    "tree": [
+                        {
+                            "id": 367246,
+                            "label": "点点英雄",
+                            "has_alum": True,
+                            "children": [{"id": 367247, "label": "视频", "has_alum": False}],
+                        }
+                    ],
+                    "image_size": 1,
+                    "video_size": 2,
+                },
+            }
+
+        def get_album_material_list(self, *, album_id: str, page: int, page_size: int) -> dict:
+            self.calls.append(f"get_album_material_list:{album_id}:{page}:{page_size}")
+            return {
+                "code": 0,
+                "data": {
+                    "list": [
+                        {
+                            "type": "material",
+                            "material": {
+                                "id": 12574679499084152,
+                                "file_name": "点点英雄真实结构素材",
+                                "file_md5": "real-md5",
+                                "status": 1,
+                                "media_refuse_count": 0,
+                            },
+                        }
+                    ]
+                },
+            }
+
+    auth_file = tmp_path / "gravity_token.json"
+    auth_file.write_text(
+        json.dumps(
+            {
+                "authorization": "secret-token-value",
+                "gravity_cid": "182",
+                "gravity_email": "hongen@example.com",
+                "gravity_id": "406",
+                "gravity_super": "false",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    client = RealTreeClient()
+
+    result = run_gravity_api_probe(
+        auth_file=auth_file,
+        runs_dir=tmp_path / "runs",
+        probe_scope="readonly_api",
+        sample_limit=1,
+        client=client,
+    )
+
+    endpoint_rows = {row["接口"]: row for row in result["sections"][0]["table"]["rows"]}
+    assert endpoint_rows["专辑树"]["结果"] == "可用"
+    assert endpoint_rows["专辑树"]["说明"] == "发现 2 个专辑/文件夹节点。"
+    assert "get_album_material_list:367246:1:1" in client.calls
+    sample_rows = result["sections"][2]["table"]["rows"]
+    assert sample_rows[0]["素材 ID"] == "12574679499084152"
+    assert sample_rows[0]["素材名称"] == "点点英雄真实结构素材"
+    assert sample_rows[0]["MD5"] == "real-md5"
+    assert sample_rows[0]["状态"] == "1"
+    field_rows = {row["核验项"]: row for row in result["sections"][1]["table"]["rows"]}
+    assert field_rows["拒审字段"]["系统结论"] == "已确认 media_refuse_count"
+    assert "secret-token-value" not in json.dumps(result, ensure_ascii=False)
 
 
 def test_gravity_api_probe_reads_auth_without_exposing_token(tmp_path: Path):

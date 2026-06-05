@@ -226,13 +226,15 @@ def test_gravity_album_tree_reads_latest_probe_artifact_for_binding_options(tmp_
                     "endpoint_results": {
                         "album_tree": {
                             "code": 0,
-                            "data": [
-                                {
-                                    "id": "album-1",
-                                    "name": "点点英雄专辑",
-                                    "children": [{"id": "folder-1", "name": "6月新素材"}],
-                                }
-                            ],
+                            "data": {
+                                "tree": [
+                                    {
+                                        "id": "album-1",
+                                        "label": "点点英雄专辑",
+                                        "children": [{"id": "folder-1", "label": "6月新素材"}],
+                                    }
+                                ]
+                            },
                         }
                     }
                 }

@@ -45,7 +45,7 @@ const riskLabel: Record<string, string> = {
 };
 
 const statusLabel: Record<string, string> = {
-  blocked: "已阻止",
+  blocked: "已阻塞",
   committed: "已写入",
   completed: "已完成",
   draft_only: "仅草稿",

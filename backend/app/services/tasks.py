@@ -63,13 +63,15 @@ def load_task_detail(runs_dir: str | Path, task_id: str, configs_dir: str | Path
     business_context = _context_items_to_text(context_items)
     progress = _task_progress(payload, result, f"{stdout}\n{stderr}")
     blocking_reasons = _business_blocking_reasons(result)
+    blocking_reasons = _humanized_gravity_token_blocking_reasons(payload, result, blocking_reasons)
     warnings = _business_warnings(result)
     business_status = str(result.get("status") or "")
     business_status_label = status_label(business_status) if business_status else ""
     task_operation_label = operation_label(payload.get("operation_type"))
-    task_status_label = status_label(payload.get("status"))
+    task_status_label = _task_status_label(payload, result)
     display_artifact_path = _display_artifact_path(base, result_artifact_path)
     result_summary = _short_result_summary(base, payload, result, account_names, result_artifact)
+    risk_level = _task_detail_risk_level(payload, result, blocking_reasons)
     row = {
         "任务 ID": str(payload.get("task_id") or task_id),
         "任务内容": task_operation_label,
@@ -82,8 +84,8 @@ def load_task_detail(runs_dir: str | Path, task_id: str, configs_dir: str | Path
     return {
         "summary": {
             "title": task_operation_label,
-            "status": str(payload.get("status") or "unknown"),
-            "risk_level": "high" if payload.get("status") == "failed" or blocking_reasons else "low",
+            "status": _task_summary_status(payload, result),
+            "risk_level": risk_level,
             "execution_enabled": False,
             "items": [
                 {"label": "任务 ID", "value": row["任务 ID"]},
@@ -93,6 +95,7 @@ def load_task_detail(runs_dir: str | Path, task_id: str, configs_dir: str | Path
                 *([{"label": "当前进度", "value": progress["label"]}] if progress.get("label") else []),
                 *([{"label": "业务状态", "value": business_status}] if business_status else []),
                 *([{"label": "业务结果", "value": business_status_label}] if business_status_label else []),
+                *_gravity_token_safety_items(payload, result),
                 *_summary_items(result, result_artifact),
             ],
             "warnings": warnings,
@@ -263,6 +266,8 @@ def _task_progress(payload: dict[str, Any], result: dict[str, Any], stdout: str)
     if parsed:
         return _progress_with_task_status(parsed, str(payload.get("status") or result.get("status") or ""))
     status = str(payload.get("status") or result.get("status") or "").strip()
+    if _is_gravity_token_missing_env_block(payload, result):
+        return {"percent": 100, "current": 1, "total": 1, "label": "已阻塞", "status": "normal"}
     if status == "completed":
         return {"percent": 100, "current": 1, "total": 1, "label": "已完成 100%", "status": "success"}
     if status == "failed":
@@ -322,6 +327,9 @@ def _short_result_summary(
     if ledger and _has_existing_plan_block(result):
         counts_text = _existing_plan_counts_text(ledger)
         return f"{operation}：已阻止重复执行，已有{counts_text}，未发起外部创建" if counts_text else f"{operation}：已阻止重复执行，未发起外部创建"
+    gravity_token_summary = _gravity_token_short_summary(payload, result)
+    if gravity_token_summary:
+        return gravity_token_summary
     parts = [f"{operation}：{status}"]
     if summary.get("action_count") is not None:
         parts.append(f"动作 {summary.get('action_count')}")
@@ -338,6 +346,67 @@ def _short_result_summary(
     if context_phrase:
         parts.append(context_phrase)
     return "，".join(parts)
+
+
+def _is_gravity_token_refresh(payload: dict[str, Any], result: dict[str, Any]) -> bool:
+    return str(payload.get("operation_type") or result.get("workflow") or "").strip() == "gravity_token_refresh"
+
+
+def _is_gravity_token_missing_env_block(payload: dict[str, Any], result: dict[str, Any]) -> bool:
+    if not _is_gravity_token_refresh(payload, result):
+        return False
+    reasons = _business_blocking_reasons(result)
+    return any("缺少环境变量" in reason for reason in reasons)
+
+
+def _humanized_gravity_token_blocking_reasons(
+    payload: dict[str, Any],
+    result: dict[str, Any],
+    reasons: list[str],
+) -> list[str]:
+    if not _is_gravity_token_missing_env_block(payload, result):
+        return reasons
+    return [f"缺少引力登录环境变量：{_missing_gravity_env_names(reasons)}"]
+
+
+def _missing_gravity_env_names(reasons: list[str]) -> str:
+    text = "、".join(str(reason or "").strip() for reason in reasons if str(reason or "").strip())
+    if "：" in text:
+        return text.split("：", 1)[1].strip()
+    return text or "GRAVITY_USERNAME、GRAVITY_PASSWORD"
+
+
+def _task_detail_risk_level(payload: dict[str, Any], result: dict[str, Any], blocking_reasons: list[str]) -> str:
+    if _is_gravity_token_missing_env_block(payload, result):
+        return "medium"
+    return "high" if payload.get("status") == "failed" or blocking_reasons else "low"
+
+
+def _task_status_label(payload: dict[str, Any], result: dict[str, Any]) -> str:
+    if _is_gravity_token_missing_env_block(payload, result):
+        return "已阻塞"
+    return status_label(payload.get("status"))
+
+
+def _task_summary_status(payload: dict[str, Any], result: dict[str, Any]) -> str:
+    if _is_gravity_token_missing_env_block(payload, result):
+        return "blocked"
+    return str(payload.get("status") or "unknown")
+
+
+def _gravity_token_safety_items(payload: dict[str, Any], result: dict[str, Any]) -> list[dict[str, Any]]:
+    if not _is_gravity_token_missing_env_block(payload, result):
+        return []
+    return [
+        {"label": "安全说明", "value": "未访问引力、未生成 Token、未执行业务动作"},
+        {"label": "真实业务动作", "value": "未上传素材、未创建广告、未修改投放"},
+    ]
+
+
+def _gravity_token_short_summary(payload: dict[str, Any], result: dict[str, Any]) -> str:
+    if not _is_gravity_token_missing_env_block(payload, result):
+        return ""
+    return "引力 Token 获取/刷新：已阻塞，缺少引力登录环境变量；未访问引力，未生成 Token，未执行业务动作"
 
 
 CREATE_OPERATION_TYPES = {"create_mode", "create_plan_generate", "create_live_execute", "create_live_execute_once"}

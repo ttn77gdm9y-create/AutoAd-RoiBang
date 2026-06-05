@@ -615,15 +615,14 @@ def _blocked_result(title: str, blocking_reasons: list[str]) -> dict[str, Any]:
 
 
 def _album_nodes(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    data = payload.get("data")
-    roots = data if isinstance(data, list) else data.get("list") if isinstance(data, dict) and isinstance(data.get("list"), list) else []
+    roots = _album_roots(payload)
     nodes: list[dict[str, Any]] = []
 
     def visit(node: Any, level: int, *, album_id: str = "", album_name: str = "") -> None:
         if not isinstance(node, dict):
             return
         node_id = _text(node.get("id") or node.get("album_id"))
-        node_name = _text(node.get("name"))
+        node_name = _text(node.get("name") or node.get("label"))
         current_album_id = node_id if level == 1 else album_id
         current_album_name = node_name if level == 1 else album_name
         nodes.append(
@@ -645,6 +644,22 @@ def _album_nodes(payload: dict[str, Any]) -> list[dict[str, Any]]:
     for root in roots:
         visit(root, 1)
     return nodes
+
+
+def _album_roots(payload: dict[str, Any]) -> list[Any]:
+    data = payload.get("data")
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        for key in ("tree", "list", "rows", "items"):
+            value = data.get(key)
+            if isinstance(value, list):
+                return value
+    for key in ("tree", "list", "rows", "items"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return value
+    return []
 
 
 def _load_payload(value: Any) -> dict[str, Any]:

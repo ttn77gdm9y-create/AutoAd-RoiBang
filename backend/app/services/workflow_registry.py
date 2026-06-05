@@ -397,7 +397,7 @@ def _status_from_payload(
     status = str(payload.get("status") or ("completed" if payload.get("ok") is True else "unknown"))
     return {
         "status": status,
-        "status_label": status_label(status),
+        "status_label": _latest_status_label(payload, status),
         "run_at": _run_at_from_path(path),
         "run_at_label": _run_at_label(path),
         "source": source,
@@ -425,13 +425,15 @@ def _latest_status_summary(payload: dict[str, Any]) -> str:
             if first_reason:
                 parts.append(f"阻塞原因 {first_reason}")
     if _text(payload.get("workflow")) == "gravity_token_refresh":
+        blocking_reasons = payload.get("blocking_reasons")
+        if isinstance(blocking_reasons, list) and any("缺少环境变量" in _text(reason) for reason in blocking_reasons):
+            return "缺少引力登录环境变量，未访问引力，未生成 Token，未执行业务动作"
         token_status = _text(summary.get("token_status_label"))
         if token_status:
             parts.append(f"Token {token_status}")
         auth_file = _text(summary.get("auth_file"))
         if auth_file:
             parts.append(f"文件 {auth_file}")
-        blocking_reasons = payload.get("blocking_reasons")
         if isinstance(blocking_reasons, list) and blocking_reasons:
             first_reason = _text(blocking_reasons[0])
             if first_reason:
@@ -455,6 +457,14 @@ def _latest_status_summary(payload: dict[str, Any]) -> str:
     if not parts:
         parts.append(status_label(payload.get("status")))
     return "，".join(parts)
+
+
+def _latest_status_label(payload: dict[str, Any], status: str) -> str:
+    if _text(payload.get("workflow")) == "gravity_token_refresh" and status == "blocked":
+        blocking_reasons = payload.get("blocking_reasons")
+        if isinstance(blocking_reasons, list) and any("缺少环境变量" in _text(reason) for reason in blocking_reasons):
+            return "已阻塞"
+    return status_label(status)
 
 
 def _summary_metric_parts(summary: dict[str, Any]) -> list[str]:

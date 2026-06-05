@@ -2,6 +2,7 @@ import sqlite3
 from pathlib import Path
 
 from roibang_v2.db.bootstrap import bootstrap_database
+from roibang_v2.fetch.gravity_material_library import GravityMaterialClient
 from roibang_v2.workflows.gravity_material_sync import run_gravity_material_sync_request
 
 
@@ -32,27 +33,33 @@ class FakeGravityMaterialClient:
                 "total": 2,
                 "list": [
                     {
-                        "material_id": "gravity-m-1",
-                        "name": "素材A",
-                        "file_md5": "md5-a",
-                        "status": 1,
-                        "album_id": album_id,
-                        "album_name": "点点英雄专辑",
-                        "folder_id": folder_id,
-                        "folder_name": "6月新素材",
-                        "duration": 15,
-                        "file_size": 2048,
-                        "create_time": "2026-06-01T10:00:00+08:00",
+                        "type": "material",
+                        "material": {
+                            "id": "gravity-m-1",
+                            "file_name": "素材A",
+                            "file_md5": "md5-a",
+                            "status": 1,
+                            "album_id": album_id,
+                            "album_name": "点点英雄专辑",
+                            "folder_id": folder_id,
+                            "folder_name": "6月新素材",
+                            "video_duration_second": 15,
+                            "file_size": 2048,
+                            "create_time": "2026-06-01T10:00:00+08:00",
+                        },
                     },
                     {
-                        "material_id": "gravity-m-2",
-                        "name": "素材B",
-                        "file_md5": "md5-b",
-                        "status": 2,
-                        "album_id": album_id,
-                        "album_name": "点点英雄专辑",
-                        "folder_id": folder_id,
-                        "folder_name": "6月新素材",
+                        "type": "material",
+                        "material": {
+                            "id": "gravity-m-2",
+                            "file_name": "素材B",
+                            "file_md5": "md5-b",
+                            "status": 2,
+                            "album_id": album_id,
+                            "album_name": "点点英雄专辑",
+                            "folder_id": folder_id,
+                            "folder_name": "6月新素材",
+                        },
                     },
                 ],
             },
@@ -74,6 +81,20 @@ class FakeGravityMaterialClient:
                 ]
             },
         }
+
+
+def test_gravity_material_client_uses_authorization_header_as_saved():
+    client = GravityMaterialClient(
+        {
+            "authorization": "document-token-value",
+            "gravity_cid": "182",
+            "gravity_email": "hongen@example.com",
+            "gravity_id": "406",
+            "gravity_super": "false",
+        }
+    )
+
+    assert client.headers["Authorization"] == "document-token-value"
 
 
 def test_gravity_material_sync_imports_bound_album_materials_without_uploading(tmp_path: Path):

@@ -135,9 +135,7 @@ export function WorkflowCenterPage() {
                   <>
                     <Space wrap>
                       <Tag>{selectedWorkflow.category}</Tag>
-                      <Tag color={selectedWorkflow.risk_level === "medium" ? "orange" : "green"}>
-                        风险：{selectedWorkflow.risk_level === "medium" ? "中" : "低"}
-                      </Tag>
+                      <Tag color={riskColor(selectedWorkflow.risk_level)}>风险：{riskLabel(selectedWorkflow.risk_level)}</Tag>
                       <Tag color="blue">真实投放动作：否</Tag>
                       <Tag color={selectedWorkflow.ai_auto_run ? "cyan" : "default"}>
                         AI 自动运行：{selectedWorkflow.ai_auto_run ? "允许" : "不允许"}
@@ -219,7 +217,7 @@ function workflowColumns(): ColumnsType<WorkflowCatalogItem> {
           <Space wrap size={6}>
             <Typography.Text strong>{value}</Typography.Text>
             <Tag>{record.category}</Tag>
-            <Tag color={record.risk_level === "medium" ? "orange" : "green"}>{record.risk_level === "medium" ? "风险中" : "风险低"}</Tag>
+            <Tag color={riskColor(record.risk_level)}>风险{riskLabel(record.risk_level)}</Tag>
           </Space>
           <Typography.Text type="secondary" className="workflow-list-summary">
             {record.latest_status?.summary || "暂无最近运行结果"}
@@ -429,4 +427,30 @@ function statusColor(status?: string): string {
     return "orange";
   }
   return "default";
+}
+
+function riskColor(riskLevel?: string): string {
+  if (riskLevel === "high") {
+    return "red";
+  }
+  if (riskLevel === "medium") {
+    return "orange";
+  }
+  if (riskLevel === "low") {
+    return "green";
+  }
+  return "default";
+}
+
+function riskLabel(riskLevel?: string): string {
+  if (riskLevel === "high") {
+    return "高";
+  }
+  if (riskLevel === "medium") {
+    return "中";
+  }
+  if (riskLevel === "low") {
+    return "低";
+  }
+  return riskLevel || "未知";
 }

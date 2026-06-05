@@ -177,12 +177,7 @@ def _auth_token(auth_payload: dict[str, Any]) -> str:
 
 
 def _authorization_header(auth_payload: dict[str, Any]) -> str:
-    token = _auth_token(auth_payload)
-    if not token:
-        return "Bearer "
-    if token.lower().startswith("bearer "):
-        return token
-    return f"Bearer {token}"
+    return _auth_token(auth_payload)
 
 
 def _text(value: Any) -> str:

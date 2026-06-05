@@ -527,6 +527,54 @@ def test_task_detail_surfaces_business_failure_reasons(tmp_path):
     assert {"label": "业务状态", "value": "blocked"} in payload["summary"]["items"]
 
 
+def test_gravity_token_task_detail_explains_missing_env_as_blocked_not_business_accident(tmp_path):
+    task_dir = tmp_path / "data" / "runs" / "frontend_tasks"
+    task_dir.mkdir(parents=True)
+    (task_dir / "frontend-1.stdout.log").write_text("blocked", encoding="utf-8")
+    (task_dir / "frontend-1.stderr.log").write_text("", encoding="utf-8")
+    (task_dir / "frontend-1.json").write_text(
+        json.dumps(
+            {
+                "task_id": "frontend-1",
+                "operation_type": "gravity_token_refresh",
+                "status": "failed",
+                "return_code": 1,
+                "stdout_path": "frontend_tasks/frontend-1.stdout.log",
+                "stderr_path": "frontend_tasks/frontend-1.stderr.log",
+                "result": {
+                    "ok": False,
+                    "workflow": "gravity_token_refresh",
+                    "status": "blocked",
+                    "external_api_calls": 0,
+                    "summary": {
+                        "auth_file": "data/gravity_token.json",
+                        "auth_file_exists": False,
+                        "token_present": False,
+                        "username_env": "GRAVITY_USERNAME",
+                        "password_env": "GRAVITY_PASSWORD",
+                    },
+                    "blocking_reasons": ["缺少环境变量：GRAVITY_USERNAME、GRAVITY_PASSWORD"],
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    app = create_app(project_root=tmp_path)
+    client = TestClient(app)
+
+    response = client.get("/api/tasks/frontend-1")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["risk_level"] == "medium"
+    assert "缺少引力登录环境变量" in "；".join(payload["summary"]["blocking_reasons"])
+    assert "未访问引力" in "；".join(item["value"] for item in payload["summary"]["items"])
+    assert "未生成 Token" in "；".join(item["value"] for item in payload["summary"]["items"])
+    assert "未执行业务动作" in "；".join(item["value"] for item in payload["summary"]["items"])
+    assert payload["table"]["rows"][0]["当前状态"] == "已阻塞"
+
+
 def test_task_detail_parses_pretty_stdout_business_json_and_account_names(tmp_path):
     account_dir = tmp_path / "configs" / "accounts"
     account_dir.mkdir(parents=True)

@@ -240,12 +240,7 @@ def _auth_token(auth_payload: dict[str, Any]) -> str:
 
 
 def _authorization_header(auth_payload: dict[str, Any]) -> str:
-    token = _auth_token(auth_payload)
-    if not token:
-        return "Bearer "
-    if token.lower().startswith("bearer "):
-        return token
-    return f"Bearer {token}"
+    return _auth_token(auth_payload)
 
 
 def _jwt_token_value(auth_payload: dict[str, Any]) -> str:
@@ -420,7 +415,7 @@ def _field_rows_from_probe(
         _field_row(
             "拒审字段",
             _refuse_conclusion(materials),
-            "检查 refuse_reason_ocean / refuse_reason_tencent。",
+            "检查 media_refuse_count / refuse_reason_ocean / refuse_reason_tencent。",
             "缺失时按未知处理，不当成 0 次拒审。",
         ),
         _field_row(
@@ -443,8 +438,7 @@ def _field_row(item: str, conclusion: str, evidence: str, risk: str) -> dict[str
 
 
 def _album_nodes(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    data = payload.get("data")
-    roots = data if isinstance(data, list) else data.get("list") if isinstance(data, dict) and isinstance(data.get("list"), list) else []
+    roots = _album_roots(payload)
     nodes: list[dict[str, Any]] = []
 
     def visit(node: Any) -> None:
@@ -461,7 +455,29 @@ def _album_nodes(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return nodes
 
 
+def _album_roots(payload: dict[str, Any]) -> list[Any]:
+    data = payload.get("data")
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        for key in ("tree", "list", "rows", "items"):
+            value = data.get(key)
+            if isinstance(value, list):
+                return value
+    for key in ("tree", "list", "rows", "items"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return value
+    return []
+
+
 def _first_album_id(nodes: list[dict[str, Any]]) -> str:
+    for node in nodes:
+        if not bool(node.get("has_alum")):
+            continue
+        value = _text(node.get("id") or node.get("album_id"))
+        if value:
+            return value
     for node in nodes:
         value = _text(node.get("id") or node.get("album_id"))
         if value:
@@ -476,7 +492,14 @@ def _material_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
         candidates = data.get("list") or data.get("rows") or data.get("items") or data.get("records") or []
     elif isinstance(data, list):
         candidates = data
-    return [item for item in candidates if isinstance(item, dict)]
+    return [_material_payload(item) for item in candidates if isinstance(item, dict)]
+
+
+def _material_payload(item: dict[str, Any]) -> dict[str, Any]:
+    nested = item.get("material")
+    if isinstance(nested, dict):
+        return {**nested, "list_item_type": _text(item.get("type"))}
+    return item
 
 
 def _material_id(material: dict[str, Any]) -> str:
@@ -493,9 +516,11 @@ def _sample_material_row(material: dict[str, Any]) -> dict[str, str]:
         refuse_fields.append(f"巨量：{material.get('refuse_reason_ocean')}")
     if "refuse_reason_tencent" in material:
         refuse_fields.append(f"腾讯：{material.get('refuse_reason_tencent')}")
+    if "media_refuse_count" in material:
+        refuse_fields.append(f"媒体拒审：{material.get('media_refuse_count')}")
     return {
         "素材 ID": _material_id(material),
-        "素材名称": _text(material.get("name") or material.get("material_name")),
+        "素材名称": _text(material.get("name") or material.get("material_name") or material.get("file_name")),
         "MD5": _material_md5(material),
         "专辑": _text(material.get("album_name")),
         "文件夹": _text(material.get("folder_name")),
@@ -523,6 +548,8 @@ def _status_conclusion(materials: list[dict[str, Any]]) -> str:
 def _refuse_conclusion(materials: list[dict[str, Any]]) -> str:
     if not materials:
         return "未确认"
+    if any("media_refuse_count" in item for item in materials):
+        return "已确认 media_refuse_count"
     present_count = sum(1 for item in materials if "refuse_reason_ocean" in item or "refuse_reason_tencent" in item)
     if present_count == len(materials):
         return "已确认每个样本都有拒审字段"

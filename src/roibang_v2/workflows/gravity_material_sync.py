@@ -245,7 +245,14 @@ def _material_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
         candidates = data.get("list") or data.get("rows") or data.get("items") or data.get("records") or []
     elif isinstance(data, list):
         candidates = data
-    return [item for item in candidates if isinstance(item, dict)]
+    return [_material_payload(item) for item in candidates if isinstance(item, dict)]
+
+
+def _material_payload(item: dict[str, Any]) -> dict[str, Any]:
+    nested = item.get("material")
+    if isinstance(nested, dict):
+        return {**nested, "list_item_type": _text(item.get("type"))}
+    return item
 
 
 def _report_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -259,6 +266,9 @@ def _report_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _source_material_row(material: dict[str, Any], *, binding: dict[str, str]) -> dict[str, Any]:
+    material_payload = dict(material)
+    if "id" in material_payload:
+        material_payload["gravity_raw_id"] = material_payload.pop("id")
     row = {
         "material_id": _material_id(material),
         "video_id": "",
@@ -266,7 +276,7 @@ def _source_material_row(material: dict[str, Any], *, binding: dict[str, str]) -
         "material_type": _material_type(material),
         "review_status": _status_label(material),
         "signature": _material_md5(material),
-        "duration": _float_value(material, "duration"),
+        "duration": _material_duration(material),
         "file_size": _float_value(material, "file_size"),
         "create_time": _first_text(material, "create_time", "created_at", "upload_time"),
         "cost_lookback": _float_value(material, "AdCost") or _float_value(material, "stat_cost"),
@@ -278,7 +288,7 @@ def _source_material_row(material: dict[str, Any], *, binding: dict[str, str]) -
         "gravity_status": _text(material.get("status")),
     }
     row["payload_json"] = json.dumps({**material, **{key: row[key] for key in ("album_id", "album_name", "folder_id", "folder_name")}}, ensure_ascii=False)
-    return {**material, **row}
+    return {**material_payload, **row}
 
 
 def _write_report_rollups(
@@ -342,7 +352,7 @@ def _write_report_rollups(
                     _first_text(material, "name", "material_name", "file_name", "title"),
                     _status_label(material),
                     _material_md5(material),
-                    _float_value(material, "duration"),
+                    _material_duration(material),
                     _float_value(material, "file_size"),
                     _first_text(material, "create_time", "created_at", "upload_time"),
                     _float_value(report, "AdCost"),
@@ -418,6 +428,10 @@ def _material_type(material: dict[str, Any]) -> str:
     if value in {"2", "image", "IMAGE"}:
         return "image"
     return "video"
+
+
+def _material_duration(material: dict[str, Any]) -> float:
+    return _float_value(material, "duration") or _float_value(material, "video_duration_second") or _float_value(material, "video_duration")
 
 
 def _first_text(row: dict[str, Any], *keys: str) -> str:
