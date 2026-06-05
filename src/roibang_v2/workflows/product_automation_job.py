@@ -152,28 +152,88 @@ def _resolve_product_path(path_text: str, product: dict[str, Any] | None) -> Pat
 
 
 def _allowed_accounts(path_text: str, *, product: dict[str, Any] | None = None) -> list[dict[str, str]]:
+    accounts, _excluded = _allowed_accounts_with_exclusions(path_text, product=product)
+    return accounts
+
+
+def _allowed_accounts_with_exclusions(
+    path_text: str,
+    *,
+    product: dict[str, Any] | None = None,
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     if not _text(path_text):
-        return []
+        return [], []
     path = _resolve_product_path(path_text, product)
     if not path.exists():
-        return []
+        return [], []
     payload = load_json(path)
     rows = payload.get("allowed_target_accounts") if isinstance(payload.get("allowed_target_accounts"), list) else []
+    statuses = _product_account_statuses(product)
     accounts: list[dict[str, str]] = []
+    excluded: list[dict[str, str]] = []
     for row in rows:
         if not isinstance(row, dict):
             continue
         enabled = _bool(row.get("enable", row.get("enabled", True)), True)
         advertiser_id = _text(row.get("advertiser_id"))
-        if enabled and advertiser_id:
-            accounts.append(
+        if not enabled or not advertiser_id:
+            continue
+        product_account = statuses.get(advertiser_id, {})
+        status = _text(product_account.get("status")) or "active"
+        account_name = _text(product_account.get("advertiser_name")) or _text(row.get("account_name"))
+        if status != "active":
+            excluded.append(
                 {
                     "advertiser_id": advertiser_id,
-                    "account_name": _text(row.get("account_name")),
-                    "account_remark": _text(row.get("account_remark")),
+                    "account_name": account_name,
+                    "status": status,
+                    "reason": f"产品账户库状态为 {status}",
                 }
             )
-    return accounts
+            continue
+        accounts.append(
+            {
+                "advertiser_id": advertiser_id,
+                "account_name": account_name,
+                "account_remark": _text(row.get("account_remark")),
+            }
+        )
+    return accounts, excluded
+
+
+def _product_account_store_path(product: dict[str, Any] | None) -> Path | None:
+    if product is None:
+        return None
+    config_path_text = _text(product.get("_config_path"))
+    if not config_path_text:
+        return None
+    config_path = Path(config_path_text)
+    if config_path.parent.name == "products":
+        return config_path.parent.parent / "accounts" / "product-accounts.local.json"
+    return None
+
+
+def _product_account_statuses(product: dict[str, Any] | None) -> dict[str, dict[str, str]]:
+    path = _product_account_store_path(product)
+    if path is None or not path.exists():
+        return {}
+    try:
+        payload = load_json(path)
+    except (FileNotFoundError, json.JSONDecodeError, ValueError):
+        return {}
+    rows = payload.get("accounts") if isinstance(payload.get("accounts"), list) else []
+    product_key = _text(product.get("product_key") if product else "")
+    output: dict[str, dict[str, str]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        advertiser_id = _text(row.get("advertiser_id"))
+        if not advertiser_id:
+            continue
+        if product_key and _text(row.get("product_key")) and _text(row.get("product_key")) != product_key:
+            continue
+        output[advertiser_id] = {str(key): _text(value) for key, value in row.items()}
+    return output
 
 
 def build_product_job_request(
@@ -359,7 +419,13 @@ def build_product_job_request(
         target_scope = _text(preload_cfg.get("target_scope") or "allowed_accounts")
         target_accounts: dict[str, Any]
         if target_scope == "allowed_accounts":
-            target_accounts = {"accounts": _allowed_accounts(_text(product.get("allowed_target_accounts_path")), product=product)}
+            allowed_accounts, excluded_accounts = _allowed_accounts_with_exclusions(
+                _text(product.get("allowed_target_accounts_path")),
+                product=product,
+            )
+            target_accounts = {"accounts": allowed_accounts}
+            if excluded_accounts:
+                target_accounts["excluded_inactive_accounts"] = excluded_accounts
         else:
             target_accounts = {
                 "source": "delivery_patrol_artifact",
@@ -371,10 +437,12 @@ def build_product_job_request(
         return {
             "source_material_preload_to_accounts": {
                 "product": product_name,
+                "product_key": product_key,
                 "source_advertiser_id": source_advertiser_id,
                 "organization_id": organization_id,
                 "target_date": _date_value(target_date),
                 "target_accounts": target_accounts,
+                "product_account_store_path": str(_product_account_store_path(product) or ""),
                 "material_source": {"material_type": "video", "limit": 0, "max_bind_materials": 0, "batch_size": 50},
                 "execute": _mutation_execute(f"{product_key}-source-material-preload-to-accounts", concurrency=3),
             }

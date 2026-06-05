@@ -105,7 +105,7 @@ def test_gravity_material_sync_imports_bound_album_materials_without_uploading(t
             """
             INSERT INTO product_gravity_album_bindings (
               product, album_id, album_name, folder_id, folder_name, is_active
-            ) VALUES ('点点英雄', 'album-1', '点点英雄专辑', 'folder-1', '6月新素材', 1)
+            ) VALUES ('点点英雄', 'album-1', '黑旗-奇门（塔防）', 'folder-1', '6月新素材', 1)
             """
         )
         conn.execute(
@@ -208,6 +208,39 @@ def test_gravity_material_sync_blocks_when_no_active_bindings(tmp_path: Path):
     assert result["ok"] is False
     assert result["status"] == "blocked"
     assert "请先在引力素材库页面绑定产品和专辑" in result["blocking_reasons"][0]
+
+
+def test_gravity_material_sync_blocks_active_binding_outside_target_album_scope(tmp_path: Path):
+    db_path = tmp_path / "data" / "roibang_v2.sqlite3"
+    bootstrap_database(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO product_gravity_album_bindings (
+              product, album_id, album_name, folder_id, folder_name, is_active
+            ) VALUES ('点点英雄', 'album-other', '其他游戏素材', '', '', 1)
+            """
+        )
+    client = FakeGravityMaterialClient()
+
+    result = run_gravity_material_sync_request(
+        {
+            "auth": {
+                "authorization": "token",
+                "gravity_cid": "182",
+                "gravity_email": "hongen@example.com",
+                "gravity_id": "406",
+            }
+        },
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        client=client,
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "blocked"
+    assert "不在允许同步的引力专辑范围内" in result["blocking_reasons"][0]
+    assert client.calls == []
 
 
 def test_gravity_material_sync_blocks_missing_auth_file_with_chinese_reason(tmp_path: Path):

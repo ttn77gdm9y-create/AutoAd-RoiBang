@@ -37,6 +37,7 @@ class BulkUpdateAccountsRequest(BaseModel):
     channel: str = ""
     owner: str = ""
     status: str = ""
+    advertiser_ids: list[str] = Field(default_factory=list)
     updates: dict[str, str] = Field(default_factory=dict)
 
 
@@ -117,6 +118,7 @@ def bulk_update(request: Request, body: BulkUpdateAccountsRequest) -> dict:
             "status": body.status,
         },
         updates=body.updates,
+        advertiser_ids=body.advertiser_ids,
     )
 
 
@@ -132,6 +134,7 @@ def bulk_update_preview(request: Request, body: BulkUpdateAccountsRequest) -> di
             "status": body.status,
         },
         updates=body.updates,
+        advertiser_ids=body.advertiser_ids,
     )
 
 

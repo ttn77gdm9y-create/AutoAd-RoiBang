@@ -1,5 +1,6 @@
-import { Alert, Button, Checkbox, Form, Input, Select, Space, Typography, Upload } from "antd";
+import { Alert, Button, Checkbox, Form, Input, Select, Space, Table, Tag, Typography, Upload } from "antd";
 import type { UploadFile } from "antd";
+import type { ColumnsType } from "antd/es/table";
 import { DatabaseOutlined, DownloadOutlined, EyeOutlined, FormOutlined, SaveOutlined, UploadOutlined } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
@@ -8,11 +9,14 @@ import { apiGet, apiPost, apiUpload, apiUrl } from "../api/client";
 import { SummaryPanel } from "../components/SummaryPanel";
 import type { ChineseResult } from "../types/api";
 
+type AccountRow = Record<string, string | number | boolean | null>;
+
 export function AccountsPage() {
   const queryClient = useQueryClient();
   const [filters, setFilters] = useState({ product_key: "", channel: "", owner: "", status: "" });
-  const [bulkFields, setBulkFields] = useState({ channel: false, owner: false, account_remark: false });
-  const [bulkValues, setBulkValues] = useState({ channel: "", owner: "", account_remark: "" });
+  const [bulkFields, setBulkFields] = useState({ channel: false, owner: false, account_remark: false, status: false });
+  const [bulkValues, setBulkValues] = useState({ channel: "", owner: "", account_remark: "", status: "disabled" });
+  const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
   const [pasteText, setPasteText] = useState("");
   const [fileList, setFileList] = useState<UploadFile[]>([]);
   const [preview, setPreview] = useState<ChineseResult | undefined>();
@@ -71,23 +75,25 @@ export function AccountsPage() {
     },
   });
   const bulkPreview = useMutation({
-    mutationFn: () => apiPost<ChineseResult>("/accounts/bulk-update/preview", { ...filters, updates: buildBulkUpdates() }),
+    mutationFn: () => apiPost<ChineseResult>("/accounts/bulk-update/preview", buildBulkRequest()),
     onSuccess: (result) => {
       setPreview(result);
       setBulkPreviewReady(result.summary.status === "planned");
     },
   });
   const bulkUpdate = useMutation({
-    mutationFn: () => apiPost<ChineseResult>("/accounts/bulk-update", { ...filters, updates: buildBulkUpdates() }),
+    mutationFn: () => apiPost<ChineseResult>("/accounts/bulk-update", buildBulkRequest()),
     onSuccess: (result) => {
       setPreview(result);
       setBulkPreviewReady(false);
+      setSelectedAccountIds([]);
       queryClient.invalidateQueries({ queryKey: ["accounts"] });
     },
   });
   const accountCount = query.data?.summary.items.find((item) => item.label === "账户数")?.value ?? 0;
+  const accountRows = (query.data?.table.rows ?? []) as AccountRow[];
   const selectedFile = Boolean(fileList[0]?.originFileObj);
-  const hasBulkFields = bulkFields.channel || bulkFields.owner || bulkFields.account_remark;
+  const hasBulkFields = bulkFields.channel || bulkFields.owner || bulkFields.account_remark || bulkFields.status;
   const busy =
     pastePreview.isPending ||
     pasteCommit.isPending ||
@@ -111,11 +117,23 @@ export function AccountsPage() {
     if (bulkFields.account_remark) {
       updates.account_remark = bulkValues.account_remark;
     }
+    if (bulkFields.status) {
+      updates.status = bulkValues.status;
+    }
     return updates;
+  }
+
+  function buildBulkRequest() {
+    return {
+      ...filters,
+      advertiser_ids: selectedAccountIds,
+      updates: buildBulkUpdates(),
+    };
   }
 
   function updateFilters(patch: Partial<typeof filters>) {
     setFilters({ ...filters, ...patch });
+    setSelectedAccountIds([]);
     setBulkPreviewReady(false);
   }
 
@@ -179,13 +197,45 @@ export function AccountsPage() {
         </Form.Item>
       </Form>
 
+      <section className="import-panel">
+        <div className="import-column full-width">
+          <Space direction="vertical" size="middle" className="full-width">
+            <Space wrap>
+              <Typography.Text strong>账户明细</Typography.Text>
+              <Tag color={selectedAccountIds.length ? "blue" : "default"}>已选 {selectedAccountIds.length}</Tag>
+              <Tag color="default">当前 {accountCount}</Tag>
+            </Space>
+            <Table<AccountRow>
+              rowKey={(row) => String(row["账户 ID"] ?? "")}
+              size="small"
+              loading={query.isLoading}
+              dataSource={accountRows}
+              columns={accountColumns()}
+              rowSelection={{
+                selectedRowKeys: selectedAccountIds,
+                onChange: (keys) => {
+                  setSelectedAccountIds(keys.map(String));
+                  setBulkPreviewReady(false);
+                },
+              }}
+              scroll={{ x: "max-content" }}
+              pagination={{ pageSize: 20, showSizeChanger: true }}
+            />
+          </Space>
+        </div>
+      </section>
+
       <section className="import-panel bulk-edit-panel">
         <div className="import-column">
           <Typography.Title level={4}>批量修改当前筛选结果</Typography.Title>
           <Alert
             type="warning"
             showIcon
-            message={`将修改当前筛选命中的 ${accountCount} 个账户，只更新已勾选字段；勾选后留空会清空该字段。`}
+            message={
+              selectedAccountIds.length
+                ? `将修改已选中的 ${selectedAccountIds.length} 个账户，只更新已勾选字段；勾选后留空会清空该字段。`
+                : `将修改当前筛选命中的 ${accountCount} 个账户，只更新已勾选字段；勾选后留空会清空该字段。`
+            }
           />
           <div className="bulk-edit-grid">
             <Checkbox
@@ -220,6 +270,19 @@ export function AccountsPage() {
               value={bulkValues.account_remark}
               onChange={(event) => updateBulkValues({ account_remark: event.target.value })}
               placeholder="例如：点点英雄-黑旗"
+            />
+            <Checkbox checked={bulkFields.status} onChange={(event) => updateBulkFields({ status: event.target.checked })}>
+              状态
+            </Checkbox>
+            <Select
+              disabled={!bulkFields.status}
+              value={bulkValues.status}
+              onChange={(value) => updateBulkValues({ status: value })}
+              options={[
+                { label: "启用", value: "active" },
+                { label: "暂停", value: "paused" },
+                { label: "停用", value: "disabled" },
+              ]}
             />
           </div>
           <Space wrap>
@@ -298,7 +361,54 @@ export function AccountsPage() {
         ))}
 
       {preview ? <SummaryPanel result={preview} loading={busy} detailsCollapsed showArtifactPath={false} showRawJson={false} /> : null}
-      <SummaryPanel result={query.data} loading={query.isLoading} showArtifactPath={false} showRawJson={false} />
+      <SummaryPanel result={query.data} loading={query.isLoading} detailsCollapsed showArtifactPath={false} showRawJson={false} />
     </main>
   );
+}
+
+function accountColumns(): ColumnsType<AccountRow> {
+  return [
+    { title: "产品", dataIndex: "产品", width: 120 },
+    { title: "产品 Key", dataIndex: "产品 Key", width: 140 },
+    { title: "账户 ID", dataIndex: "账户 ID", width: 160 },
+    { title: "账户名", dataIndex: "账户名", width: 220, ellipsis: true },
+    { title: "渠道", dataIndex: "渠道", width: 100 },
+    { title: "负责人", dataIndex: "负责人", width: 100 },
+    {
+      title: "状态",
+      dataIndex: "状态",
+      width: 90,
+      render: (value) => <Tag color={accountStatusColor(value)}>{accountStatusLabel(value)}</Tag>,
+    },
+    { title: "备注", dataIndex: "备注", width: 180, ellipsis: true },
+    { title: "说明", dataIndex: "说明", width: 220, ellipsis: true },
+  ];
+}
+
+function accountStatusLabel(value: unknown): string {
+  const text = String(value || "");
+  if (text === "active") {
+    return "启用";
+  }
+  if (text === "paused") {
+    return "暂停";
+  }
+  if (text === "disabled") {
+    return "停用";
+  }
+  return text || "未知";
+}
+
+function accountStatusColor(value: unknown): string {
+  const text = String(value || "");
+  if (text === "active") {
+    return "green";
+  }
+  if (text === "paused") {
+    return "orange";
+  }
+  if (text === "disabled") {
+    return "red";
+  }
+  return "default";
 }

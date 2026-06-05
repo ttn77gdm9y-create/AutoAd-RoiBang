@@ -13,6 +13,9 @@ from roibang_v2.ui.background_tasks import build_task_record
 from roibang_v2.ui.background_tasks import start_runner
 from roibang_v2.ui.background_tasks import write_task_record
 from roibang_v2.db.bootstrap import bootstrap_database
+from roibang_v2.materials.gravity_album_scope import binding_in_target_scope
+from roibang_v2.materials.gravity_album_scope import load_target_album_names
+from roibang_v2.materials.gravity_album_scope import target_album_match_rows
 from roibang_v2.materials.gravity_qualification import matches_qualification_filter
 from roibang_v2.materials.gravity_qualification import qualification_summary
 from roibang_v2.materials.gravity_qualification import qualify_gravity_material
@@ -59,6 +62,9 @@ def save_gravity_binding(*, project_root: str | Path, body: dict[str, Any]) -> d
     bootstrap_database(db_path)
     binding = _normalized_binding(body)
     blocking = _binding_blocking_reasons(binding)
+    target_names = load_target_album_names(project_root)
+    if not blocking and not binding_in_target_scope(binding, target_names):
+        blocking.append(f"不在允许同步的引力专辑范围内。允许范围：{'、'.join(target_names)}")
     if blocking:
         return _blocked_result("引力素材绑定未保存", blocking)
     with sqlite3.connect(db_path) as conn:
@@ -256,19 +262,45 @@ def gravity_album_tree(*, project_root: str | Path) -> dict[str, Any]:
     payload = read_json(artifact) if artifact else {}
     album_tree = _dict(_dict(payload.get("raw")).get("endpoint_results")).get("album_tree", {})
     nodes = _album_nodes(album_tree if isinstance(album_tree, dict) else {})
+    target_names = load_target_album_names(project_root)
+    target_rows = target_album_match_rows(nodes, target_names)
+    matched_count = sum(1 for row in target_rows if row["匹配状态"] == "已匹配")
     return {
         "summary": {
             "title": "引力专辑树",
             "status": "loaded" if nodes else "empty",
             "risk_level": "low",
             "execution_enabled": False,
-            "items": [{"label": "节点数", "value": len(nodes)}],
+            "items": [
+                {"label": "原始专辑/文件夹", "value": len(nodes)},
+                {"label": "目标专辑", "value": len(target_rows)},
+                {"label": "已匹配目标", "value": matched_count},
+            ],
             "warnings": [] if nodes else ["还没有专辑树样本，请先在自动化工作台运行引力素材库只读探测。"],
             "blocking_reasons": [],
         },
         "table": {"columns": ["专辑/文件夹 ID", "名称", "层级"], "rows": nodes},
+        "sections": [
+            {
+                "title": "目标专辑匹配",
+                "table": {
+                    "columns": ["目标专辑", "匹配状态", "匹配数量", "专辑/文件夹 ID", "名称", "可自动绑定"],
+                    "rows": [
+                        {
+                            "目标专辑": row["目标专辑"],
+                            "匹配状态": row["匹配状态"],
+                            "匹配数量": row["匹配数量"],
+                            "专辑/文件夹 ID": row["专辑/文件夹 ID"],
+                            "名称": row["名称"],
+                            "可自动绑定": row["可自动绑定"],
+                        }
+                        for row in target_rows
+                    ],
+                },
+            }
+        ],
         "artifact_path": str(artifact or ""),
-        "raw": {"album_tree": album_tree, "nodes": nodes},
+        "raw": {"album_tree": album_tree, "nodes": nodes, "target_albums": target_rows},
     }
 
 

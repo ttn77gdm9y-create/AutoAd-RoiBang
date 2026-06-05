@@ -107,6 +107,70 @@ def test_builds_preload_request_from_allowed_accounts(tmp_path: Path):
     ]
 
 
+def test_builds_preload_request_excludes_disabled_product_accounts(tmp_path: Path):
+    configs_dir = tmp_path / "configs"
+    product_path = configs_dir / "products" / "diandian-hero.local.json"
+    account_store = configs_dir / "accounts" / "product-accounts.local.json"
+    account_store.parent.mkdir(parents=True)
+    account_store.write_text(
+        json.dumps(
+            {
+                "accounts": [
+                    {
+                        "product_key": "diandian-hero",
+                        "product_name": "点点英雄",
+                        "advertiser_id": "target-1",
+                        "advertiser_name": "点点账户1",
+                        "status": "active",
+                    },
+                    {
+                        "product_key": "diandian-hero",
+                        "product_name": "点点英雄",
+                        "advertiser_id": "target-disabled",
+                        "advertiser_name": "停用账户",
+                        "status": "disabled",
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    allowed_path = configs_dir / "allowed-create-accounts.diandian-hero.local.json"
+    allowed_path.write_text(
+        json.dumps(
+            {
+                "allowed_target_accounts": [
+                    {"advertiser_id": "target-1", "account_name": "点点账户1", "enable": True},
+                    {"advertiser_id": "target-disabled", "account_name": "停用账户", "enable": True},
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    product = _product(tmp_path)
+    product["_config_path"] = str(product_path)
+    product["allowed_target_accounts_path"] = str(allowed_path)
+
+    request = build_product_job_request(product, "source_material_preload", target_date="2026-05-25")
+    cfg = request["source_material_preload_to_accounts"]
+
+    assert cfg["product_key"] == "diandian-hero"
+    assert cfg["product_account_store_path"] == str(account_store)
+    assert cfg["target_accounts"]["accounts"] == [
+        {"advertiser_id": "target-1", "account_name": "点点账户1", "account_remark": ""}
+    ]
+    assert cfg["target_accounts"]["excluded_inactive_accounts"] == [
+        {
+            "advertiser_id": "target-disabled",
+            "account_name": "停用账户",
+            "status": "disabled",
+            "reason": "产品账户库状态为 disabled",
+        }
+    ]
+
+
 def test_builds_source_material_rollup_request_from_product_config(tmp_path: Path):
     request = build_product_job_request(_product(tmp_path), "source_material_rollup", target_date="yesterday")
     cfg = request["product_source_material_rollup"]

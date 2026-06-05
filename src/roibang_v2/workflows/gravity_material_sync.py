@@ -15,6 +15,8 @@ from roibang_v2.fetch.gravity_material_library import auth_summary
 from roibang_v2.fetch.gravity_material_library import load_gravity_auth_file
 from roibang_v2.fetch.gravity_material_library import source_advertiser_id_for_auth
 from roibang_v2.fetch.gravity_material_library import validate_gravity_auth
+from roibang_v2.materials.gravity_album_scope import binding_scope_blocking_reasons
+from roibang_v2.materials.gravity_album_scope import load_target_album_names
 from roibang_v2.materials.product_source import import_product_source_materials
 from roibang_v2.runs import write_run_artifact
 
@@ -41,6 +43,9 @@ def run_gravity_material_sync_request(
     bindings = _active_bindings(db_path, product=_text(cfg.get("product")))
     if not bindings:
         blocking_reasons.append("请先在引力素材库页面绑定产品和专辑。")
+    target_album_names = _target_album_names(cfg)
+    if bindings:
+        blocking_reasons.extend(binding_scope_blocking_reasons(bindings, target_album_names))
 
     if blocking_reasons:
         payload = _blocked_payload(cfg, auth_payload, bindings, blocking_reasons)
@@ -206,6 +211,16 @@ def _auth_blocking_reasons(auth_payload: dict[str, Any]) -> list[str]:
     if missing:
         return [f"引力 Token 文件缺少字段：{', '.join(missing)}"]
     return []
+
+
+def _target_album_names(cfg: dict[str, Any]) -> list[str]:
+    raw_names = cfg.get("target_album_names")
+    if isinstance(raw_names, list):
+        names = [_text(item) for item in raw_names if _text(item)]
+        if names:
+            return names
+    project_root = _text(cfg.get("project_root"))
+    return load_target_album_names(project_root or None)
 
 
 def _active_bindings(db_path: str | Path, *, product: str = "") -> list[dict[str, str]]:

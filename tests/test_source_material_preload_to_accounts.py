@@ -155,6 +155,68 @@ def test_preload_plan_excludes_source_account_from_explicit_targets(tmp_path: Pa
     assert [batch["target_advertiser_id"] for batch in plan["push_batches"]] == ["target-new-1"]
 
 
+def test_preload_plan_excludes_disabled_product_accounts_from_explicit_targets(tmp_path: Path):
+    db_path = tmp_path / "roibang.sqlite3"
+    account_store = tmp_path / "configs" / "accounts" / "product-accounts.local.json"
+    account_store.parent.mkdir(parents=True)
+    account_store.write_text(
+        json.dumps(
+            {
+                "accounts": [
+                    {
+                        "product_key": "yzt",
+                        "product_name": "勇者突进",
+                        "advertiser_id": "target-active",
+                        "advertiser_name": "启用账户",
+                        "status": "active",
+                    },
+                    {
+                        "product_key": "yzt",
+                        "product_name": "勇者突进",
+                        "advertiser_id": "target-disabled",
+                        "advertiser_name": "停用账户",
+                        "status": "disabled",
+                    },
+                    {
+                        "product_key": "yzt",
+                        "product_name": "勇者突进",
+                        "advertiser_id": "target-paused",
+                        "advertiser_name": "暂停账户",
+                        "status": "paused",
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    bootstrap_database(db_path)
+    with sqlite3.connect(db_path) as conn:
+        _seed_source_material(conn, "1000000000000000001", "v28033gi0000d7m72bvog65s5f9la001", 300)
+    cfg = _request(tmp_path / "missing-patrol.json")
+    cfg["product_key"] = "yzt"
+    cfg["product_account_store_path"] = str(account_store)
+    cfg["target_accounts"] = {
+        "accounts": [
+            {"advertiser_id": "target-active", "account_name": "启用账户"},
+            {"advertiser_id": "target-disabled", "account_name": "停用账户"},
+            {"advertiser_id": "target-paused", "account_name": "暂停账户"},
+        ]
+    }
+
+    plan = build_source_material_preload_plan(
+        db_path=db_path,
+        cfg=cfg,
+        today=date(2026, 5, 16),
+    )
+
+    assert plan["summary"]["target_account_count"] == 1
+    assert plan["summary"]["excluded_inactive_target_account_count"] == 2
+    assert [row["advertiser_id"] for row in plan["target_accounts"]] == ["target-active"]
+    assert [row["advertiser_id"] for row in plan["excluded_target_accounts"]] == ["target-disabled", "target-paused"]
+    assert [batch["target_advertiser_id"] for batch in plan["push_batches"]] == ["target-active"]
+
+
 def test_preload_limit_round_robins_across_target_accounts(tmp_path: Path):
     db_path = tmp_path / "roibang.sqlite3"
     patrol_path = tmp_path / "patrol.json"

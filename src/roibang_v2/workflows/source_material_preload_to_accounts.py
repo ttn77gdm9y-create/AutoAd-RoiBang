@@ -231,7 +231,8 @@ def build_source_material_preload_plan(
     cfg: dict[str, Any],
     today: date | None = None,
 ) -> dict[str, Any]:
-    target_accounts = _select_target_accounts(cfg, today=today)
+    discovered_target_accounts = _select_target_accounts(cfg, today=today)
+    target_accounts, excluded_target_accounts = _filter_active_product_accounts(discovered_target_accounts, cfg)
     source_materials = _select_source_materials(db_path=db_path, cfg=cfg)
     existing = _existing_target_material_ids(
         db_path=db_path,
@@ -305,6 +306,7 @@ def build_source_material_preload_plan(
         "target_date": _target_date(cfg, today=today),
         "summary": {
             "target_account_count": len(target_accounts),
+            "excluded_inactive_target_account_count": len(excluded_target_accounts),
             "source_material_count": len(source_materials),
             "already_exists_count": already_exists_count,
             "planned_bind_material_count": len(planned_pairs),
@@ -314,8 +316,63 @@ def build_source_material_preload_plan(
             "max_bind_material_video_ids": _MAX_BIND_MATERIAL_VIDEO_IDS,
         },
         "target_accounts": target_accounts,
+        "excluded_target_accounts": excluded_target_accounts,
         "push_batches": batches,
     }
+
+
+def _filter_active_product_accounts(accounts: list[dict[str, Any]], cfg: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    statuses = _product_account_statuses(cfg)
+    if not statuses:
+        return accounts, []
+    active_accounts = []
+    excluded_accounts = []
+    for account in accounts:
+        advertiser_id = _text(account.get("advertiser_id"))
+        product_account = statuses.get(advertiser_id)
+        if not product_account:
+            active_accounts.append(account)
+            continue
+        status = _text(product_account.get("status")) or "active"
+        if status == "active":
+            active_accounts.append(account)
+            continue
+        account_name = _text(product_account.get("advertiser_name")) or _text(account.get("account_name")) or advertiser_id
+        excluded_accounts.append(
+            {
+                **account,
+                "account_name": account_name,
+                "status": status,
+                "reason": f"产品账户库状态为 {status}",
+            }
+        )
+    return active_accounts, excluded_accounts
+
+
+def _product_account_statuses(cfg: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    path_text = _text(cfg.get("product_account_store_path"))
+    if not path_text:
+        return {}
+    path = Path(path_text)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+    rows = payload.get("accounts") if isinstance(payload, dict) else []
+    if not isinstance(rows, list):
+        return {}
+    product_key = _text(cfg.get("product_key"))
+    output = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        advertiser_id = _text(row.get("advertiser_id"))
+        if not advertiser_id:
+            continue
+        if product_key and _text(row.get("product_key")) and _text(row.get("product_key")) != product_key:
+            continue
+        output[advertiser_id] = row
+    return output
 
 
 def _bind_request(batch: dict[str, Any]) -> dict[str, Any]:

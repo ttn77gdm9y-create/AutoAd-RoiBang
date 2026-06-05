@@ -24,7 +24,7 @@ ACCOUNT_FIELDS = [
 REQUIRED_FIELDS = ["product_key", "product_name", "advertiser_id", "advertiser_name"]
 VALID_STATUSES = {"active", "paused", "disabled"}
 CHANNEL_ALIASES = {"WECHAT_GAME": "微信", "wx": "微信", "wechat": "微信", "BYTEDANCE_GAME": "字节小游戏"}
-BULK_UPDATE_FIELDS = {"channel": "渠道", "owner": "负责人", "account_remark": "备注"}
+BULK_UPDATE_FIELDS = {"channel": "渠道", "owner": "负责人", "account_remark": "备注", "status": "状态"}
 
 _HISTORY_ACCOUNT_ID_KEYS = ("advertiser_id", "adv_id", "account_id", "operator", "target_advertiser_id")
 _HISTORY_ADVERTISER_NAME_KEYS = ("advertiser_name", "account_name", "accountName")
@@ -97,8 +97,12 @@ def filter_accounts(
     channel: str = "",
     owner: str = "",
     status: str = "",
+    advertiser_ids: list[str] | None = None,
 ) -> list[dict[str, str]]:
     rows = accounts
+    selected_ids = {str(item or "").strip() for item in (advertiser_ids or []) if str(item or "").strip()}
+    if selected_ids:
+        rows = [row for row in rows if row.get("advertiser_id") in selected_ids]
     if product_key:
         rows = [row for row in rows if row.get("product_key") == product_key]
     if channel:
@@ -202,8 +206,9 @@ def bulk_update_accounts(
     *,
     filters: dict[str, str],
     updates: dict[str, str],
+    advertiser_ids: list[str] | None = None,
 ) -> dict[str, Any]:
-    preview = preview_bulk_update_accounts(configs_dir, filters=filters, updates=updates)
+    preview = preview_bulk_update_accounts(configs_dir, filters=filters, updates=updates, advertiser_ids=advertiser_ids)
     if preview["summary"]["status"] == "blocked":
         return preview
     updated_accounts = preview.get("raw", {}).get("updated_accounts")
@@ -223,6 +228,7 @@ def preview_bulk_update_accounts(
     *,
     filters: dict[str, str],
     updates: dict[str, str],
+    advertiser_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     unsupported_fields = sorted(set(updates) - set(BULK_UPDATE_FIELDS))
     if unsupported_fields:
@@ -234,10 +240,17 @@ def preview_bulk_update_accounts(
     normalized_updates = {}
     for field, value in updates.items():
         text = str(value or "").strip()
-        normalized_updates[field] = _normalize_channel(text) if field == "channel" else text
+        if field == "channel":
+            normalized_updates[field] = _normalize_channel(text)
+        elif field == "status":
+            normalized_updates[field] = text
+        else:
+            normalized_updates[field] = text
 
     if not normalized_updates:
         return _bulk_update_blocked(filters, ["至少勾选一个要修改的字段"])
+    if "status" in normalized_updates and normalized_updates["status"] not in VALID_STATUSES:
+        return _bulk_update_blocked(filters, ["状态必须是 active、paused 或 disabled"])
 
     accounts = load_accounts(configs_dir)
     matched = filter_accounts(
@@ -246,6 +259,7 @@ def preview_bulk_update_accounts(
         channel=_normalize_channel(str(filters.get("channel") or "").strip()),
         owner=str(filters.get("owner") or "").strip(),
         status=str(filters.get("status") or "").strip(),
+        advertiser_ids=advertiser_ids,
     )
     if not matched:
         return _bulk_update_blocked(filters, ["当前筛选条件没有命中任何账户"])
@@ -277,6 +291,7 @@ def preview_bulk_update_accounts(
                 {"label": "渠道筛选", "value": str(filters.get("channel") or "全部")},
                 {"label": "负责人筛选", "value": str(filters.get("owner") or "全部")},
                 {"label": "状态筛选", "value": str(filters.get("status") or "全部")},
+                {"label": "选中账户", "value": len({str(item or '').strip() for item in (advertiser_ids or []) if str(item or '').strip()}) or "未指定"},
             ],
             "warnings": ["这里只预览批量修改结果；点击确认写入后才会修改产品账户库。"],
             "blocking_reasons": [],

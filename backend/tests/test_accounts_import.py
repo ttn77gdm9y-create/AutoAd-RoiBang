@@ -315,6 +315,68 @@ def test_bulk_update_accounts_preview_does_not_write(tmp_path):
     assert saved["accounts"][0]["owner"] == ""
 
 
+def test_bulk_update_accounts_can_disable_selected_account_ids(tmp_path):
+    store = tmp_path / "configs" / "accounts" / "product-accounts.local.json"
+    store.parent.mkdir(parents=True)
+    store.write_text(
+        json.dumps(
+            {
+                "accounts": [
+                    {
+                        "product_key": "diandian-hero",
+                        "product_name": "点点英雄",
+                        "advertiser_id": "1001",
+                        "advertiser_name": "账户一",
+                        "channel": "微信",
+                        "owner": "郭靖",
+                        "account_remark": "",
+                        "status": "active",
+                        "notes": "",
+                    },
+                    {
+                        "product_key": "diandian-hero",
+                        "product_name": "点点英雄",
+                        "advertiser_id": "1002",
+                        "advertiser_name": "账户二",
+                        "channel": "微信",
+                        "owner": "郭靖",
+                        "account_remark": "",
+                        "status": "active",
+                        "notes": "",
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    client = _client(tmp_path)
+
+    preview = client.post(
+        "/api/accounts/bulk-update/preview",
+        json={"advertiser_ids": ["1002"], "updates": {"status": "disabled"}},
+    )
+
+    assert preview.status_code == 200
+    preview_payload = preview.json()
+    assert preview_payload["summary"]["status"] == "planned"
+    assert {"label": "匹配账户", "value": 1} in preview_payload["summary"]["items"]
+    assert preview_payload["table"]["rows"][0]["账户 ID"] == "1002"
+    assert preview_payload["table"]["rows"][0]["状态"] == "disabled"
+    assert json.loads(store.read_text(encoding="utf-8"))["accounts"][1]["status"] == "active"
+
+    commit = client.post(
+        "/api/accounts/bulk-update",
+        json={"advertiser_ids": ["1002"], "updates": {"status": "disabled"}},
+    )
+
+    assert commit.status_code == 200
+    saved = json.loads(store.read_text(encoding="utf-8"))
+    by_id = {row["advertiser_id"]: row for row in saved["accounts"]}
+    assert by_id["1001"]["status"] == "active"
+    assert by_id["1002"]["status"] == "disabled"
+
+
 def test_bulk_update_accounts_blocks_empty_updates(tmp_path):
     client = _client(tmp_path)
 

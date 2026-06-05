@@ -11,6 +11,38 @@ def _write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _write_product_accounts(root: Path, *, status_1002: str = "disabled") -> None:
+    _write_json(
+        root / "configs" / "accounts" / "product-accounts.local.json",
+        {
+            "accounts": [
+                {
+                    "product_key": "demo-game",
+                    "product_name": "演示游戏",
+                    "advertiser_id": "1001",
+                    "advertiser_name": "演示账户一",
+                    "channel": "微信",
+                    "owner": "郭靖",
+                    "account_remark": "",
+                    "status": "active",
+                    "notes": "",
+                },
+                {
+                    "product_key": "demo-game",
+                    "product_name": "演示游戏",
+                    "advertiser_id": "1002",
+                    "advertiser_name": "演示账户二",
+                    "channel": "微信",
+                    "owner": "郭靖",
+                    "account_remark": "",
+                    "status": status_1002,
+                    "notes": "本地停用",
+                },
+            ]
+        },
+    )
+
+
 def _project_management_request() -> dict:
     return {
         "project_update_id": "delete-p2",
@@ -158,6 +190,22 @@ def test_project_management_config_preview_blocks_missing_accounts(tmp_path):
     assert payload["summary"]["status"] == "blocked"
     assert payload["summary"]["execution_enabled"] is False
     assert "必须明确填写本次账户 ID" in payload["summary"]["blocking_reasons"]
+    assert payload["table"]["rows"] == []
+
+
+def test_project_management_config_preview_blocks_disabled_product_accounts(tmp_path):
+    _write_product_accounts(tmp_path, status_1002="disabled")
+    client = TestClient(create_app(project_root=tmp_path))
+
+    response = client.post(
+        "/api/project-management/config/preview",
+        json=_project_management_request(),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["status"] == "blocked"
+    assert "账户已在产品账户库停用：演示账户二（1002）" in payload["summary"]["blocking_reasons"]
     assert payload["table"]["rows"] == []
 
 
@@ -392,6 +440,23 @@ def test_project_management_execute_preview_reads_project_update_summary(tmp_pat
     assert payload["raw"]["execute_command"][1] == "scripts/run_project_update_execute.py"
     assert "--execute" in payload["raw"]["execute_command"]
     assert "--yes" in payload["raw"]["execute_command"]
+
+
+def test_project_management_execute_preview_blocks_disabled_product_accounts(tmp_path):
+    _write_product_accounts(tmp_path, status_1002="paused")
+    project_update_path = _write_project_update(tmp_path)
+    client = TestClient(create_app(project_root=tmp_path))
+
+    response = client.post(
+        "/api/project-management/execute/preview",
+        json={"project_update_path": project_update_path},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["status"] == "blocked"
+    assert "账户已在产品账户库暂停：演示账户二（1002）" in payload["summary"]["blocking_reasons"]
+    assert payload["summary"]["execution_enabled"] is False
 
 
 def test_project_management_execute_preview_accepts_suggestion_json_with_chinese_summary_and_account_names(tmp_path):

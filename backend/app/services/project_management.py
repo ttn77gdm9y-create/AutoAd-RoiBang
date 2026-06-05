@@ -17,6 +17,7 @@ from roibang_v2.workflows.project_update_suggestion_lifecycle import project_upd
 from backend.app.safety.confirmation import EXECUTE_CONFIRMATION_PHRASE
 from backend.app.services.account_names import account_name_for
 from backend.app.services.account_names import load_account_name_map
+from backend.app.services.accounts_store import load_accounts
 
 ACTION_LABELS = {
     "delete_project": "删除项目",
@@ -74,6 +75,7 @@ def build_project_management_config_preview(request: dict[str, Any], *, project_
         cpa_bid=cpa_bid,
         roi_goal=roi_goal,
     )
+    validation_reasons.extend(_inactive_product_account_reasons(project_root, advertiser_ids))
     if validation_reasons:
         return _blocked_preview(project_update_id, action_type, output_path, validation_reasons, request)
 
@@ -201,6 +203,12 @@ def build_project_management_execute_preview(request: dict[str, Any], *, project
     if not actions:
         return _blocked_execute_preview("项目管理 JSON 中没有 actions，不能执行", request, project_update_path)
     validation_reasons = _execute_validation_reasons(project_update, actions, request)
+    validation_reasons.extend(
+        _inactive_product_account_reasons(
+            project_root,
+            sorted({_text(action.get("advertiser_id")) for action in actions if _text(action.get("advertiser_id"))}),
+        )
+    )
     if not validation_reasons and _requires_suggestion_metadata(project_update, request):
         validation_reasons.extend(
             project_update_config_duplicate_reasons(
@@ -426,6 +434,25 @@ def _execute_validation_reasons(
             reasons.append(f"第 {index} 条{label}缺少项目 ID")
     if _requires_suggestion_metadata(project_update, request):
         reasons.extend(_suggestion_project_update_validation_reasons(project_update, actions))
+    return reasons
+
+
+def _inactive_product_account_reasons(project_root: str | Path, advertiser_ids: list[str]) -> list[str]:
+    if not advertiser_ids:
+        return []
+    accounts = load_accounts(Path(project_root) / "configs")
+    by_id = {_text(account.get("advertiser_id")): account for account in accounts if _text(account.get("advertiser_id"))}
+    reasons = []
+    for advertiser_id in advertiser_ids:
+        account = by_id.get(_text(advertiser_id))
+        if not account:
+            continue
+        status = _text(account.get("status")) or "active"
+        if status == "active":
+            continue
+        label = {"disabled": "停用", "paused": "暂停"}.get(status, f"不可用（{status}）")
+        account_name = _text(account.get("advertiser_name")) or _text(account.get("account_name")) or advertiser_id
+        reasons.append(f"账户已在产品账户库{label}：{account_name}（{advertiser_id}）")
     return reasons
 
 

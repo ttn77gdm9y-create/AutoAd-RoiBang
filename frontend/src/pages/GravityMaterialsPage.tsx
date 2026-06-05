@@ -41,6 +41,14 @@ type AlbumNode = {
   folder_name?: string;
 };
 
+type TargetAlbumRow = AlbumNode & {
+  "目标专辑": string;
+  "匹配状态": string;
+  "匹配数量": number;
+  "可自动绑定": string;
+  "候选"?: AlbumNode[];
+};
+
 type MaterialRow = Record<string, string | number | boolean | null>;
 
 type UploadAccountOption = {
@@ -99,7 +107,7 @@ export function GravityMaterialsPage() {
   });
   const accounts = useQuery({
     queryKey: ["accounts", "gravity-upload"],
-    queryFn: () => apiGet<ChineseResult>("/accounts"),
+    queryFn: () => apiGet<ChineseResult>("/accounts?status=active"),
   });
   const materials = useQuery({
     queryKey: ["gravity-materials", "materials", selectedProduct, statusFilter, keyword],
@@ -111,6 +119,7 @@ export function GravityMaterialsPage() {
 
   const productOptions = useMemo(() => productNameOptions(filters.data), [filters.data]);
   const albumOptions = useMemo(() => albumNodeOptions(albums.data), [albums.data]);
+  const targetAlbumRows = useMemo(() => targetAlbumRowsFromResult(albums.data), [albums.data]);
   const bindingRows = useMemo(() => bindingRowsFromResult(bindings.data), [bindings.data]);
   const qualificationStats = useMemo(() => summaryLookup(materials.data), [materials.data]);
   const uploadAccountOptions = useMemo(() => accountOptionsFromResult(accounts.data, selectedProduct), [accounts.data, selectedProduct]);
@@ -248,6 +257,19 @@ export function GravityMaterialsPage() {
     }));
   }
 
+  function fillBindingFromTarget(row: TargetAlbumRow) {
+    if (row["匹配状态"] !== "已匹配") {
+      return;
+    }
+    setBindingForm((current) => ({
+      ...current,
+      album_id: String(row.album_id || row["专辑/文件夹 ID"] || ""),
+      album_name: String(row.album_name || row["名称"] || row["目标专辑"] || ""),
+      folder_id: String(row.folder_id || ""),
+      folder_name: String(row.folder_name || ""),
+    }));
+  }
+
   return (
     <main className="page gravity-materials-page">
       <Space direction="vertical" size="large" className="full-width">
@@ -279,6 +301,37 @@ export function GravityMaterialsPage() {
           <Col xs={24} xl={9}>
             <Card size="small" title="产品-专辑绑定">
               <Space direction="vertical" size="middle" className="full-width">
+                <Alert
+                  type="info"
+                  showIcon
+                  message="这里只展示允许同步的目标专辑；原始专辑/文件夹仅保留在折叠技术明细中，避免误选其他游戏素材。"
+                />
+                <Table<TargetAlbumRow>
+                  rowKey={(row) => row["目标专辑"]}
+                  size="small"
+                  loading={albums.isLoading}
+                  pagination={false}
+                  dataSource={targetAlbumRows}
+                  columns={[
+                    { title: "目标专辑", dataIndex: "目标专辑" },
+                    {
+                      title: "匹配",
+                      dataIndex: "匹配状态",
+                      width: 96,
+                      render: (value) => <Tag color={targetAlbumStatusColor(value)}>{String(value || "未知")}</Tag>,
+                    },
+                    { title: "数量", dataIndex: "匹配数量", width: 64 },
+                    {
+                      title: "操作",
+                      width: 80,
+                      render: (_, row) => (
+                        <Button size="small" disabled={row["匹配状态"] !== "已匹配"} onClick={() => fillBindingFromTarget(row)}>
+                          填入
+                        </Button>
+                      ),
+                    },
+                  ]}
+                />
                 <Form layout="vertical">
                   <Form.Item label="产品">
                     <Select
@@ -296,7 +349,7 @@ export function GravityMaterialsPage() {
                       showSearch
                       loading={albums.isLoading}
                       options={albumOptions}
-                      placeholder="选择专辑或文件夹"
+                      placeholder="只选择目标专辑或其匹配候选"
                       onChange={selectAlbumNode}
                     />
                     <Typography.Text type="secondary" className="allowed-account-help">
@@ -557,7 +610,7 @@ function productNameOptions(result?: ChineseResult) {
 }
 
 function albumNodeOptions(result?: ChineseResult) {
-  const nodes = Array.isArray(result?.raw.nodes) ? (result?.raw.nodes as AlbumNode[]) : [];
+  const nodes = targetAlbumRowsFromResult(result).flatMap((target) => (Array.isArray(target["候选"]) ? target["候选"] : []));
   return nodes.map((node) => {
     const id = String(node["专辑/文件夹 ID"] ?? "");
     const name = String(node["名称"] ?? "");
@@ -573,8 +626,12 @@ function albumNodeOptions(result?: ChineseResult) {
   });
 }
 
+function targetAlbumRowsFromResult(result?: ChineseResult): TargetAlbumRow[] {
+  return Array.isArray(result?.raw?.target_albums) ? (result.raw.target_albums as TargetAlbumRow[]) : [];
+}
+
 function bindingRowsFromResult(result?: ChineseResult): BindingRow[] {
-  return Array.isArray(result?.raw.bindings) ? (result?.raw.bindings as BindingRow[]) : [];
+  return Array.isArray(result?.raw?.bindings) ? (result.raw.bindings as BindingRow[]) : [];
 }
 
 function summaryLookup(result?: ChineseResult): Map<string, string | number | boolean | null> {
@@ -593,7 +650,9 @@ function accountOptionsFromResult(result: ChineseResult | undefined, selectedPro
     .filter((row) => {
       const product = String(row["产品"] ?? "").trim();
       const productKey = String(row["产品 Key"] ?? "").trim();
-      return !selectedProduct || product === selectedProduct || productKey === selectedProduct;
+      const status = String(row["状态"] ?? "").trim();
+      const active = !status || status === "active" || status === "启用";
+      return active && (!selectedProduct || product === selectedProduct || productKey === selectedProduct);
     })
     .map((row) => {
       const value = String(row["账户 ID"] ?? "").trim();
@@ -615,6 +674,17 @@ function accountOptionsFromResult(result: ChineseResult | undefined, selectedPro
       seen.add(option.value);
       return true;
     });
+}
+
+function targetAlbumStatusColor(value: unknown): string {
+  const text = String(value || "");
+  if (text === "已匹配") {
+    return "green";
+  }
+  if (text === "多个匹配") {
+    return "orange";
+  }
+  return "red";
 }
 
 function canSelectUploadMaterial(row: MaterialRow): boolean {

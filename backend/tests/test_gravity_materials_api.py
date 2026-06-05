@@ -20,7 +20,7 @@ def test_gravity_material_bindings_can_be_saved_listed_and_deleted(tmp_path: Pat
         json={
             "product": "点点英雄",
             "album_id": "album-1",
-            "album_name": "点点英雄专辑",
+            "album_name": "黑旗-奇门（塔防）",
             "folder_id": "folder-1",
             "folder_name": "6月新素材",
         },
@@ -31,7 +31,7 @@ def test_gravity_material_bindings_can_be_saved_listed_and_deleted(tmp_path: Pat
     assert save_payload["summary"]["title"] == "引力素材绑定已保存"
     assert save_payload["summary"]["execution_enabled"] is False
     assert save_payload["table"]["rows"][0]["产品"] == "点点英雄"
-    assert save_payload["table"]["rows"][0]["专辑"] == "点点英雄专辑"
+    assert save_payload["table"]["rows"][0]["专辑"] == "黑旗-奇门（塔防）"
     assert save_payload["table"]["rows"][0]["文件夹"] == "6月新素材"
 
     list_response = client.get("/api/gravity-materials/bindings", params={"product": "点点英雄"})
@@ -52,6 +52,26 @@ def test_gravity_material_bindings_can_be_saved_listed_and_deleted(tmp_path: Pat
     assert delete_response.json()["summary"]["title"] == "引力素材绑定已删除"
     after_delete = client.get("/api/gravity-materials/bindings", params={"product": "点点英雄"}).json()
     assert after_delete["summary"]["items"] == [{"label": "绑定数", "value": 0}]
+
+
+def test_gravity_material_binding_blocks_albums_outside_target_scope(tmp_path: Path):
+    client = _client(tmp_path)
+
+    response = client.post(
+        "/api/gravity-materials/bindings",
+        json={
+            "product": "点点英雄",
+            "album_id": "album-other",
+            "album_name": "其他游戏素材",
+            "folder_id": "",
+            "folder_name": "",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["status"] == "blocked"
+    assert "不在允许同步的引力专辑范围内" in payload["summary"]["blocking_reasons"][0]
 
 
 def test_gravity_materials_list_reads_local_gravity_source_materials(tmp_path: Path):
@@ -230,7 +250,7 @@ def test_gravity_album_tree_reads_latest_probe_artifact_for_binding_options(tmp_
                                 "tree": [
                                     {
                                         "id": "album-1",
-                                        "label": "点点英雄专辑",
+                                        "label": "黑旗-奇门（塔防）",
                                         "children": [{"id": "folder-1", "label": "6月新素材"}],
                                     }
                                 ]
@@ -249,14 +269,14 @@ def test_gravity_album_tree_reads_latest_probe_artifact_for_binding_options(tmp_
     assert response.status_code == 200
     payload = response.json()
     assert payload["summary"]["title"] == "引力专辑树"
-    assert payload["summary"]["items"] == [{"label": "节点数", "value": 2}]
+    assert {"label": "原始专辑/文件夹", "value": 2} in payload["summary"]["items"]
     assert payload["raw"]["nodes"] == [
         {
             "专辑/文件夹 ID": "album-1",
-            "名称": "点点英雄专辑",
+            "名称": "黑旗-奇门（塔防）",
             "层级": 1,
             "album_id": "album-1",
-            "album_name": "点点英雄专辑",
+            "album_name": "黑旗-奇门（塔防）",
             "folder_id": "",
             "folder_name": "",
         },
@@ -265,11 +285,56 @@ def test_gravity_album_tree_reads_latest_probe_artifact_for_binding_options(tmp_
             "名称": "6月新素材",
             "层级": 2,
             "album_id": "album-1",
-            "album_name": "点点英雄专辑",
+            "album_name": "黑旗-奇门（塔防）",
             "folder_id": "folder-1",
             "folder_name": "6月新素材",
         },
     ]
+
+
+def test_gravity_album_tree_marks_required_target_album_scope(tmp_path: Path):
+    runs_dir = tmp_path / "data" / "runs" / "gravity_api_probe"
+    runs_dir.mkdir(parents=True)
+    (runs_dir / "20260604T010203Z.json").write_text(
+        json.dumps(
+            {
+                "raw": {
+                    "endpoint_results": {
+                        "album_tree": {
+                            "code": 0,
+                            "data": {
+                                "tree": [
+                                    {"id": "target-1", "label": "黑旗-奇门(塔防)", "children": []},
+                                    {"id": "target-2", "label": "魔兽开箱子", "children": []},
+                                    {"id": "target-3", "label": "黑旗-6480咸鱼-微小合集", "children": []},
+                                    {"id": "other-1", "label": "其他游戏素材", "children": []},
+                                ]
+                            },
+                        }
+                    }
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    response = _client(tmp_path).get("/api/gravity-materials/albums")
+
+    assert response.status_code == 200
+    payload = response.json()
+    items = {item["label"]: item["value"] for item in payload["summary"]["items"]}
+    assert items["原始专辑/文件夹"] == 4
+    assert items["目标专辑"] == 3
+    assert items["已匹配目标"] == 3
+    target_rows = payload["raw"]["target_albums"]
+    assert [row["目标专辑"] for row in target_rows] == [
+        "黑旗-奇门（塔防）",
+        "魔兽开箱子",
+        "黑旗-6480咸鱼-微小合集",
+    ]
+    assert {row["匹配状态"] for row in target_rows} == {"已匹配"}
+    assert [row["专辑/文件夹 ID"] for row in target_rows] == ["target-1", "target-2", "target-3"]
 
 
 def test_gravity_upload_preview_api_returns_chinese_confirmation_plan(tmp_path: Path):
