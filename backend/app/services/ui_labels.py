@@ -19,7 +19,7 @@ OPERATION_LABELS = {
     "gravity_token_refresh": "引力 Token 获取/刷新",
     "gravity_material_upload": "引力素材上传",
     "gravity_material_qualification": "引力素材资格汇总",
-    "gravity_material_sync": "引力素材同步入库",
+    "gravity_material_sync": "同步引力素材资料到本地",
     "gravity_upload_status_poll": "引力素材上传状态刷新",
     "material_daily_sync": "素材明细同步",
     "daily_report_sync": "每日报表同步",

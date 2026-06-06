@@ -13,7 +13,12 @@ from roibang_v2.ui.background_tasks import build_task_record
 from roibang_v2.ui.background_tasks import start_runner
 from roibang_v2.ui.background_tasks import write_task_record
 from roibang_v2.db.bootstrap import bootstrap_database
+from roibang_v2.fetch.gravity_material_library import GravityMaterialLibraryError
+from roibang_v2.fetch.gravity_material_library import auth_summary
+from roibang_v2.fetch.gravity_material_library import load_gravity_auth_file
+from roibang_v2.fetch.gravity_material_library import validate_gravity_auth
 from roibang_v2.materials.gravity_album_scope import binding_in_target_scope
+from roibang_v2.materials.gravity_album_scope import binding_scope_blocking_reasons
 from roibang_v2.materials.gravity_album_scope import load_target_album_names
 from roibang_v2.materials.gravity_album_scope import target_album_match_rows
 from roibang_v2.materials.gravity_qualification import matches_qualification_filter
@@ -54,6 +59,93 @@ def list_gravity_bindings(*, project_root: str | Path, product: str = "") -> dic
         },
         "artifact_path": "",
         "raw": {"bindings": bindings},
+    }
+
+
+def gravity_sync_readiness(*, project_root: str | Path, product: str = "", auth_file: str = "data/gravity_token.json") -> dict[str, Any]:
+    root = Path(project_root)
+    db_path = database_path(root)
+    bootstrap_database(db_path)
+    normalized_product = _text(product)
+    normalized_auth_file = _text(auth_file) or "data/gravity_token.json"
+    auth_path = _project_file(root, normalized_auth_file)
+    bindings = _binding_rows(db_path, product=normalized_product, active_only=True)
+    target_names = load_target_album_names(root)
+    blocking_reasons: list[str] = []
+    auth_payload: dict[str, Any] = {}
+
+    if not bindings:
+        blocking_reasons.append("请先在引力素材库页面绑定产品和专辑。")
+    if bindings:
+        blocking_reasons.extend(binding_scope_blocking_reasons(bindings, target_names))
+    try:
+        auth_payload = load_gravity_auth_file(auth_path)
+    except GravityMaterialLibraryError as exc:
+        blocking_reasons.append(str(exc))
+    if auth_payload:
+        missing = validate_gravity_auth(auth_payload)
+        if missing:
+            blocking_reasons.append(f"引力 Token 文件缺少字段：{', '.join(missing)}")
+
+    status = "blocked" if blocking_reasons else "ready"
+    rows = [
+        {
+            "检查项": "同步内容",
+            "结果": "只同步资料",
+            "同步内容": "素材名、归属专辑/文件夹、引力素材 ID、MD5、状态和表现数据",
+        },
+        {
+            "检查项": "素材文件",
+            "结果": "不会下载",
+            "同步内容": "不会下载视频或图片文件",
+        },
+        {
+            "检查项": "每日账户素材同步",
+            "结果": "不影响",
+            "同步内容": "引力资料写入 gravity_engine 虚拟来源，不覆盖真实巨量账户素材同步",
+        },
+    ]
+    rows.extend(
+        {
+            "检查项": "绑定来源",
+            "结果": "已绑定",
+            "同步内容": f"{item['product']} / {item['folder_name'] or item['album_name']}",
+        }
+        for item in bindings
+    )
+    return {
+        "summary": {
+            "title": "同步引力素材资料到本地准备检查",
+            "status": status,
+            "risk_level": "low",
+            "execution_enabled": False,
+            "items": [
+                {"label": "产品", "value": normalized_product or "全部已绑定产品"},
+                {"label": "绑定数", "value": len(bindings)},
+                {"label": "Token 文件", "value": normalized_auth_file},
+                {"label": "真实媒体动作", "value": "否"},
+                {"label": "下载素材文件", "value": "否"},
+                {"label": "影响每日账户素材同步", "value": "否"},
+            ],
+            "warnings": [
+                "这里只读取引力素材资料并写入 RoiBang 本地数据库；不会下载素材文件，不会上传到巨量账户。",
+                "引力素材写入 gravity_engine 虚拟来源，不影响每天从真实巨量账户同步来的素材数据。",
+            ],
+            "blocking_reasons": blocking_reasons,
+        },
+        "table": {"columns": ["检查项", "结果", "同步内容"], "rows": rows},
+        "artifact_path": "",
+        "raw": {
+            "product": normalized_product,
+            "auth_file": normalized_auth_file,
+            "auth": auth_summary(auth_payload),
+            "binding_count": len(bindings),
+            "bindings": bindings,
+            "source": "gravity_engine",
+            "external_api_calls": 0,
+            "will_download_material_files": False,
+            "will_touch_account_material_sync": False,
+        },
     }
 
 
@@ -707,6 +799,11 @@ def _display_path(root: Path, path: Path) -> str:
         return path.resolve().relative_to(root.resolve()).as_posix()
     except ValueError:
         return str(path)
+
+
+def _project_file(root: Path, path: str) -> Path:
+    value = Path(path)
+    return value if value.is_absolute() else root / value
 
 
 def _dict(value: Any) -> dict[str, Any]:

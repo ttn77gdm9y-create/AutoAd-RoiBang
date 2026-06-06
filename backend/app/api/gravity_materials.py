@@ -11,6 +11,7 @@ from backend.app.safety.confirmation import require_execute_confirmation
 from backend.app.services.gravity_materials import build_gravity_upload_preview_result
 from backend.app.services.gravity_materials import delete_gravity_binding
 from backend.app.services.gravity_materials import gravity_album_tree
+from backend.app.services.gravity_materials import gravity_sync_readiness
 from backend.app.services.gravity_materials import gravity_upload_status_result
 from backend.app.services.gravity_materials import list_gravity_bindings
 from backend.app.services.gravity_materials import list_gravity_materials
@@ -80,6 +81,15 @@ def gravity_material_rows(
         status=status,
         keyword=keyword,
         limit=limit,
+    )
+
+
+@router.get("/gravity-materials/sync-readiness")
+def gravity_material_sync_readiness(request: Request, product: str = "", auth_file: str = "data/gravity_token.json") -> dict[str, Any]:
+    return gravity_sync_readiness(
+        project_root=request.app.state.settings.project_root,
+        product=product,
+        auth_file=auth_file,
     )
 
 

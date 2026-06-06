@@ -369,7 +369,7 @@ def _probe_readonly_apis(client: Any, *, sample_limit: int) -> dict[str, Any]:
 
 def _local_contract_field_rows() -> list[dict[str, Any]]:
     return [
-        _field_row("素材唯一标识", "待外部只读确认", "文档使用引力素材 ID。", "同步入库前必须确认真实字段名。"),
+        _field_row("素材唯一标识", "待外部只读确认", "文档使用引力素材 ID。", "保存到本地素材库前必须确认真实字段名。"),
         _field_row("MD5 跨系统匹配", "待外部只读确认", "文档使用 file_md5 / signature。", "没有 MD5 的素材不能进入创建选材。"),
         _field_row("专辑和文件夹", "待外部只读确认", "文档使用 album_id / folder_id / album_name / folder_name。", "无法确认时不开放产品绑定。"),
         _field_row("素材状态", "待外部只读确认", "文档写 1=可用，2=禁用。", "无法确认时不自动使用素材。"),

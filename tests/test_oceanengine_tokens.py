@@ -176,7 +176,7 @@ def test_refresh_fails_safely_without_refresh_token(tmp_path):
 
 def test_check_token_cli_prints_redacted_health(tmp_path, capsys):
     store = tmp_path / "tokens.json"
-    _write_store(store, access="access-secret", refresh="refresh-secret", expires_in=86400 * 30)
+    _write_store(store, access="access-secret", refresh="refresh-secret", expires_in=86400 * 365)
     module = _load_script("check_oceanengine_token.py")
 
     exit_code = module.run_from_args(["--store-file", str(store), "--user-id", "default"])

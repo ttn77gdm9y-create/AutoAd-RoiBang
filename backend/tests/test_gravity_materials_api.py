@@ -74,6 +74,79 @@ def test_gravity_material_binding_blocks_albums_outside_target_scope(tmp_path: P
     assert "不在允许同步的引力专辑范围内" in payload["summary"]["blocking_reasons"][0]
 
 
+def test_gravity_material_sync_readiness_blocks_missing_token_without_external_calls(tmp_path: Path):
+    client = _client(tmp_path)
+    client.post(
+        "/api/gravity-materials/bindings",
+        json={
+            "product": "点点英雄",
+            "album_id": "album-1",
+            "album_name": "黑旗-奇门（塔防）",
+            "folder_id": "",
+            "folder_name": "",
+        },
+    )
+
+    response = client.get(
+        "/api/gravity-materials/sync-readiness",
+        params={"product": "点点英雄", "auth_file": "data/missing-gravity-token.json"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["title"] == "同步引力素材资料到本地准备检查"
+    assert payload["summary"]["status"] == "blocked"
+    assert payload["summary"]["execution_enabled"] is False
+    assert "未找到引力 Token 文件" in payload["summary"]["blocking_reasons"][0]
+    assert payload["raw"]["external_api_calls"] == 0
+    assert payload["raw"]["will_download_material_files"] is False
+    assert payload["raw"]["will_touch_account_material_sync"] is False
+
+
+def test_gravity_material_sync_readiness_explains_local_metadata_sync_scope(tmp_path: Path):
+    token_path = tmp_path / "data" / "gravity_token.json"
+    token_path.parent.mkdir(parents=True, exist_ok=True)
+    token_path.write_text(
+        json.dumps(
+            {
+                "authorization": "token",
+                "gravity_cid": "182",
+                "gravity_email": "hongen@example.com",
+                "gravity_id": "406",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    client = _client(tmp_path)
+    client.post(
+        "/api/gravity-materials/bindings",
+        json={
+            "product": "点点英雄",
+            "album_id": "album-1",
+            "album_name": "黑旗-奇门（塔防）",
+            "folder_id": "folder-1",
+            "folder_name": "基础素材",
+        },
+    )
+
+    response = client.get(
+        "/api/gravity-materials/sync-readiness",
+        params={"product": "点点英雄", "auth_file": "data/gravity_token.json"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["status"] == "ready"
+    items = {item["label"]: item["value"] for item in payload["summary"]["items"]}
+    assert items["绑定数"] == 1
+    assert items["真实媒体动作"] == "否"
+    assert items["下载素材文件"] == "否"
+    assert items["影响每日账户素材同步"] == "否"
+    assert payload["table"]["rows"][0]["同步内容"] == "素材名、归属专辑/文件夹、引力素材 ID、MD5、状态和表现数据"
+    assert payload["raw"]["source"] == "gravity_engine"
+
+
 def test_gravity_materials_list_reads_local_gravity_source_materials(tmp_path: Path):
     db_path = tmp_path / "data" / "roibang_v2.sqlite3"
     bootstrap_database(db_path)

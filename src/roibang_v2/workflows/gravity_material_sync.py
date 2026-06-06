@@ -140,11 +140,11 @@ def run_gravity_material_sync_request(
         "external_api_calls": external_api_calls,
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "中文摘要": (
-            f"引力素材同步完成：读取 {len(bindings)} 个绑定，入库 {imported_count} 个可用素材，"
-            f"跳过 {disabled_count} 个禁用素材；未上传素材、未创建广告。"
+            f"引力素材资料同步完成：读取 {len(bindings)} 个绑定，保存 {imported_count} 个可用素材资料，"
+            f"跳过 {disabled_count} 个禁用素材；未下载素材文件、未上传素材、未创建广告。"
         ),
         "summary": {
-            "title": "引力素材同步入库",
+            "title": "同步引力素材资料到本地",
             "status": status,
             "binding_count": len(bindings),
             "materials_received": imported_count + disabled_count,
@@ -160,7 +160,7 @@ def run_gravity_material_sync_request(
             "columns": ["产品", "绑定", "入库素材", "禁用素材", "本地置为停用"],
             "rows": _summary_rows(bindings=bindings, rows_by_product=rows_by_product, disabled_count=disabled_count, inactive_rows=inactive_rows),
         },
-        "warnings": warnings + ["本同步只读引力素材库并写入本地数据库，不上传素材、不创建广告。"],
+        "warnings": warnings + ["本同步只读取引力素材资料并写入本地数据库，不下载素材文件、不上传素材、不创建广告。"],
         "blocking_reasons": [],
         "guardrails": ["不调用 upload_material。", "不创建广告。", "不修改预算、出价或项目状态。"],
         "raw": raw,
@@ -183,16 +183,16 @@ def _blocked_payload(
         "execution_enabled": False,
         "external_api_calls": 0,
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "中文摘要": f"引力素材同步被阻止：{'；'.join(blocking_reasons)}",
+        "中文摘要": f"引力素材资料同步被阻止：{'；'.join(blocking_reasons)}",
         "summary": {
-            "title": "引力素材同步入库",
+            "title": "同步引力素材资料到本地",
             "status": "blocked",
             "binding_count": len(bindings),
             "auth": auth_summary(auth_payload),
             "upload_material_called": False,
         },
         "table": {"columns": ["阻塞原因"], "rows": [{"阻塞原因": reason} for reason in blocking_reasons]},
-        "warnings": ["未上传素材、未创建广告、未修改投放。"],
+        "warnings": ["未下载素材文件、未上传素材、未创建广告、未修改投放。"],
         "blocking_reasons": blocking_reasons,
         "raw": {"request": _sanitized_payload(cfg)},
     }

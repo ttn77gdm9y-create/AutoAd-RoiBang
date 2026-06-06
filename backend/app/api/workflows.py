@@ -78,8 +78,8 @@ WORKFLOW_CATALOG = [
     },
     {
         "value": "gravity_material_sync",
-        "label": "引力素材同步入库",
-        "description": "查看引力素材只读同步、本地入库和素材表现写入结果。",
+        "label": "同步引力素材资料到本地",
+        "description": "查看引力素材名称、归属、MD5、状态和表现数据写入本地素材库的结果。",
     },
     {
         "value": "gravity_material_qualification",

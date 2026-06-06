@@ -1,4 +1,4 @@
-import { DeleteOutlined, FileSearchOutlined, ReloadOutlined, SaveOutlined, SyncOutlined } from "@ant-design/icons";
+import { DeleteOutlined, FileSearchOutlined, PlayCircleOutlined, ReloadOutlined, SaveOutlined, SyncOutlined } from "@ant-design/icons";
 import { Alert, Button, Card, Col, Form, Input, Row, Select, Space, Steps, Table, Tag, Typography, message as antdMessage } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -14,6 +14,7 @@ import { EXECUTE_CONFIRMATION_PHRASE } from "../constants/safety";
 import type { ChineseResult, TaskDetailResponse } from "../types/api";
 import { isTaskActive, isTaskCompleted, taskStatus } from "../utils/workflowState";
 import { buildAlbumChoiceGroups, flattenAlbumChoiceGroups, type AlbumChoiceGroup, type AlbumChoiceOption, type TargetAlbumRow } from "./gravityMaterialsOptions";
+import { buildGravityMaterialSyncRequest, gravityMaterialSyncCopy } from "./gravityMaterialsSync";
 
 type BindingForm = {
   product: string;
@@ -97,6 +98,10 @@ export function GravityMaterialsPage() {
   const [selectedUploadMaterialIds, setSelectedUploadMaterialIds] = useState<string[]>([]);
   const [targetAccountIds, setTargetAccountIds] = useState<string[]>([]);
   const [authFile, setAuthFile] = useState("data/gravity_token.json");
+  const [syncPageSize, setSyncPageSize] = useState("100");
+  const [syncMaxPages, setSyncMaxPages] = useState("20");
+  const [syncPreviewResult, setSyncPreviewResult] = useState<ChineseResult | undefined>();
+  const [syncRunResult, setSyncRunResult] = useState<TaskResponse | undefined>();
   const [uploadPreviewResult, setUploadPreviewResult] = useState<ChineseResult | undefined>();
   const [uploadExecuteResult, setUploadExecuteResult] = useState<TaskResponse | undefined>();
   const [uploadStatusRefreshResult, setUploadStatusRefreshResult] = useState<TaskResponse | undefined>();
@@ -125,6 +130,13 @@ export function GravityMaterialsPage() {
         `/gravity-materials/materials?product=${encodeURIComponent(selectedProduct)}&status=${encodeURIComponent(statusFilter)}&keyword=${encodeURIComponent(keyword)}`,
       ),
   });
+  const syncReadiness = useQuery({
+    queryKey: ["gravity-materials", "sync-readiness", selectedProduct, authFile],
+    queryFn: () =>
+      apiGet<ChineseResult>(
+        `/gravity-materials/sync-readiness?product=${encodeURIComponent(selectedProduct)}&auth_file=${encodeURIComponent(authFile)}`,
+      ),
+  });
 
   const productOptions = useMemo(() => productNameOptions(filters.data), [filters.data]);
   const targetAlbumRows = useMemo(() => targetAlbumRowsFromResult(albums.data), [albums.data]);
@@ -143,6 +155,13 @@ export function GravityMaterialsPage() {
     [targetAccountIds, uploadAccountOptions],
   );
   const materialRows = materials.data?.table.rows ?? [];
+  const syncTaskId = syncRunResult?.task?.task_id ?? "";
+  const syncTaskDetail = useQuery({
+    queryKey: ["tasks", syncTaskId],
+    queryFn: () => apiGet<TaskDetailResponse>(`/tasks/${syncTaskId}`),
+    enabled: Boolean(syncTaskId),
+    refetchInterval: 3000,
+  });
   const uploadTaskId = uploadExecuteResult?.task?.task_id ?? "";
   const statusRefreshTaskId = uploadStatusRefreshResult?.task?.task_id ?? "";
   const uploadTaskDetail = useQuery({
@@ -165,6 +184,7 @@ export function GravityMaterialsPage() {
   });
   const uploadRequiredCount = summaryItemNumber(uploadPreviewResult, "需上传");
   const canConfirmUpload = uploadPreviewResult?.summary.status === "ready_for_confirmation" && uploadRequiredCount > 0;
+  const syncTaskCurrentStatus = taskStatus(syncTaskDetail.data, syncRunResult);
   const uploadTaskCurrentStatus = taskStatus(uploadTaskDetail.data, uploadExecuteResult);
   const statusRefreshCurrentStatus = taskStatus(statusRefreshTaskDetail.data, uploadStatusRefreshResult);
   const totalMaterials = statNumber(qualificationStats.get("素材数"));
@@ -186,12 +206,21 @@ export function GravityMaterialsPage() {
     }
   }, [statusRefreshCurrentStatus]);
 
+  useEffect(() => {
+    if (isTaskCompleted(syncTaskCurrentStatus)) {
+      void syncReadiness.refetch();
+      void materials.refetch();
+      void queryClient.invalidateQueries({ queryKey: ["workflow-runs", "catalog"] });
+    }
+  }, [syncTaskCurrentStatus]);
+
   const saveBinding = useMutation({
     mutationFn: () => apiPost<ChineseResult>("/gravity-materials/bindings", bindingForm),
     onSuccess: async (result) => {
       setSaveResult(result);
       setDeleteResult(undefined);
       await queryClient.invalidateQueries({ queryKey: ["gravity-materials", "bindings"] });
+      await queryClient.invalidateQueries({ queryKey: ["gravity-materials", "sync-readiness"] });
       antdMessage.success("引力素材绑定已保存");
     },
   });
@@ -201,7 +230,40 @@ export function GravityMaterialsPage() {
       setDeleteResult(result);
       setSaveResult(undefined);
       await queryClient.invalidateQueries({ queryKey: ["gravity-materials", "bindings"] });
+      await queryClient.invalidateQueries({ queryKey: ["gravity-materials", "sync-readiness"] });
       antdMessage.success("引力素材绑定已停用");
+    },
+  });
+  const previewSync = useMutation({
+    mutationFn: () =>
+      apiPost<ChineseResult>("/workflow-runs/gravity_material_sync/preview", {
+        request: buildGravityMaterialSyncRequest({
+          product: selectedProduct,
+          authFile,
+          pageSize: syncPageSize,
+          maxPages: syncMaxPages,
+        }),
+      }),
+    onSuccess: (result) => {
+      setSyncPreviewResult(result);
+      setSyncRunResult(undefined);
+      antdMessage.success("资料同步预览已生成");
+    },
+  });
+  const runSync = useMutation({
+    mutationFn: () =>
+      apiPost<TaskResponse>("/workflow-runs/gravity_material_sync/run", {
+        request: buildGravityMaterialSyncRequest({
+          product: selectedProduct,
+          authFile,
+          pageSize: syncPageSize,
+          maxPages: syncMaxPages,
+        }),
+      }),
+    onSuccess: async (result) => {
+      setSyncRunResult(result);
+      await queryClient.invalidateQueries({ queryKey: ["tasks"] });
+      antdMessage.success("资料同步任务已提交，本页会显示进度和结果");
     },
   });
   const previewUpload = useMutation({
@@ -245,12 +307,15 @@ export function GravityMaterialsPage() {
     },
   });
   const canPreviewUpload = Boolean(selectedProduct && selectedTargetAccounts.length && selectedUploadMaterialIds.length) && !previewUpload.isPending;
+  const canRunSync = Boolean(syncPreviewResult?.raw.can_run) && !runSync.isPending && !isTaskActive(syncTaskCurrentStatus);
 
   function selectProduct(product: string) {
     setSelectedProduct(product);
     setBindingForm((current) => ({ ...current, product }));
     setSelectedUploadMaterialIds([]);
     setTargetAccountIds([]);
+    setSyncPreviewResult(undefined);
+    setSyncRunResult(undefined);
     setUploadPreviewResult(undefined);
     setUploadExecuteResult(undefined);
     setUploadStatusRefreshResult(undefined);
@@ -301,7 +366,7 @@ export function GravityMaterialsPage() {
         <Alert
           type="info"
           showIcon
-          message="这里只读同步引力素材并写入本地素材库；不会上传素材、创建广告、修改预算、出价或项目状态。"
+          message="这里只读取引力素材资料并写入本地素材库；不会下载素材文件、不会上传素材、创建广告、修改预算、出价或项目状态。"
         />
         <Steps
           size="small"
@@ -309,7 +374,7 @@ export function GravityMaterialsPage() {
           current={currentGravityStep}
           items={[
             { title: "绑定来源", description: "选产品和引力专辑" },
-            { title: "同步入库", description: "只读拉取到本地" },
+            { title: "保存本地", description: "读取资料，不下载文件" },
             { title: "查看素材", description: "看资格和表现" },
             { title: "生成推送预览", description: "真实动作前复核" },
           ]}
@@ -424,7 +489,7 @@ export function GravityMaterialsPage() {
                       保存绑定
                     </Button>
                     <Link to="/workflow-center">
-                      <Button icon={<SyncOutlined />}>去同步入库</Button>
+                      <Button icon={<SyncOutlined />}>去同步资料</Button>
                     </Link>
                   </Space>
                 </Form>
@@ -461,14 +526,104 @@ export function GravityMaterialsPage() {
             ) : null}
           </Col>
           <Col xs={24} xl={15}>
+            <Card size="small" title={gravityMaterialSyncCopy.title}>
+              <Space direction="vertical" size="middle" className="full-width">
+                <Alert type="info" showIcon message={gravityMaterialSyncCopy.description} />
+                <SummaryPanel result={syncReadiness.data} loading={syncReadiness.isFetching} detailsCollapsed showArtifactPath={false} showRawJson={false} />
+                <Row gutter={[12, 12]} align="bottom">
+                  <Col xs={24} md={8}>
+                    <Typography.Text strong>引力 Token 文件</Typography.Text>
+                    <Input
+                      className="gravity-upload-control"
+                      value={authFile}
+                      onChange={(event) => {
+                        setAuthFile(event.target.value);
+                        setSyncPreviewResult(undefined);
+                        setSyncRunResult(undefined);
+                        setUploadPreviewResult(undefined);
+                        setUploadExecuteResult(undefined);
+                      }}
+                    />
+                    <Typography.Text type="secondary" className="gravity-upload-help">
+                      仅固定脚本读取，不在页面展示 token 明文。
+                    </Typography.Text>
+                  </Col>
+                  <Col xs={12} md={5}>
+                    <Typography.Text strong>每页素材数</Typography.Text>
+                    <Select
+                      className="full-width gravity-upload-control"
+                      value={syncPageSize}
+                      options={[
+                        { label: "50 条", value: "50" },
+                        { label: "100 条", value: "100" },
+                        { label: "200 条", value: "200" },
+                      ]}
+                      onChange={(value) => {
+                        setSyncPageSize(value);
+                        setSyncPreviewResult(undefined);
+                        setSyncRunResult(undefined);
+                      }}
+                    />
+                  </Col>
+                  <Col xs={12} md={5}>
+                    <Typography.Text strong>最多页数</Typography.Text>
+                    <Select
+                      className="full-width gravity-upload-control"
+                      value={syncMaxPages}
+                      options={[
+                        { label: "5 页", value: "5" },
+                        { label: "20 页", value: "20" },
+                        { label: "50 页", value: "50" },
+                      ]}
+                      onChange={(value) => {
+                        setSyncMaxPages(value);
+                        setSyncPreviewResult(undefined);
+                        setSyncRunResult(undefined);
+                      }}
+                    />
+                  </Col>
+                  <Col xs={24} md={6}>
+                    <Space wrap className="gravity-upload-actions">
+                      <Button icon={<ReloadOutlined />} onClick={() => syncReadiness.refetch()} loading={syncReadiness.isFetching}>
+                        重新检查
+                      </Button>
+                      <Button icon={<FileSearchOutlined />} onClick={() => previewSync.mutate()} loading={previewSync.isPending}>
+                        生成同步预览
+                      </Button>
+                      <Button
+                        icon={<PlayCircleOutlined />}
+                        type="primary"
+                        disabled={!canRunSync}
+                        loading={runSync.isPending}
+                        onClick={() => runSync.mutate()}
+                      >
+                        启动资料同步
+                      </Button>
+                    </Space>
+                  </Col>
+                </Row>
+                {previewSync.error ? <Alert type="error" showIcon message={(previewSync.error as Error).message} /> : null}
+                <SummaryPanel result={syncPreviewResult} loading={previewSync.isPending} detailsCollapsed showArtifactPath={false} showRawJson={false} />
+                {runSync.error ? <Alert type="error" showIcon message={(runSync.error as Error).message} /> : null}
+                <InlineTaskStatus
+                  title="当前资料同步任务"
+                  taskId={syncTaskId}
+                  workflow="gravity_material_sync"
+                  result={syncRunResult}
+                  detail={syncTaskDetail.data}
+                  loading={runSync.isPending || syncTaskDetail.isFetching}
+                  returnTo="/gravity-materials"
+                />
+              </Space>
+            </Card>
             <Card size="small" title="本地素材库">
               <Space direction="vertical" size="middle" className="full-width">
-                {!hasBinding ? <Alert type="info" showIcon message="先在左侧保存产品和引力专辑/文件夹绑定；绑定后再运行同步入库。" /> : null}
+                {!hasBinding ? <Alert type="info" showIcon message="先在左侧保存产品和引力专辑/文件夹绑定；绑定后再同步引力素材资料到本地。" /> : null}
                 {hasBinding && totalMaterials === 0 ? (
                   <Alert
                     type="info"
                     showIcon
-                    message="已经有绑定，但本地还没有同步到素材。下一步去自动化工作台运行“引力素材同步入库”。"
+                    message="已经有绑定，但本地还没有同步到素材资料。下一步运行“同步引力素材资料到本地”。"
                     action={
                       <Link to="/workflow-center">
                         <Button size="small" icon={<SyncOutlined />}>

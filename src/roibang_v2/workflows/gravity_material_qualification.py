@@ -85,7 +85,7 @@ def run_gravity_material_qualification_request(
 
 def _blocked_payload(*, product: str) -> dict[str, Any]:
     product_label = product or "全部产品"
-    reason = f"{product_label}还没有本地引力素材，请先运行引力素材同步入库。"
+    reason = f"{product_label}还没有本地引力素材，请先运行同步引力素材资料到本地。"
     return {
         "ok": False,
         "workflow": WORKFLOW,

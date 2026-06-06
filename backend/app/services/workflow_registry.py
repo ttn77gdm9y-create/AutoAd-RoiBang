@@ -99,7 +99,7 @@ GRAVITY_SAMPLE_LIMIT_PARAM = WorkflowParameter(
     label="样本数量",
     default="3",
     required=False,
-    description="只读取少量样本用于字段核验，不做素材同步入库。",
+    description="只读取少量样本用于字段核验，不保存素材资料到本地。",
     control="select",
     options=(
         {"label": "1 条", "value": "1"},
@@ -219,9 +219,9 @@ WORKFLOW_CATALOG: tuple[WorkflowDefinition, ...] = (
     ),
     WorkflowDefinition(
         workflow_id="gravity_material_sync",
-        name="引力素材同步入库",
+        name="同步引力素材资料到本地",
         category="引力素材库",
-        description="按产品-专辑绑定只读同步引力素材，写入本地素材池，不上传素材、不创建广告。",
+        description="按产品-专辑绑定读取引力素材名称、归属、MD5、状态和表现数据，保存到本地素材库；不下载素材文件、不上传素材、不创建广告。",
         operation_type="gravity_material_sync",
         latest_workflow="gravity_material_sync",
         run_kind="gravity_material_sync",
