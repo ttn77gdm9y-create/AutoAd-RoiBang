@@ -23,8 +23,7 @@ test("asks the user to bind material source before syncing", () => {
     [
       ["绑定素材来源", "process"],
       ["更新引力素材", "wait"],
-      ["查看本地素材", "wait"],
-      ["检查可用素材", "wait"],
+      ["查看并选择素材", "wait"],
       ["生成推送预览", "wait"],
     ],
   );
@@ -59,11 +58,10 @@ test("asks the user to check available materials when local materials exist but 
     readinessNextAction: "更新引力素材",
   });
 
-  assert.equal(state.currentStep, 3);
+  assert.equal(state.currentStep, 2);
   assert.equal(state.recommendation.title, "先检查素材为什么不可用");
   assert.match(state.recommendation.description, /缺 MD5|禁用|拒审/);
-  assert.equal(state.steps[2].status, "finish");
-  assert.equal(state.steps[3].status, "process");
+  assert.equal(state.steps[2].status, "process");
 });
 
 test("asks the user to generate push preview only after materials and accounts are selected", () => {
@@ -77,10 +75,10 @@ test("asks the user to generate push preview only after materials and accounts a
     readinessNextAction: "更新引力素材",
   });
 
-  assert.equal(state.currentStep, 4);
+  assert.equal(state.currentStep, 3);
   assert.equal(state.recommendation.title, "可以生成推送预览");
   assert.match(state.recommendation.description, /真实推送前仍然必须输入“确认执行”/);
-  assert.equal(state.steps[4].status, "process");
+  assert.equal(state.steps[3].status, "process");
 });
 
 test("keeps the gravity material update prompt inside the gravity materials page", () => {
@@ -88,4 +86,14 @@ test("keeps the gravity material update prompt inside the gravity materials page
 
   assert.doesNotMatch(source, /action=\{[\s\S]*?<Link to="\/workflow-center">[\s\S]*?去更新[\s\S]*?<\/Link>/);
   assert.match(source, /去更新素材/);
+});
+
+test("renders numbered business sections and defaults the material list to all materials", () => {
+  const source = readFileSync(new URL("../src/pages/GravityMaterialsPage.tsx", import.meta.url), "utf-8");
+
+  assert.match(source, /const \[statusFilter, setStatusFilter\] = useState\(""\)/);
+  assert.match(source, /stepTitle\("1", "绑定素材来源"/);
+  assert.match(source, /stepTitle\("2", gravityMaterialSyncCopy.title/);
+  assert.match(source, /stepTitle\("3", "本地素材库"/);
+  assert.match(source, /stepTitle\("4", "推送引力素材到巨量账户"/);
 });

@@ -91,7 +91,7 @@ const materialScopeOptions = [
 export function GravityMaterialsPage() {
   const queryClient = useQueryClient();
   const [selectedProduct, setSelectedProduct] = useState("");
-  const [statusFilter, setStatusFilter] = useState("eligible");
+  const [statusFilter, setStatusFilter] = useState("");
   const [keyword, setKeyword] = useState("");
   const [bindingForm, setBindingForm] = useState<BindingForm>(emptyBinding);
   const [saveResult, setSaveResult] = useState<ChineseResult | undefined>();
@@ -411,7 +411,7 @@ export function GravityMaterialsPage() {
         </div>
         <Row gutter={[16, 16]} align="top">
           <Col xs={24} xl={9}>
-            <Card size="small" title="绑定素材来源">
+            <Card size="small" title={stepTitle("1", "绑定素材来源")}>
               <Space direction="vertical" size="middle" className="full-width">
                 <Alert
                   type="info"
@@ -548,7 +548,7 @@ export function GravityMaterialsPage() {
             ) : null}
           </Col>
           <Col xs={24} xl={15}>
-            <Card size="small" title={gravityMaterialSyncCopy.title} id="gravity-sync-card">
+            <Card size="small" title={stepTitle("2", gravityMaterialSyncCopy.title)} id="gravity-sync-card">
               <Space direction="vertical" size="middle" className="full-width">
                 <Alert type="info" showIcon message={gravityMaterialSyncCopy.description} />
                 <SummaryPanel result={syncReadiness.data} loading={syncReadiness.isFetching} detailsCollapsed showArtifactPath={false} showRawJson={false} />
@@ -638,7 +638,7 @@ export function GravityMaterialsPage() {
                 />
               </Space>
             </Card>
-            <Card size="small" title="本地素材库">
+            <Card size="small" title={stepTitle("3", "本地素材库")}>
               <Space direction="vertical" size="middle" className="full-width">
                 {!hasBinding ? <Alert type="info" showIcon message="先在左侧保存产品和引力专辑/文件夹绑定；绑定后再更新引力素材。" /> : null}
                 {hasBinding && totalMaterials === 0 ? (
@@ -695,7 +695,7 @@ export function GravityMaterialsPage() {
               size="small"
               title={
                 <Space wrap>
-                  <span>推送引力素材到巨量账户</span>
+                  {stepTitle("4", "推送引力素材到巨量账户")}
                   <Tag color="orange">真实媒体动作</Tag>
                 </Space>
               }
@@ -887,6 +887,15 @@ function readinessNextActionTitle(result?: ChineseResult): string {
 
 function scrollToSyncCard() {
   document.getElementById("gravity-sync-card")?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function stepTitle(step: string, title: ReactNode) {
+  return (
+    <Space size={10} className="gravity-step-title">
+      <span className="gravity-step-number">{step}</span>
+      <span>{title}</span>
+    </Space>
+  );
 }
 
 function summaryLookup(result?: ChineseResult): Map<string, string | number | boolean | null> {

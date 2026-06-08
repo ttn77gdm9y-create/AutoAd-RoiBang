@@ -54,11 +54,17 @@ def run_gravity_material_sync_request(
 
     page_size = _int_value(cfg.get("page_size"), default=100, minimum=1, maximum=500)
     max_pages = _int_value(cfg.get("max_pages"), default=50, minimum=1, maximum=500)
+    max_folders = _int_value(cfg.get("max_folders"), default=500, minimum=1, maximum=5000)
+    max_depth = _int_value(cfg.get("max_depth"), default=8, minimum=1, maximum=20)
     date_range = _report_date_range(cfg)
     probe_client = client or GravityMaterialClient(auth_payload)
     external_api_calls = 0
     warnings: list[str] = []
     rows_by_product: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    rows_by_binding: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    disabled_by_binding: dict[str, int] = defaultdict(int)
+    folders_scanned_by_binding: dict[str, int] = defaultdict(int)
+    pages_read_by_binding: dict[str, int] = defaultdict(int)
     disabled_count = 0
 
     album_tree = probe_client.get_album_tree()
@@ -67,38 +73,27 @@ def run_gravity_material_sync_request(
 
     for binding in bindings:
         product = binding["product"]
-        page = 1
-        while page <= max_pages:
-            payload = probe_client.get_album_material_list(
-                album_id=binding["album_id"],
-                folder_id=binding["folder_id"],
-                page=page,
-                page_size=page_size,
-            )
-            external_api_calls += 1
-            materials = _material_rows(payload)
-            raw.setdefault("material_pages", []).append(
-                {
-                    "product": product,
-                    "album_id": binding["album_id"],
-                    "folder_id": binding["folder_id"],
-                    "page": page,
-                    "row_count": len(materials),
-                    "payload": _sanitized_payload(payload),
-                }
-            )
-            if not materials:
-                break
-            for material in materials:
-                if _is_active_material(material):
-                    rows_by_product[product].append(_source_material_row(material, binding=binding))
-                else:
-                    disabled_count += 1
-            if len(materials) < page_size:
-                break
-            page += 1
-        if page > max_pages:
-            warnings.append(f"{product}：{binding['album_name']} 分页达到上限 {max_pages}，后续素材本次未继续读取。")
+        scanned = _scan_binding_materials(
+            client=probe_client,
+            binding=binding,
+            page_size=page_size,
+            max_pages=max_pages,
+            max_folders=max_folders,
+            max_depth=max_depth,
+            raw=raw,
+        )
+        external_api_calls += int(scanned["external_api_calls"])
+        warnings.extend(scanned["warnings"])
+        folders_scanned_by_binding[binding["id"]] = int(scanned["folders_scanned"])
+        pages_read_by_binding[binding["id"]] = int(scanned["pages_read"])
+        for material in scanned["materials"]:
+            if _is_active_material(material):
+                row = _source_material_row(material, binding=material.get("_binding_scope", binding))
+                rows_by_product[product].append(row)
+                rows_by_binding[binding["id"]].append(row)
+            else:
+                disabled_count += 1
+                disabled_by_binding[binding["id"]] += 1
 
     source_advertiser_id = source_advertiser_id_for_auth(auth_payload)
     organization_id = _text(auth_payload.get("gravity_cid"))
@@ -151,14 +146,22 @@ def run_gravity_material_sync_request(
             "active_materials_imported": imported_count,
             "inactive_materials_skipped": disabled_count,
             "inactive_product_source_materials": inactive_rows,
+            "folders_scanned": sum(folders_scanned_by_binding.values()),
+            "pages_read": sum(pages_read_by_binding.values()),
             "rollup_rows_written": rollup_rows_written,
             "source_advertiser_id": source_advertiser_id,
             "organization_id": organization_id,
             "upload_material_called": False,
         },
         "table": {
-            "columns": ["产品", "绑定", "入库素材", "禁用素材", "本地置为停用"],
-            "rows": _summary_rows(bindings=bindings, rows_by_product=rows_by_product, disabled_count=disabled_count, inactive_rows=inactive_rows),
+            "columns": ["产品", "绑定", "扫描文件夹", "发现素材", "入库素材", "禁用素材", "本地置为停用"],
+            "rows": _summary_rows(
+                bindings=bindings,
+                rows_by_binding=rows_by_binding,
+                disabled_by_binding=disabled_by_binding,
+                folders_scanned_by_binding=folders_scanned_by_binding,
+                inactive_rows=inactive_rows,
+            ),
         },
         "warnings": warnings + ["更新引力素材只读取素材资料并写入本地数据库，不下载素材文件、不上传素材、不创建广告。"],
         "blocking_reasons": [],
@@ -253,21 +256,176 @@ def _active_bindings(db_path: str | Path, *, product: str = "") -> list[dict[str
     ]
 
 
-def _material_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
+def _scan_binding_materials(
+    *,
+    client: Any,
+    binding: dict[str, str],
+    page_size: int,
+    max_pages: int,
+    max_folders: int,
+    max_depth: int,
+    raw: dict[str, Any],
+) -> dict[str, Any]:
+    materials: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    calls = 0
+    pages_read = 0
+    folders_scanned = 0
+    seen_folders: set[str] = set()
+    root_scope = {
+        "folder_id": binding["folder_id"],
+        "folder_name": binding["folder_name"],
+        "folder_path": binding["folder_name"],
+        "depth": 0,
+    }
+    queue: list[dict[str, Any]] = [root_scope]
+
+    while queue:
+        scope = queue.pop(0)
+        folder_id = _text(scope.get("folder_id"))
+        folder_key = folder_id or "__album_root__"
+        if folder_key in seen_folders:
+            continue
+        seen_folders.add(folder_key)
+        if folder_id:
+            folders_scanned += 1
+        page = 1
+        while page <= max_pages:
+            payload = client.get_album_material_list(
+                album_id=binding["album_id"],
+                folder_id=folder_id,
+                page=page,
+                page_size=page_size,
+            )
+            calls += 1
+            pages_read += 1
+            entries = _album_list_items(payload)
+            page_materials: list[dict[str, Any]] = []
+            page_folders: list[dict[str, Any]] = []
+            for item in entries:
+                folder = _folder_payload(item)
+                if folder:
+                    page_folders.append(folder)
+                    if len(seen_folders) + len(queue) >= max_folders:
+                        warnings.append(
+                            f"{binding['product']}：{binding['album_name']} 文件夹扫描达到上限 {max_folders}，后续文件夹本次未继续读取。"
+                        )
+                        continue
+                    next_depth = int(scope.get("depth") or 0) + 1
+                    if next_depth > max_depth:
+                        warnings.append(
+                            f"{binding['product']}：{binding['album_name']} 文件夹层级超过上限 {max_depth}，已跳过 {folder['folder_name']}。"
+                        )
+                        continue
+                    queue.append(
+                        {
+                            "folder_id": folder["folder_id"],
+                            "folder_name": folder["folder_name"],
+                            "folder_path": _folder_path(scope, folder),
+                            "depth": next_depth,
+                        }
+                    )
+                    continue
+                material = _entry_material_payload(item)
+                if not material:
+                    continue
+                material_scope = _binding_scope(binding, scope)
+                page_materials.append({**material, "_binding_scope": material_scope})
+
+            materials.extend(page_materials)
+            raw.setdefault("material_pages", []).append(
+                {
+                    "product": binding["product"],
+                    "album_id": binding["album_id"],
+                    "folder_id": folder_id,
+                    "folder_name": _text(scope.get("folder_name")),
+                    "folder_path": _text(scope.get("folder_path")),
+                    "page": page,
+                    "row_count": len(entries),
+                    "material_count": len(page_materials),
+                    "folder_count": len(page_folders),
+                    "payload": _sanitized_payload(payload),
+                }
+            )
+            if not entries or not _has_next_page(payload, page=page, row_count=len(entries), page_size=page_size):
+                break
+            page += 1
+        if page > max_pages:
+            target = _text(scope.get("folder_name")) or binding["album_name"]
+            warnings.append(f"{binding['product']}：{target} 分页达到上限 {max_pages}，后续素材本次未继续读取。")
+
+    return {
+        "materials": materials,
+        "warnings": warnings,
+        "external_api_calls": calls,
+        "folders_scanned": folders_scanned,
+        "pages_read": pages_read,
+    }
+
+
+def _album_list_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
     data = payload.get("data")
     candidates: Any = []
     if isinstance(data, dict):
         candidates = data.get("list") or data.get("rows") or data.get("items") or data.get("records") or []
     elif isinstance(data, list):
         candidates = data
-    return [_material_payload(item) for item in candidates if isinstance(item, dict)]
+    return [item for item in candidates if isinstance(item, dict)]
 
 
-def _material_payload(item: dict[str, Any]) -> dict[str, Any]:
+def _folder_payload(item: dict[str, Any]) -> dict[str, str]:
+    group = item.get("group")
+    if isinstance(group, dict):
+        folder_id = _first_text(group, "id", "folder_id", "album_id")
+        folder_name = _first_text(group, "name", "label", "folder_name")
+        return {"folder_id": folder_id, "folder_name": folder_name} if folder_id else {}
+    if isinstance(item.get("material"), dict):
+        return {}
+    type_value = _text(item.get("type")).lower()
+    if type_value not in {"2", "folder", "group"}:
+        return {}
+    folder_id = _first_text(item, "folder_id", "id", "album_id")
+    folder_name = _first_text(item, "folder_name", "name", "label")
+    return {"folder_id": folder_id, "folder_name": folder_name} if folder_id else {}
+
+
+def _entry_material_payload(item: dict[str, Any]) -> dict[str, Any]:
     nested = item.get("material")
     if isinstance(nested, dict):
         return {**nested, "list_item_type": _text(item.get("type"))}
-    return item
+    if _folder_payload(item):
+        return {}
+    material_id = _material_id(item)
+    return item if material_id else {}
+
+
+def _binding_scope(binding: dict[str, str], scope: dict[str, Any]) -> dict[str, str]:
+    return {
+        **binding,
+        "folder_id": _text(scope.get("folder_id")),
+        "folder_name": _text(scope.get("folder_name")),
+        "folder_path": _text(scope.get("folder_path")),
+    }
+
+
+def _folder_path(scope: dict[str, Any], folder: dict[str, str]) -> str:
+    parent = _text(scope.get("folder_path"))
+    name = _text(folder.get("folder_name"))
+    if parent and name:
+        return f"{parent} / {name}"
+    return name or parent
+
+
+def _has_next_page(payload: dict[str, Any], *, page: int, row_count: int, page_size: int) -> bool:
+    data = payload.get("data")
+    page_info = data.get("page_info") if isinstance(data, dict) and isinstance(data.get("page_info"), dict) else {}
+    total_page = _optional_int(page_info.get("total_page"))
+    if total_page is not None:
+        return page < total_page
+    has_more = page_info.get("has_more")
+    if isinstance(has_more, bool):
+        return has_more
+    return row_count >= page_size
 
 
 def _report_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -282,6 +440,7 @@ def _report_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _source_material_row(material: dict[str, Any], *, binding: dict[str, str]) -> dict[str, Any]:
     material_payload = dict(material)
+    material_payload.pop("_binding_scope", None)
     if "id" in material_payload:
         material_payload["gravity_raw_id"] = material_payload.pop("id")
     row = {
@@ -300,9 +459,13 @@ def _source_material_row(material: dict[str, Any], *, binding: dict[str, str]) -
         "album_name": binding["album_name"],
         "folder_id": binding["folder_id"],
         "folder_name": binding["folder_name"],
+        "folder_path": _text(binding.get("folder_path")),
         "gravity_status": _text(material.get("status")),
     }
-    row["payload_json"] = json.dumps({**material, **{key: row[key] for key in ("album_id", "album_name", "folder_id", "folder_name")}}, ensure_ascii=False)
+    row["payload_json"] = json.dumps(
+        {**material_payload, **{key: row[key] for key in ("album_id", "album_name", "folder_id", "folder_name", "folder_path")}},
+        ensure_ascii=False,
+    )
     return {**material_payload, **row}
 
 
@@ -385,17 +548,22 @@ def _write_report_rollups(
 def _summary_rows(
     *,
     bindings: list[dict[str, str]],
-    rows_by_product: dict[str, list[dict[str, Any]]],
-    disabled_count: int,
+    rows_by_binding: dict[str, list[dict[str, Any]]],
+    disabled_by_binding: dict[str, int],
+    folders_scanned_by_binding: dict[str, int],
     inactive_rows: int,
 ) -> list[dict[str, Any]]:
     rows = []
     for binding in bindings:
+        binding_rows = rows_by_binding.get(binding["id"], [])
+        disabled_count = int(disabled_by_binding.get(binding["id"]) or 0)
         rows.append(
             {
                 "产品": binding["product"],
                 "绑定": binding["folder_name"] or binding["album_name"],
-                "入库素材": len(rows_by_product.get(binding["product"], [])),
+                "扫描文件夹": int(folders_scanned_by_binding.get(binding["id"]) or 0),
+                "发现素材": len(binding_rows) + disabled_count,
+                "入库素材": len(binding_rows),
                 "禁用素材": disabled_count,
                 "本地置为停用": inactive_rows,
             }
@@ -470,6 +638,13 @@ def _int_value(value: Any, *, default: int, minimum: int, maximum: int) -> int:
     except (TypeError, ValueError):
         parsed = default
     return min(maximum, max(minimum, parsed))
+
+
+def _optional_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _sanitized_payload(payload: Any) -> Any:

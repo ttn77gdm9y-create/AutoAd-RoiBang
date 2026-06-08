@@ -172,6 +172,23 @@ body {
   background: #ffffff;
 }
 
+.gravity-step-title {
+  font-weight: 700;
+}
+
+.gravity-step-number {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #1d6f62;
+  color: #ffffff;
+  font-size: 15px;
+  line-height: 1;
+}
+
 .gravity-qualification-tile {
   min-height: 82px;
   padding: 14px 16px;

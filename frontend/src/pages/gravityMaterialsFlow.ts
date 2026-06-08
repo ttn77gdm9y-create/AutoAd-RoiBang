@@ -33,7 +33,7 @@ export function buildGravityMaterialFlowState(input: GravityFlowInput): GravityF
   const blockedByToken = input.readinessStatus === "blocked" && input.readinessNextAction === "检查引力 Token";
 
   if (bindingCount <= 0) {
-    return flowState(0, ["process", "wait", "wait", "wait", "wait"], {
+    return flowState(0, ["process", "wait", "wait", "wait"], {
       title: "先绑定素材来源",
       description: "先保存产品和目标专辑绑定，系统才知道应该从哪些引力专辑更新素材。",
       type: "info",
@@ -41,7 +41,7 @@ export function buildGravityMaterialFlowState(input: GravityFlowInput): GravityF
   }
 
   if (blockedByToken) {
-    return flowState(1, ["finish", "error", "wait", "wait", "wait"], {
+    return flowState(1, ["finish", "error", "wait", "wait"], {
       title: "先检查引力 Token",
       description: "当前更新被 Token 文件阻塞。请先确认 Token 文件存在且字段完整，然后再更新引力素材。",
       type: "warning",
@@ -49,7 +49,7 @@ export function buildGravityMaterialFlowState(input: GravityFlowInput): GravityF
   }
 
   if (totalMaterials <= 0) {
-    return flowState(1, ["finish", "process", "wait", "wait", "wait"], {
+    return flowState(1, ["finish", "process", "wait", "wait"], {
       title: "下一步更新引力素材",
       description: "本地还没有引力素材资料。点击“生成更新预览”，再启动更新；这一步不会下载素材文件，不会上传到巨量账户。",
       type: "info",
@@ -57,7 +57,7 @@ export function buildGravityMaterialFlowState(input: GravityFlowInput): GravityF
   }
 
   if (eligibleMaterials <= 0) {
-    return flowState(3, ["finish", "finish", "finish", "process", "wait"], {
+    return flowState(2, ["finish", "finish", "process", "wait"], {
       title: "先检查素材为什么不可用",
       description: "本地已有素材，但暂时没有可用于后续的素材。重点看缺 MD5、禁用、拒审等不可用原因。",
       type: "warning",
@@ -65,7 +65,7 @@ export function buildGravityMaterialFlowState(input: GravityFlowInput): GravityF
   }
 
   if (selectedMaterials <= 0) {
-    return flowState(3, ["finish", "finish", "finish", "process", "wait"], {
+    return flowState(2, ["finish", "finish", "process", "wait"], {
       title: "选择可用素材",
       description: "已经有可用素材。请在本地素材库勾选“可用于后续”的素材，再选择目标账户生成推送预览。",
       type: "success",
@@ -73,14 +73,14 @@ export function buildGravityMaterialFlowState(input: GravityFlowInput): GravityF
   }
 
   if (selectedAccounts <= 0) {
-    return flowState(4, ["finish", "finish", "finish", "finish", "process"], {
+    return flowState(3, ["finish", "finish", "finish", "process"], {
       title: "选择目标账户",
       description: "已经选择素材。下一步选择要推送到的启用账户，预览会同时显示账户 ID 和账户名。",
       type: "info",
     });
   }
 
-  return flowState(4, ["finish", "finish", "finish", "finish", "process"], {
+  return flowState(3, ["finish", "finish", "finish", "process"], {
     title: "可以生成推送预览",
     description: "素材和目标账户都已选择。先生成推送预览并核对明细；真实推送前仍然必须输入“确认执行”。",
     type: "warning",
@@ -92,8 +92,8 @@ function flowState(
   statuses: GravityFlowStepStatus[],
   recommendation: GravityFlowState["recommendation"],
 ): GravityFlowState {
-  const titles = ["绑定素材来源", "更新引力素材", "查看本地素材", "检查可用素材", "生成推送预览"];
-  const descriptions = ["选产品和引力专辑", "只读取资料，不下载文件", "看素材名、ID、MD5", "看可用/不可用原因", "真实动作前复核"];
+  const titles = ["绑定素材来源", "更新引力素材", "查看并选择素材", "生成推送预览"];
+  const descriptions = ["选产品和引力专辑", "只读取资料，不下载文件", "先看全部素材，再勾选可用素材", "真实动作前复核"];
   return {
     currentStep,
     recommendation,
