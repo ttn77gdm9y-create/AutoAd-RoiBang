@@ -28,8 +28,8 @@ WORKFLOW_CATALOG = [
     },
     {
         "value": "account_remark_update",
-        "label": "账户备注执行",
-        "description": "查看账户备注真实修改固定脚本的执行结果。",
+        "label": "真实修改账户备注",
+        "description": "查看账户备注真实修改固定脚本的执行结果；未通过安全配置时不会修改账户。",
     },
     {
         "value": "account_remark_config_generate",
@@ -78,12 +78,12 @@ WORKFLOW_CATALOG = [
     },
     {
         "value": "gravity_material_sync",
-        "label": "同步引力素材资料到本地",
+        "label": "更新引力素材",
         "description": "查看引力素材名称、归属、MD5、状态和表现数据写入本地素材库的结果。",
     },
     {
         "value": "gravity_material_qualification",
-        "label": "引力素材资格汇总",
+        "label": "检查可用素材",
         "description": "查看引力素材是否可用于后续上传/创建的本地资格汇总结果。",
     },
     {

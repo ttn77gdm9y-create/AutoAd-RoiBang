@@ -28,14 +28,14 @@ def run_from_args(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.execute and not args.yes:
-        raise RuntimeError("account remark update execute requires --yes")
+        raise RuntimeError("真实修改账户备注必须由页面确认后传入 --yes")
     if args.execute:
         if not args.config:
-            raise RuntimeError("account remark update execute requires --config")
+            raise RuntimeError("真实修改账户备注缺少固定执行配置文件")
         runtime = load_json(args.config)
         transport_config = runtime.get("create_http_transport") if isinstance(runtime.get("create_http_transport"), dict) else {}
         if not bool(transport_config.get("allow_mutation", False)):
-            raise RuntimeError("account remark update execute requires create_http_transport.allow_mutation=true")
+            raise RuntimeError("真实修改账户备注前，需要在固定执行配置里开启 create_http_transport.allow_mutation=true")
     request = load_json(args.account_remark_update)
     result = run_account_remark_update(
         request,

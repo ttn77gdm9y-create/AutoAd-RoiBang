@@ -13,7 +13,7 @@ export type GravityMaterialSyncWorkflowRequest = {
 };
 
 export const gravityMaterialSyncCopy = {
-  title: "同步引力素材资料到本地",
+  title: "更新引力素材",
   description:
     "只读取引力素材的名称、归属专辑/文件夹、素材 ID、MD5、状态和表现数据，保存到 RoiBang 本地素材库；不会下载素材文件，不会上传到巨量账户，不影响每天从真实巨量账户同步来的素材数据。",
 };

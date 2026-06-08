@@ -156,11 +156,14 @@ export function AccountRemarksPage() {
               <Col xs={24}>
                 <Form.Item label="账户 ID">
                   <Input.TextArea
-                    rows={4}
+                    rows={8}
                     value={request.advertiser_ids}
                     onChange={(event) => setRequest({ ...request, advertiser_ids: event.target.value })}
-                    placeholder="多个账户用换行或逗号分隔"
+                    placeholder={"可以粘贴一大段数字账户 ID，也可以粘贴带“账户 ID”表头的表格；不要粘贴账户名。\n1866125087858183\n1866125088740552"}
                   />
+                  <Typography.Text type="secondary">
+                    支持多行、逗号分隔、CSV/Excel 粘贴；系统会校验这里必须是数字账户 ID。
+                  </Typography.Text>
                 </Form.Item>
               </Col>
               <Col xs={24}>

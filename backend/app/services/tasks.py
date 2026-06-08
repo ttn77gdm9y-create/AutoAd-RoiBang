@@ -87,6 +87,7 @@ def load_task_detail(runs_dir: str | Path, task_id: str, configs_dir: str | Path
             "status": _task_summary_status(payload, result),
             "risk_level": risk_level,
             "execution_enabled": False,
+            "execution_label": _task_execution_label(payload, result),
             "items": [
                 {"label": "任务 ID", "value": row["任务 ID"]},
                 {"label": "任务内容", "value": task_operation_label},
@@ -392,6 +393,21 @@ def _task_summary_status(payload: dict[str, Any], result: dict[str, Any]) -> str
     if _is_gravity_token_missing_env_block(payload, result):
         return "blocked"
     return str(payload.get("status") or "unknown")
+
+
+def _task_execution_label(payload: dict[str, Any], result: dict[str, Any]) -> str:
+    operation_type = str(payload.get("operation_type") or "").strip()
+    if operation_type != "account_remark_update":
+        return ""
+    business_status = str(result.get("status") or "").strip()
+    task_status = str(payload.get("status") or "").strip()
+    if business_status == "executed":
+        return "已发起真实修改"
+    if business_status in {"blocked", "partial_failed"} or task_status in {"failed", "blocked"}:
+        return "真实修改未执行" if business_status == "blocked" else "真实修改未完成"
+    if task_status in {"queued", "running"}:
+        return "真实修改任务"
+    return "真实修改未执行"
 
 
 def _gravity_token_safety_items(payload: dict[str, Any], result: dict[str, Any]) -> list[dict[str, Any]]:
@@ -979,6 +995,17 @@ def _business_warnings(result: dict[str, Any]) -> list[str]:
 
 
 def _localized_blocking_reason(text: str, result: dict[str, Any]) -> str:
+    account_remark_reason = {
+        "http.enabled must be true for execute": "账户备注 JSON 里没有开启 HTTP 执行开关，系统未发起真实修改。",
+        "http.url is required for execute": "账户备注 JSON 缺少执行接口地址，系统未发起真实修改。",
+        "workbench session cookie is required for execute": "缺少工作台登录 Cookie，系统未发起真实修改。",
+        "workbench csrf_token is required for execute": "缺少工作台 CSRF Token，系统未发起真实修改。",
+        "update_id is required": "缺少账户备注配置 ID。",
+        "remark is required": "缺少目标备注。",
+        "advertiser_ids is required": "缺少要修改备注的账户 ID。",
+    }.get(text)
+    if account_remark_reason:
+        return account_remark_reason
     if "existing active project/unit provider IDs" not in text:
         return text
     counts_text = _existing_plan_counts_text(_existing_plan_ledger(result))

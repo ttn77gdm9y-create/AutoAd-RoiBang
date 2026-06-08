@@ -15,6 +15,7 @@ WORKFLOW = "account_remark_update"
 DEFAULT_ACCOUNT_REMARK_URL = (
     "https://business.oceanengine.com/api/ebp/promotion/common/edit_account_remark?ebpid=1851650746645060"
 )
+DEFAULT_WORKBENCH_SESSION_FILE = "data/secrets/oceanengine-workbench-session.local.json"
 Opener = Callable[[str, dict[str, Any], dict[str, str], float], HttpResponse]
 Sleeper = Callable[[float], None]
 
@@ -53,10 +54,10 @@ def build_account_remark_update_config(
             "remark": _text(remark),
             "advertiser_ids": _rows(advertiser_ids),
             "http": {
-                "enabled": False,
+                "enabled": True,
                 "url": DEFAULT_ACCOUNT_REMARK_URL,
                 "method": "POST",
-                "session_file": "data/secrets/workbench-session.local.json",
+                "session_file": DEFAULT_WORKBENCH_SESSION_FILE,
                 "body_template": {
                     "accountId": "__ADVERTISER_ID__",
                     "remark": "__REMARK__",
@@ -151,24 +152,36 @@ def _api_ok(response: dict[str, Any], http: dict[str, Any]) -> bool:
 
 def _blocking_reasons(cfg: dict[str, Any], *, execute: bool) -> list[str]:
     reasons: list[str] = []
+    advertiser_ids = _rows(cfg.get("advertiser_ids"))
     if not _text(cfg.get("update_id")):
-        reasons.append("update_id is required")
+        reasons.append("缺少账户备注配置 ID。")
     if not _text(cfg.get("remark")):
-        reasons.append("remark is required")
-    if not _rows(cfg.get("advertiser_ids")):
-        reasons.append("advertiser_ids is required")
+        reasons.append("缺少目标备注。")
+    if not advertiser_ids:
+        reasons.append("缺少要修改备注的账户 ID。")
+    else:
+        reasons.extend(_invalid_account_id_reasons(advertiser_ids))
     http = cfg.get("http") if isinstance(cfg.get("http"), dict) else {}
     if execute:
         if not bool(http.get("enabled", False)):
-            reasons.append("http.enabled must be true for execute")
+            reasons.append("账户备注 JSON 里没有开启 HTTP 执行开关，系统未发起真实修改。")
         if not _text(http.get("url")):
-            reasons.append("http.url is required for execute")
+            reasons.append("账户备注 JSON 缺少执行接口地址，系统未发起真实修改。")
         session = _session(http)
         if not _text(session.get("cookie")):
-            reasons.append("workbench session cookie is required for execute")
+            reasons.append("缺少工作台登录 Cookie，系统未发起真实修改。")
         if not _text(session.get("csrf_token")):
-            reasons.append("workbench csrf_token is required for execute")
+            reasons.append("缺少工作台 CSRF Token，系统未发起真实修改。")
     return reasons
+
+
+def _invalid_account_id_reasons(advertiser_ids: list[str]) -> list[str]:
+    invalid_items = [(index + 1, advertiser_id) for index, advertiser_id in enumerate(advertiser_ids) if not advertiser_id.isdigit()]
+    if not invalid_items:
+        return []
+    invalid_text = "、".join(f"第 {index} 行「{advertiser_id}」" for index, advertiser_id in invalid_items[:5])
+    more = "等" if len(invalid_items) > 5 else ""
+    return [f"账户 ID 必须是数字：{invalid_text}{more}。请粘贴数字账户 ID。"]
 
 
 def _readable_reference(cfg: dict[str, Any], *, results: list[dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -215,6 +228,7 @@ def _base_payload(
         "status": status,
         "execution_enabled": bool(execute and not blocking_reasons),
         "external_api_calls": external_api_calls,
+        "warnings": ["本次未修改任何账户备注。"] if execute and blocking_reasons else [],
         "summary": {
             "update_id": _text(cfg.get("update_id")),
             "remark": _text(cfg.get("remark")),

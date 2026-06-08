@@ -21,7 +21,7 @@ test("builds a fixed gravity material metadata sync workflow request", () => {
 });
 
 test("explains gravity sync as metadata only without touching account material sync", () => {
-  assert.equal(gravityMaterialSyncCopy.title, "同步引力素材资料到本地");
+  assert.equal(gravityMaterialSyncCopy.title, "更新引力素材");
   assert.match(gravityMaterialSyncCopy.description, /不会下载素材文件/);
   assert.match(gravityMaterialSyncCopy.description, /不影响每天从真实巨量账户同步来的素材数据/);
 });

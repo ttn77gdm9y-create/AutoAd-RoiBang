@@ -97,29 +97,29 @@ def test_csv_upload_preview_and_commit(tmp_path):
     writer = csv.DictWriter(
         buffer,
         fieldnames=[
-            "product_key",
-            "product_name",
-            "advertiser_id",
-            "advertiser_name",
-            "channel",
-            "owner",
-            "account_remark",
-            "status",
-            "notes",
+            "产品",
+            "产品 Key",
+            "账户 ID",
+            "账户名",
+            "渠道",
+            "负责人",
+            "状态",
+            "备注",
+            "说明",
         ],
     )
     writer.writeheader()
     writer.writerow(
         {
-            "product_key": "diandian-hero",
-            "product_name": "点点英雄",
-            "advertiser_id": "1866125088740552",
-            "advertiser_name": "黑旗游戏",
-            "channel": "微信",
-            "owner": "运营A",
-            "account_remark": "点点英雄-黑旗",
-            "status": "active",
-            "notes": "",
+            "产品": "点点英雄",
+            "产品 Key": "diandian-hero",
+            "账户 ID": "1866125088740552",
+            "账户名": "黑旗游戏",
+            "渠道": "微信",
+            "负责人": "运营A",
+            "状态": "active",
+            "备注": "点点英雄-黑旗",
+            "说明": "",
         }
     )
     content = buffer.getvalue().encode("utf-8")
@@ -181,7 +181,7 @@ def test_accounts_endpoint_filters_and_export_returns_csv(tmp_path):
 
     assert filtered.status_code == 200
     assert filtered.json()["summary"]["items"][0] == {"label": "账户数", "value": 1}
-    assert "product_key,product_name,advertiser_id" in exported.text
+    assert exported.text.startswith("产品,产品 Key,账户 ID,账户名,渠道,负责人,状态,备注,说明")
     assert "点点英雄" in exported.text
 
 
@@ -192,7 +192,7 @@ def test_accounts_template_download_returns_fillable_csv(tmp_path):
 
     assert response.status_code == 200
     assert "product-accounts-template.csv" in response.headers["content-disposition"]
-    assert response.text.startswith("product_key,product_name,advertiser_id,advertiser_name")
+    assert response.text.startswith("产品,产品 Key,账户 ID,账户名,渠道,负责人,状态,备注,说明")
     assert "示例" in response.text
 
 

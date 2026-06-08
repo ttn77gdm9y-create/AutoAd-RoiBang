@@ -115,7 +115,7 @@ def gravity_sync_readiness(*, project_root: str | Path, product: str = "", auth_
     )
     return {
         "summary": {
-            "title": "同步引力素材资料到本地准备检查",
+            "title": "更新引力素材准备检查",
             "status": status,
             "risk_level": "low",
             "execution_enabled": False,

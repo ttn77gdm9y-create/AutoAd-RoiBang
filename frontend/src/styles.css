@@ -118,6 +118,15 @@ body {
   min-width: 140px;
 }
 
+.accounts-table .ant-table-pagination {
+  justify-content: flex-start;
+  position: sticky;
+  left: 0;
+  width: fit-content;
+  max-width: 100%;
+  padding-left: 4px;
+}
+
 .operation-select {
   min-width: 220px;
 }

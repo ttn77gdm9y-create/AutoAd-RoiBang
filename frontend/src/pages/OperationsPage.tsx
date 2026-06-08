@@ -15,7 +15,7 @@ const operationOptions = [
   { label: "落地页状态更新", value: "site_status_update" },
   { label: "模板建站", value: "site_template_foundation" },
   { label: "账户备注配置生成", value: "account_remark_config_generate" },
-  { label: "账户备注真实执行", value: "account_remark_update" },
+  { label: "真实修改账户备注", value: "account_remark_update" },
   { label: "连通性检查", value: "dry_run_probe" },
 ];
 

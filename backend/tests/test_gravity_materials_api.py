@@ -94,7 +94,7 @@ def test_gravity_material_sync_readiness_blocks_missing_token_without_external_c
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["summary"]["title"] == "同步引力素材资料到本地准备检查"
+    assert payload["summary"]["title"] == "更新引力素材准备检查"
     assert payload["summary"]["status"] == "blocked"
     assert payload["summary"]["execution_enabled"] is False
     assert "未找到引力 Token 文件" in payload["summary"]["blocking_reasons"][0]

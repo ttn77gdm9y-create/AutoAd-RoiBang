@@ -161,7 +161,7 @@ def test_gravity_material_sync_imports_bound_album_materials_without_uploading(t
     assert result["summary"]["inactive_materials_skipped"] == 1
     assert result["summary"]["inactive_product_source_materials"] == 1
     assert "upload" not in " ".join(client.calls)
-    assert result["中文摘要"] == "引力素材资料同步完成：读取 1 个绑定，保存 1 个可用素材资料，跳过 1 个禁用素材；未下载素材文件、未上传素材、未创建广告。"
+    assert result["中文摘要"] == "更新引力素材完成：读取 1 个绑定，保存 1 个可用素材资料，跳过 1 个禁用素材；未下载素材文件、未上传素材、未创建广告。"
 
     with sqlite3.connect(db_path) as conn:
         imported = conn.execute(

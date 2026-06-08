@@ -20,6 +20,65 @@ ACCOUNT_FIELDS = [
     "status",
     "notes",
 ]
+ACCOUNT_DISPLAY_FIELDS = [
+    "product_name",
+    "product_key",
+    "advertiser_id",
+    "advertiser_name",
+    "channel",
+    "owner",
+    "status",
+    "account_remark",
+    "notes",
+]
+ACCOUNT_FIELD_LABELS = {
+    "product_name": "产品",
+    "product_key": "产品 Key",
+    "advertiser_id": "账户 ID",
+    "advertiser_name": "账户名",
+    "channel": "渠道",
+    "owner": "负责人",
+    "status": "状态",
+    "account_remark": "备注",
+    "notes": "说明",
+}
+ACCOUNT_DISPLAY_COLUMNS = [ACCOUNT_FIELD_LABELS[field] for field in ACCOUNT_DISPLAY_FIELDS]
+ACCOUNT_FIELD_ALIASES = {
+    "产品": "product_name",
+    "product": "product_name",
+    "product_name": "product_name",
+    "产品 Key": "product_key",
+    "产品Key": "product_key",
+    "product_key": "product_key",
+    "productKey": "product_key",
+    "账户 ID": "advertiser_id",
+    "账户ID": "advertiser_id",
+    "账户id": "advertiser_id",
+    "广告账户 ID": "advertiser_id",
+    "广告账户ID": "advertiser_id",
+    "advertiser_id": "advertiser_id",
+    "account_id": "advertiser_id",
+    "adv_id": "advertiser_id",
+    "账户名": "advertiser_name",
+    "账户名称": "advertiser_name",
+    "advertiser_name": "advertiser_name",
+    "account_name": "advertiser_name",
+    "渠道": "channel",
+    "channel": "channel",
+    "platform": "channel",
+    "负责人": "owner",
+    "owner": "owner",
+    "operator": "owner",
+    "状态": "status",
+    "status": "status",
+    "备注": "account_remark",
+    "账户备注": "account_remark",
+    "account_remark": "account_remark",
+    "remark": "account_remark",
+    "说明": "notes",
+    "notes": "notes",
+    "note": "notes",
+}
 
 REQUIRED_FIELDS = ["product_key", "product_name", "advertiser_id", "advertiser_name"]
 VALID_STATUSES = {"active", "paused", "disabled"}
@@ -309,28 +368,28 @@ def preview_bulk_update_accounts(
 
 def accounts_to_csv(accounts: list[dict[str, str]]) -> str:
     buffer = io.StringIO()
-    writer = csv.DictWriter(buffer, fieldnames=ACCOUNT_FIELDS)
+    writer = csv.DictWriter(buffer, fieldnames=ACCOUNT_DISPLAY_COLUMNS)
     writer.writeheader()
     for account in accounts:
-        writer.writerow({field: account.get(field, "") for field in ACCOUNT_FIELDS})
+        writer.writerow(_display_account_row(account))
     return buffer.getvalue()
 
 
 def accounts_template_csv() -> str:
     buffer = io.StringIO()
-    writer = csv.DictWriter(buffer, fieldnames=ACCOUNT_FIELDS)
+    writer = csv.DictWriter(buffer, fieldnames=ACCOUNT_DISPLAY_COLUMNS)
     writer.writeheader()
     writer.writerow(
         {
-            "product_key": "diandian-hero",
-            "product_name": "点点英雄",
-            "advertiser_id": "1866125088740552",
-            "advertiser_name": "黑旗游戏",
-            "channel": "微信",
-            "owner": "运营A",
-            "account_remark": "点点英雄-黑旗",
-            "status": "active",
-            "notes": "示例：按这一行的表头填写，status 可填 active、paused、disabled",
+            "产品": "点点英雄",
+            "产品 Key": "diandian-hero",
+            "账户 ID": "1866125088740552",
+            "账户名": "黑旗-点点英雄-微小-傲星-151",
+            "渠道": "微信",
+            "负责人": "郭靖",
+            "状态": "active",
+            "备注": "点点英雄-微小-郭靖",
+            "说明": "示例：按这一行的表头填写，状态可填 active、paused、disabled",
         }
     )
     return buffer.getvalue()
@@ -401,37 +460,50 @@ def backfill_accounts_from_history(configs_dir: str | Path, runs_dir: str | Path
 
 
 def _normalize_account(row: dict[str, Any]) -> dict[str, str]:
-    normalized = {field: str(row.get(field) or "").strip() for field in ACCOUNT_FIELDS}
+    aliased = _normalize_account_keys(row)
+    normalized = {field: str(aliased.get(field) or "").strip() for field in ACCOUNT_FIELDS}
     normalized["channel"] = _normalize_channel(normalized["channel"])
     normalized["status"] = normalized["status"] or "active"
     return normalized
 
 
 def _validate_account(account: dict[str, str]) -> list[str]:
-    errors = [f"缺少 {field}" for field in REQUIRED_FIELDS if not account.get(field)]
+    errors = [f"缺少 {ACCOUNT_FIELD_LABELS.get(field, field)}" for field in REQUIRED_FIELDS if not account.get(field)]
     if account.get("status") not in VALID_STATUSES:
-        errors.append("status 必须是 active、paused 或 disabled")
+        errors.append("状态必须是 active、paused 或 disabled")
     return errors
 
 
 def _account_table_row(account: dict[str, str], action: str, issue: str) -> dict[str, str]:
     return {
         "处理方式": action,
-        "产品": account.get("product_name", ""),
-        "产品 Key": account.get("product_key", ""),
-        "账户 ID": account.get("advertiser_id", ""),
-        "账户名": account.get("advertiser_name", ""),
-        "渠道": account.get("channel", ""),
-        "负责人": account.get("owner", ""),
-        "状态": account.get("status", ""),
-        "备注": account.get("account_remark", ""),
-        "说明": account.get("notes", ""),
+        **_display_account_row(account),
         "问题": issue,
     }
 
 
 def _table_columns() -> list[str]:
     return ["处理方式", "产品", "产品 Key", "账户 ID", "账户名", "渠道", "负责人", "状态", "备注", "说明", "问题"]
+
+
+def _display_account_row(account: dict[str, str]) -> dict[str, str]:
+    return {ACCOUNT_FIELD_LABELS[field]: account.get(field, "") for field in ACCOUNT_DISPLAY_FIELDS}
+
+
+def _normalize_account_keys(row: dict[str, Any]) -> dict[str, Any]:
+    normalized: dict[str, Any] = {}
+    for key, value in row.items():
+        canonical_key = _canonical_account_field(key)
+        if canonical_key and canonical_key not in normalized:
+            normalized[canonical_key] = value
+    return normalized
+
+
+def _canonical_account_field(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return ACCOUNT_FIELD_ALIASES.get(text, text if text in ACCOUNT_FIELDS else "")
 
 
 def _bulk_update_blocked(filters: dict[str, str], reasons: list[str]) -> dict[str, Any]:

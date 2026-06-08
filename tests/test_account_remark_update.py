@@ -16,7 +16,8 @@ def test_build_account_remark_update_config_writes_expected_actions():
     assert config["account_remark_update"]["update_id"] == "diandian-remark"
     assert config["account_remark_update"]["remark"] == "点点英雄-微小-郭靖"
     assert config["account_remark_update"]["advertiser_ids"] == ["1861", "1862"]
-    assert config["account_remark_update"]["http"]["enabled"] is False
+    assert config["account_remark_update"]["http"]["enabled"] is True
+    assert config["account_remark_update"]["http"]["session_file"] == "data/secrets/oceanengine-workbench-session.local.json"
     assert config["account_remark_update"]["http"]["body_template"] == {
         "accountId": "__ADVERTISER_ID__",
         "remark": "__REMARK__",
@@ -49,12 +50,39 @@ def test_account_remark_update_execute_blocks_when_http_not_enabled(tmp_path: Pa
         advertiser_ids=["1861"],
         remark="点点英雄-微小-郭靖",
     )
+    request["account_remark_update"]["http"]["enabled"] = False
+    request["account_remark_update"]["http"]["session_file"] = str(tmp_path / "missing-session.json")
 
     result = run_account_remark_update(request, runs_dir=tmp_path, execute=True)
 
     assert result["ok"] is False
     assert result["status"] == "blocked"
-    assert "http.enabled must be true for execute" in result["blocking_reasons"]
+    assert "账户备注 JSON 里没有开启 HTTP 执行开关，系统未发起真实修改。" in result["blocking_reasons"]
+    assert "缺少工作台登录 Cookie，系统未发起真实修改。" in result["blocking_reasons"]
+    assert "缺少工作台 CSRF Token，系统未发起真实修改。" in result["blocking_reasons"]
+    assert result["warnings"] == ["本次未修改任何账户备注。"]
+    assert result["external_api_calls"] == 0
+
+
+def test_account_remark_update_execute_blocks_non_numeric_account_ids(tmp_path: Path):
+    request = build_account_remark_update_config(
+        update_id="diandian-remark",
+        advertiser_ids=["盛步-点点英雄-微小-至也-151"],
+        remark="点点英雄-微小-郭靖",
+    )
+    request["account_remark_update"]["http"].update(
+        {
+            "session": {"cookie": "cookie-value", "csrf_token": "csrf-value"},
+        }
+    )
+
+    result = run_account_remark_update(request, runs_dir=tmp_path, execute=True)
+
+    assert result["ok"] is False
+    assert result["status"] == "blocked"
+    assert result["blocking_reasons"] == [
+        "账户 ID 必须是数字：第 1 行「盛步-点点英雄-微小-至也-151」。请粘贴数字账户 ID。"
+    ]
     assert result["external_api_calls"] == 0
 
 

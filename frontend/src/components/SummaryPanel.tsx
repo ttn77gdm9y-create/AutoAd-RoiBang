@@ -212,6 +212,12 @@ export function SummaryPanel({
     </>
   );
   const detailsLabel = `明细：${tableRows.length} 条${sectionItems.length ? `，${sectionItems.length} 组附加表` : ""}`;
+  const executionLabel = result?.summary.execution_label || (result?.summary.execution_enabled ? "可执行" : "只读");
+  const executionColor = result?.summary.execution_enabled
+    ? "red"
+    : executionLabel.includes("未执行") || executionLabel.includes("已阻止")
+      ? "orange"
+      : "blue";
 
   return (
     <section className="summary-panel">
@@ -224,9 +230,7 @@ export function SummaryPanel({
               <Tag color={riskColor[result.summary.risk_level] ?? "default"}>
                 风险：{riskLabel[result.summary.risk_level] ?? result.summary.risk_level}
               </Tag>
-              <Tag color={result.summary.execution_enabled ? "red" : "blue"}>
-                {result.summary.execution_enabled ? "可执行" : "只读"}
-              </Tag>
+              <Tag color={executionColor}>{executionLabel}</Tag>
             </div>
           ) : null}
         </div>

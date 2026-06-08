@@ -618,16 +618,16 @@ export function GravityMaterialsPage() {
             </Card>
             <Card size="small" title="本地素材库">
               <Space direction="vertical" size="middle" className="full-width">
-                {!hasBinding ? <Alert type="info" showIcon message="先在左侧保存产品和引力专辑/文件夹绑定；绑定后再同步引力素材资料到本地。" /> : null}
+                {!hasBinding ? <Alert type="info" showIcon message="先在左侧保存产品和引力专辑/文件夹绑定；绑定后再更新引力素材。" /> : null}
                 {hasBinding && totalMaterials === 0 ? (
                   <Alert
                     type="info"
                     showIcon
-                    message="已经有绑定，但本地还没有同步到素材资料。下一步运行“同步引力素材资料到本地”。"
+                    message="已经有绑定，但本地还没有引力素材资料。下一步运行“更新引力素材”。"
                     action={
                       <Link to="/workflow-center">
                         <Button size="small" icon={<SyncOutlined />}>
-                          去同步
+                          去更新
                         </Button>
                       </Link>
                     }

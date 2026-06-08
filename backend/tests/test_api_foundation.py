@@ -352,7 +352,7 @@ def test_workflow_catalog_covers_replacement_result_types(tmp_path):
 
     assert response.status_code == 200
     labels_by_value = {row["结果类型"]: row["名称"] for row in response.json()["table"]["rows"]}
-    assert labels_by_value["account_remark_update"] == "账户备注执行"
+    assert labels_by_value["account_remark_update"] == "真实修改账户备注"
     assert labels_by_value["site_template_foundation"] == "模板建站"
     assert labels_by_value["site_handsel"] == "落地页转赠结果"
     assert labels_by_value["frontend_operation_log"] == "前端操作日志"

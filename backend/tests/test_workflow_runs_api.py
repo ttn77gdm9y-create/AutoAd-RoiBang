@@ -23,8 +23,8 @@ def test_workflow_run_catalog_exposes_only_safe_business_tasks(tmp_path):
     assert "同步数据并重算建议" in names
     assert "引力素材库只读探测" in names
     assert "引力 Token 获取/刷新" in names
-    assert "同步引力素材资料到本地" in names
-    assert "引力素材资格汇总" in names
+    assert "更新引力素材" in names
+    assert "检查可用素材" in names
     assert {row["真实投放动作"] for row in rows} == {"否"}
     raw_text = json.dumps(payload["raw"], ensure_ascii=False)
     assert "upload_material" not in raw_text
@@ -182,7 +182,7 @@ def test_gravity_material_sync_workflow_uses_fixed_safe_command(tmp_path):
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["summary"]["title"] == "同步引力素材资料到本地运行预览"
+    assert payload["summary"]["title"] == "更新引力素材运行预览"
     assert payload["summary"]["execution_enabled"] is False
     assert payload["table"]["rows"][0]["真实投放动作"] == "否"
     assert payload["table"]["rows"][0]["参数"] == "产品：点点英雄；引力 Token 文件：data/gravity_token.json；每页素材数：100；最多页数：20"
@@ -213,7 +213,7 @@ def test_gravity_material_qualification_workflow_uses_fixed_safe_command(tmp_pat
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["summary"]["title"] == "引力素材资格汇总运行预览"
+    assert payload["summary"]["title"] == "检查可用素材运行预览"
     assert payload["summary"]["execution_enabled"] is False
     assert payload["table"]["rows"][0]["真实投放动作"] == "否"
     assert payload["table"]["rows"][0]["参数"] == "产品：点点英雄"
@@ -236,8 +236,8 @@ def test_results_catalog_includes_gravity_material_sync(tmp_path):
     assert response.status_code == 200
     labels_by_value = {item["value"]: item["label"] for item in response.json()["raw"]["workflows"]}
     assert labels_by_value["gravity_token_refresh"] == "引力 Token 获取/刷新"
-    assert labels_by_value["gravity_material_sync"] == "同步引力素材资料到本地"
-    assert labels_by_value["gravity_material_qualification"] == "引力素材资格汇总"
+    assert labels_by_value["gravity_material_sync"] == "更新引力素材"
+    assert labels_by_value["gravity_material_qualification"] == "检查可用素材"
 
 
 def test_gravity_probe_catalog_latest_status_says_token_state_and_blocking_reason(tmp_path):

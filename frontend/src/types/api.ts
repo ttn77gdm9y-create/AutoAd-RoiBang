@@ -16,6 +16,7 @@ export type ChineseSummary = {
   status: string;
   risk_level: "low" | "medium" | "high" | string;
   execution_enabled: boolean;
+  execution_label?: string;
   items: SummaryItem[];
   warnings: string[];
   blocking_reasons: string[];

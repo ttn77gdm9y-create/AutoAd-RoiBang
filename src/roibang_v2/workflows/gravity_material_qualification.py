@@ -40,13 +40,13 @@ def run_gravity_material_qualification_request(
         "external_api_calls": 0,
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "中文摘要": (
-            f"{product_label}引力素材资格汇总完成：素材 {counts['material_count']} 个，"
+            f"{product_label}可用素材检查完成：素材 {counts['material_count']} 个，"
             f"可用于后续 {counts['eligible_count']} 个，不可用 {counts['ineligible_count']} 个，"
             f"缺 MD5 {counts['missing_md5_count']} 个，已上传 {counts['uploaded_count']} 个，"
             f"未上传 {counts['not_uploaded_count']} 个；未上传素材、未创建广告。"
         ),
         "summary": {
-            "title": "引力素材资格汇总",
+            "title": "检查可用素材",
             "status": "completed",
             "product": product_label,
             **counts,
@@ -85,7 +85,7 @@ def run_gravity_material_qualification_request(
 
 def _blocked_payload(*, product: str) -> dict[str, Any]:
     product_label = product or "全部产品"
-    reason = f"{product_label}还没有本地引力素材，请先运行同步引力素材资料到本地。"
+    reason = f"{product_label}还没有本地引力素材，请先运行更新引力素材。"
     return {
         "ok": False,
         "workflow": WORKFLOW,
@@ -94,9 +94,9 @@ def _blocked_payload(*, product: str) -> dict[str, Any]:
         "execution_enabled": False,
         "external_api_calls": 0,
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "中文摘要": f"引力素材资格汇总被阻止：{reason}",
+        "中文摘要": f"检查可用素材被阻止：{reason}",
         "summary": {
-            "title": "引力素材资格汇总",
+            "title": "检查可用素材",
             "status": "blocked",
             "product": product_label,
             "material_count": 0,

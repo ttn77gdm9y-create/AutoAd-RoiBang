@@ -5,7 +5,7 @@ from typing import Any
 
 OPERATION_LABELS = {
     "account_remark_config_generate": "账户备注配置生成",
-    "account_remark_update": "账户备注真实执行",
+    "account_remark_update": "真实修改账户备注",
     "create_live_execute": "创建真实执行",
     "create_live_execute_once": "创建真实执行",
     "create_mode": "创建计划",
@@ -18,8 +18,8 @@ OPERATION_LABELS = {
     "gravity_api_probe": "引力素材库只读探测",
     "gravity_token_refresh": "引力 Token 获取/刷新",
     "gravity_material_upload": "引力素材上传",
-    "gravity_material_qualification": "引力素材资格汇总",
-    "gravity_material_sync": "同步引力素材资料到本地",
+    "gravity_material_qualification": "检查可用素材",
+    "gravity_material_sync": "更新引力素材",
     "gravity_upload_status_poll": "引力素材上传状态刷新",
     "material_daily_sync": "素材明细同步",
     "daily_report_sync": "每日报表同步",

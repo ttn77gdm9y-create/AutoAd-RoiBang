@@ -8,6 +8,7 @@ import { useMemo, useState } from "react";
 import { apiGet, apiPost, apiUpload, apiUrl } from "../api/client";
 import { SummaryPanel } from "../components/SummaryPanel";
 import type { ChineseResult } from "../types/api";
+import { accountTablePagination, accountTableScroll } from "./accountsPageLayout";
 
 type AccountRow = Record<string, string | number | boolean | null>;
 
@@ -206,6 +207,7 @@ export function AccountsPage() {
               <Tag color="default">当前 {accountCount}</Tag>
             </Space>
             <Table<AccountRow>
+              className="accounts-table"
               rowKey={(row) => String(row["账户 ID"] ?? "")}
               size="small"
               loading={query.isLoading}
@@ -218,8 +220,8 @@ export function AccountsPage() {
                   setBulkPreviewReady(false);
                 },
               }}
-              scroll={{ x: "max-content" }}
-              pagination={{ pageSize: 20, showSizeChanger: true }}
+              scroll={accountTableScroll}
+              pagination={accountTablePagination}
             />
           </Space>
         </div>

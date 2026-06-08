@@ -219,7 +219,7 @@ WORKFLOW_CATALOG: tuple[WorkflowDefinition, ...] = (
     ),
     WorkflowDefinition(
         workflow_id="gravity_material_sync",
-        name="同步引力素材资料到本地",
+        name="更新引力素材",
         category="引力素材库",
         description="按产品-专辑绑定读取引力素材名称、归属、MD5、状态和表现数据，保存到本地素材库；不下载素材文件、不上传素材、不创建广告。",
         operation_type="gravity_material_sync",
@@ -229,7 +229,7 @@ WORKFLOW_CATALOG: tuple[WorkflowDefinition, ...] = (
     ),
     WorkflowDefinition(
         workflow_id="gravity_material_qualification",
-        name="引力素材资格汇总",
+        name="检查可用素材",
         category="引力素材库",
         description="基于本地引力素材计算可用于后续、不可用、缺 MD5、已上传等资格汇总，不上传素材、不创建广告。",
         operation_type="gravity_material_qualification",
