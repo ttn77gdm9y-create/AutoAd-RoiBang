@@ -27,6 +27,7 @@ import { apiGet, apiPost } from "../api/client";
 import { InlineTaskStatus, WorkflowSteps } from "../components/WorkflowScaffold";
 import { SummaryPanel } from "../components/SummaryPanel";
 import type { ChineseResult, TaskDetailResponse } from "../types/api";
+import { DEFAULT_TABLE_PAGE_SIZE, TABLE_PAGE_SIZE_OPTIONS } from "../utils/tablePagination";
 import { isTaskActive, isTaskCompleted, taskStatus } from "../utils/workflowState";
 
 type ProjectUpdateRequest = {
@@ -101,7 +102,7 @@ const suggestionsQueryCacheOptions = {
   staleTime: 30 * 60 * 1000,
   refetchOnMount: false as const,
 };
-const defaultSuggestionsPagination: SuggestionsTablePagination = { current: 1, pageSize: 8 };
+const defaultSuggestionsPagination: SuggestionsTablePagination = { current: 1, pageSize: DEFAULT_TABLE_PAGE_SIZE };
 
 function readSuggestionsWorkbenchCache(): Partial<SuggestionsWorkbenchCache> {
   try {
@@ -1088,7 +1089,7 @@ export function SuggestionsPage() {
                 current: suggestionsPagination.current,
                 pageSize: suggestionsPagination.pageSize,
                 showSizeChanger: true,
-                pageSizeOptions: ["8", "10", "20", "50", "100"],
+                pageSizeOptions: TABLE_PAGE_SIZE_OPTIONS,
                 onChange: (current, pageSize) => setSuggestionsPagination({ current, pageSize }),
                 onShowSizeChange: (_current, pageSize) => setSuggestionsPagination({ current: 1, pageSize }),
               }}

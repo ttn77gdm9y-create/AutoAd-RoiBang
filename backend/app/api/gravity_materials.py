@@ -74,6 +74,10 @@ def gravity_material_rows(
     status: str = "",
     keyword: str = "",
     limit: int = 100,
+    page: int = 1,
+    page_size: int = 100,
+    sort_by: str = "",
+    sort_order: str = "",
 ) -> dict[str, Any]:
     return list_gravity_materials(
         project_root=request.app.state.settings.project_root,
@@ -81,6 +85,10 @@ def gravity_material_rows(
         status=status,
         keyword=keyword,
         limit=limit,
+        page=page,
+        page_size=page_size,
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
 
 

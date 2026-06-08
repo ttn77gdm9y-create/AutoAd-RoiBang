@@ -1,4 +1,4 @@
-import { Alert, Button, Checkbox, Form, Input, Select, Space, Table, Tag, Typography, Upload } from "antd";
+import { Alert, Button, Checkbox, Form, Input, Segmented, Select, Space, Table, Tag, Typography, Upload } from "antd";
 import type { UploadFile } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { DatabaseOutlined, DownloadOutlined, EyeOutlined, FormOutlined, SaveOutlined, UploadOutlined } from "@ant-design/icons";
@@ -11,12 +11,15 @@ import type { ChineseResult } from "../types/api";
 import { accountTablePagination, accountTableScroll } from "./accountsPageLayout";
 
 type AccountRow = Record<string, string | number | boolean | null>;
+type BulkTargetMode = "filtered" | "selected" | "pasted";
 
 export function AccountsPage() {
   const queryClient = useQueryClient();
   const [filters, setFilters] = useState({ product_key: "", channel: "", owner: "", status: "" });
   const [bulkFields, setBulkFields] = useState({ channel: false, owner: false, account_remark: false, status: false });
   const [bulkValues, setBulkValues] = useState({ channel: "", owner: "", account_remark: "", status: "disabled" });
+  const [bulkTargetMode, setBulkTargetMode] = useState<BulkTargetMode>("filtered");
+  const [bulkAdvertiserIdsText, setBulkAdvertiserIdsText] = useState("");
   const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
   const [pasteText, setPasteText] = useState("");
   const [fileList, setFileList] = useState<UploadFile[]>([]);
@@ -105,6 +108,7 @@ export function AccountsPage() {
     bulkUpdate.isPending;
   const canCommitPaste = Boolean(pasteText.trim()) && pastePreviewReady && !busy;
   const canCommitFile = selectedFile && filePreviewReady && !busy;
+  const canPreviewBulk = hasBulkFields && bulkTargetReady(bulkTargetMode, selectedAccountIds, bulkAdvertiserIdsText) && !busy;
   const canCommitBulk = hasBulkFields && bulkPreviewReady && !busy;
 
   function buildBulkUpdates() {
@@ -127,7 +131,8 @@ export function AccountsPage() {
   function buildBulkRequest() {
     return {
       ...filters,
-      advertiser_ids: selectedAccountIds,
+      advertiser_ids: bulkTargetMode === "selected" ? selectedAccountIds : [],
+      advertiser_ids_text: bulkTargetMode === "pasted" ? bulkAdvertiserIdsText : "",
       updates: buildBulkUpdates(),
     };
   }
@@ -135,6 +140,11 @@ export function AccountsPage() {
   function updateFilters(patch: Partial<typeof filters>) {
     setFilters({ ...filters, ...patch });
     setSelectedAccountIds([]);
+    setBulkPreviewReady(false);
+  }
+
+  function updateBulkTargetMode(value: string | number) {
+    setBulkTargetMode(value as BulkTargetMode);
     setBulkPreviewReady(false);
   }
 
@@ -217,6 +227,9 @@ export function AccountsPage() {
                 selectedRowKeys: selectedAccountIds,
                 onChange: (keys) => {
                   setSelectedAccountIds(keys.map(String));
+                  if (keys.length) {
+                    setBulkTargetMode("selected");
+                  }
                   setBulkPreviewReady(false);
                 },
               }}
@@ -230,14 +243,33 @@ export function AccountsPage() {
       <section className="import-panel bulk-edit-panel">
         <div className="import-column">
           <Typography.Title level={4}>批量修改当前筛选结果</Typography.Title>
+          <Space direction="vertical" size="small" className="full-width">
+            <Typography.Text strong>修改范围</Typography.Text>
+            <Segmented
+              value={bulkTargetMode}
+              options={[
+                { label: "当前筛选结果", value: "filtered" },
+                { label: "当前勾选账户", value: "selected" },
+                { label: "粘贴账户 ID", value: "pasted" },
+              ]}
+              onChange={updateBulkTargetMode}
+            />
+            {bulkTargetMode === "pasted" ? (
+              <Input.TextArea
+                rows={5}
+                value={bulkAdvertiserIdsText}
+                onChange={(event) => {
+                  setBulkAdvertiserIdsText(event.target.value);
+                  setBulkPreviewReady(false);
+                }}
+                placeholder="可以粘贴一大段账户 ID；支持换行、空格、逗号，也可以直接粘贴带“账户 ID”表头的表格列。"
+              />
+            ) : null}
+          </Space>
           <Alert
             type="warning"
             showIcon
-            message={
-              selectedAccountIds.length
-                ? `将修改已选中的 ${selectedAccountIds.length} 个账户，只更新已勾选字段；勾选后留空会清空该字段。`
-                : `将修改当前筛选命中的 ${accountCount} 个账户，只更新已勾选字段；勾选后留空会清空该字段。`
-            }
+            message={bulkTargetMessage(bulkTargetMode, accountCount, selectedAccountIds.length, bulkAdvertiserIdsText)}
           />
           <div className="bulk-edit-grid">
             <Checkbox
@@ -288,7 +320,7 @@ export function AccountsPage() {
             />
           </div>
           <Space wrap>
-            <Button icon={<EyeOutlined />} disabled={!hasBulkFields || busy} loading={bulkPreview.isPending} onClick={() => bulkPreview.mutate()}>
+            <Button icon={<EyeOutlined />} disabled={!canPreviewBulk} loading={bulkPreview.isPending} onClick={() => bulkPreview.mutate()}>
               检查批量修改
             </Button>
             <Button
@@ -413,4 +445,30 @@ function accountStatusColor(value: unknown): string {
     return "red";
   }
   return "default";
+}
+
+function bulkTargetReady(mode: BulkTargetMode, selectedAccountIds: string[], pastedText: string): boolean {
+  if (mode === "selected") {
+    return selectedAccountIds.length > 0;
+  }
+  if (mode === "pasted") {
+    return /\d{6,}/.test(pastedText);
+  }
+  return true;
+}
+
+function bulkTargetMessage(mode: BulkTargetMode, accountCount: string | number | boolean | null, selectedCount: number, pastedText: string): string {
+  const suffix = "只更新已勾选字段；勾选后留空会清空该字段。";
+  if (mode === "selected") {
+    return selectedCount
+      ? `将修改当前勾选的 ${selectedCount} 个账户，${suffix}`
+      : "请先在账户明细表里勾选账户，再生成批量修改预览。";
+  }
+  if (mode === "pasted") {
+    const pastedCount = new Set(pastedText.match(/\d{6,}/g) ?? []).size;
+    return pastedCount
+      ? `将按粘贴的 ${pastedCount} 个账户 ID 查找当前筛选结果里的账户，未命中的不会修改，${suffix}`
+      : "请粘贴账户 ID；系统只会修改当前筛选结果中命中的账户。";
+  }
+  return `将修改当前筛选命中的 ${accountCount} 个账户，${suffix}`;
 }

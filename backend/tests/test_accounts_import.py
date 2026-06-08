@@ -377,6 +377,91 @@ def test_bulk_update_accounts_can_disable_selected_account_ids(tmp_path):
     assert by_id["1002"]["status"] == "disabled"
 
 
+def test_bulk_update_accounts_can_target_pasted_account_ids_inside_current_filters(tmp_path):
+    store = tmp_path / "configs" / "accounts" / "product-accounts.local.json"
+    store.parent.mkdir(parents=True)
+    store.write_text(
+        json.dumps(
+            {
+                "accounts": [
+                    {
+                        "product_key": "diandian-hero",
+                        "product_name": "点点英雄",
+                        "advertiser_id": "1866125080000001",
+                        "advertiser_name": "点点英雄-账户一",
+                        "channel": "微信",
+                        "owner": "郭靖",
+                        "account_remark": "旧备注",
+                        "status": "active",
+                        "notes": "",
+                    },
+                    {
+                        "product_key": "diandian-hero",
+                        "product_name": "点点英雄",
+                        "advertiser_id": "1866125080000002",
+                        "advertiser_name": "点点英雄-账户二",
+                        "channel": "微信",
+                        "owner": "郭靖",
+                        "account_remark": "旧备注",
+                        "status": "disabled",
+                        "notes": "",
+                    },
+                    {
+                        "product_key": "other",
+                        "product_name": "其他产品",
+                        "advertiser_id": "1866125080000003",
+                        "advertiser_name": "其他产品-账户",
+                        "channel": "微信",
+                        "owner": "郭靖",
+                        "account_remark": "保持",
+                        "status": "active",
+                        "notes": "",
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    client = _client(tmp_path)
+
+    preview = client.post(
+        "/api/accounts/bulk-update/preview",
+        json={
+            "product_key": "diandian-hero",
+            "status": "active",
+            "advertiser_ids_text": "账户 ID\n1866125080000001\n1866125080000002\n1866125080000003\n1866125080000099",
+            "updates": {"account_remark": "点点英雄-微小-郭靖"},
+        },
+    )
+
+    assert preview.status_code == 200
+    preview_payload = preview.json()
+    assert preview_payload["summary"]["status"] == "planned"
+    assert {"label": "粘贴账户", "value": 4} in preview_payload["summary"]["items"]
+    assert {"label": "匹配账户", "value": 1} in preview_payload["summary"]["items"]
+    assert {"label": "未命中账户", "value": 3} in preview_payload["summary"]["items"]
+    assert preview_payload["table"]["rows"][0]["账户 ID"] == "1866125080000001"
+    assert "只会修改当前筛选结果中命中的账户" in preview_payload["summary"]["warnings"][0]
+
+    commit = client.post(
+        "/api/accounts/bulk-update",
+        json={
+            "product_key": "diandian-hero",
+            "status": "active",
+            "advertiser_ids_text": "账户 ID\n1866125080000001\n1866125080000002\n1866125080000003\n1866125080000099",
+            "updates": {"account_remark": "点点英雄-微小-郭靖"},
+        },
+    )
+
+    assert commit.status_code == 200
+    saved = json.loads(store.read_text(encoding="utf-8"))
+    by_id = {row["advertiser_id"]: row for row in saved["accounts"]}
+    assert by_id["1866125080000001"]["account_remark"] == "点点英雄-微小-郭靖"
+    assert by_id["1866125080000002"]["account_remark"] == "旧备注"
+    assert by_id["1866125080000003"]["account_remark"] == "保持"
+
+
 def test_bulk_update_accounts_blocks_empty_updates(tmp_path):
     client = _client(tmp_path)
 

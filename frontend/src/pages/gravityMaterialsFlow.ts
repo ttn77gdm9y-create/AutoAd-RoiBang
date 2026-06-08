@@ -59,7 +59,7 @@ export function buildGravityMaterialFlowState(input: GravityFlowInput): GravityF
   if (eligibleMaterials <= 0) {
     return flowState(2, ["finish", "finish", "process", "wait"], {
       title: "先检查素材为什么不可用",
-      description: "本地已有素材，但暂时没有可用于后续的素材。重点看缺 MD5、禁用、拒审等不可用原因。",
+      description: "本地已有素材，但暂时没有可铺货素材。重点看缺 MD5、禁用、拒审等不可用原因。",
       type: "warning",
     });
   }
@@ -67,7 +67,7 @@ export function buildGravityMaterialFlowState(input: GravityFlowInput): GravityF
   if (selectedMaterials <= 0) {
     return flowState(2, ["finish", "finish", "process", "wait"], {
       title: "选择可用素材",
-      description: "已经有可用素材。请在本地素材库勾选“可用于后续”的素材，再选择目标账户生成推送预览。",
+      description: "已经有可铺货素材。请在本地素材库勾选要推送的素材，再选择目标账户生成推送预览。",
       type: "success",
     });
   }
@@ -93,7 +93,7 @@ function flowState(
   recommendation: GravityFlowState["recommendation"],
 ): GravityFlowState {
   const titles = ["绑定素材来源", "更新引力素材", "查看并选择素材", "生成推送预览"];
-  const descriptions = ["选产品和引力专辑", "只读取资料，不下载文件", "先看全部素材，再勾选可用素材", "真实动作前复核"];
+  const descriptions = ["选产品和引力专辑", "只读取资料，不下载文件", "查看可铺货素材", "真实动作前复核"];
   return {
     currentStep,
     recommendation,

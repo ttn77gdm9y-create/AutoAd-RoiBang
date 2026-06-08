@@ -1,6 +1,7 @@
 import { DeleteOutlined, FileSearchOutlined, PlayCircleOutlined, ReloadOutlined, SaveOutlined, SyncOutlined } from "@ant-design/icons";
 import { Alert, Button, Card, Col, Form, Input, Row, Select, Space, Steps, Table, Tag, Typography, message as antdMessage } from "antd";
 import type { ColumnsType } from "antd/es/table";
+import type { SorterResult } from "antd/es/table/interface";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
@@ -12,6 +13,7 @@ import { SummaryPanel } from "../components/SummaryPanel";
 import { InlineTaskStatus } from "../components/WorkflowScaffold";
 import { EXECUTE_CONFIRMATION_PHRASE } from "../constants/safety";
 import type { ChineseResult, TaskDetailResponse } from "../types/api";
+import { DEFAULT_TABLE_PAGE_SIZE, TABLE_PAGE_SIZE_OPTIONS } from "../utils/tablePagination";
 import { isTaskActive, isTaskCompleted, taskStatus } from "../utils/workflowState";
 import { buildGravityMaterialFlowState } from "./gravityMaterialsFlow";
 import { buildAlbumChoiceGroups, flattenAlbumChoiceGroups, type AlbumChoiceGroup, type AlbumChoiceOption, type TargetAlbumRow } from "./gravityMaterialsOptions";
@@ -69,30 +71,20 @@ const emptyBinding: BindingForm = {
 };
 
 const qualificationStatsConfig = [
-  { label: "素材数", lookup: "素材数" },
-  { label: "可用于后续", lookup: "可用于后续" },
-  { label: "不可用", lookup: "不可用" },
+  { label: "可铺货素材", lookup: "可铺货素材" },
+  { label: "异常/不可铺货", lookup: "不可入库/不可铺货" },
   { label: "缺 MD5", lookup: "缺 MD5" },
-  { label: "已推送", lookup: "已上传" },
-  { label: "未推送", lookup: "未上传" },
-  { label: "有表现数据", lookup: "有表现数据" },
-];
-const materialScopeOptions = [
-  { label: "可用于后续", value: "eligible" },
-  { label: "不可用", value: "ineligible" },
-  { label: "缺 MD5", value: "missing_md5" },
-  { label: "已推送", value: "uploaded" },
-  { label: "未推送", value: "not_uploaded" },
-  { label: "有表现数据", value: "has_performance" },
-  { label: "本地停用", value: "inactive" },
-  { label: "全部素材", value: "" },
+  { label: "已推送", lookup: "已推送" },
+  { label: "未推送", lookup: "未推送" },
+  { label: "启用目标账户", lookup: "启用目标账户" },
 ];
 
 export function GravityMaterialsPage() {
   const queryClient = useQueryClient();
   const [selectedProduct, setSelectedProduct] = useState("");
-  const [statusFilter, setStatusFilter] = useState("");
   const [keyword, setKeyword] = useState("");
+  const [materialPagination, setMaterialPagination] = useState({ current: 1, pageSize: DEFAULT_TABLE_PAGE_SIZE });
+  const [materialSort, setMaterialSort] = useState({ sortBy: "引力创建时间", sortOrder: "descend" });
   const [bindingForm, setBindingForm] = useState<BindingForm>(emptyBinding);
   const [saveResult, setSaveResult] = useState<ChineseResult | undefined>();
   const [deleteResult, setDeleteResult] = useState<ChineseResult | undefined>();
@@ -125,11 +117,17 @@ export function GravityMaterialsPage() {
     queryFn: () => apiGet<ChineseResult>("/accounts?status=active"),
   });
   const materials = useQuery({
-    queryKey: ["gravity-materials", "materials", selectedProduct, statusFilter, keyword],
-    queryFn: () =>
-      apiGet<ChineseResult>(
-        `/gravity-materials/materials?product=${encodeURIComponent(selectedProduct)}&status=${encodeURIComponent(statusFilter)}&keyword=${encodeURIComponent(keyword)}`,
-      ),
+    queryKey: ["gravity-materials", "materials", selectedProduct, keyword, materialPagination.current, materialPagination.pageSize, materialSort],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      params.set("product", selectedProduct);
+      params.set("keyword", keyword);
+      params.set("page", String(materialPagination.current));
+      params.set("page_size", String(materialPagination.pageSize));
+      params.set("sort_by", materialSort.sortBy);
+      params.set("sort_order", materialSort.sortOrder);
+      return apiGet<ChineseResult>(`/gravity-materials/materials?${params.toString()}`);
+    },
   });
   const syncReadiness = useQuery({
     queryKey: ["gravity-materials", "sync-readiness", selectedProduct, authFile],
@@ -156,6 +154,7 @@ export function GravityMaterialsPage() {
     [targetAccountIds, uploadAccountOptions],
   );
   const materialRows = materials.data?.table.rows ?? [];
+  const materialTotal = materialTotalFromResult(materials.data, materialRows.length);
   const syncTaskId = syncRunResult?.task?.task_id ?? "";
   const syncTaskDetail = useQuery({
     queryKey: ["tasks", syncTaskId],
@@ -188,8 +187,8 @@ export function GravityMaterialsPage() {
   const syncTaskCurrentStatus = taskStatus(syncTaskDetail.data, syncRunResult);
   const uploadTaskCurrentStatus = taskStatus(uploadTaskDetail.data, uploadExecuteResult);
   const statusRefreshCurrentStatus = taskStatus(statusRefreshTaskDetail.data, uploadStatusRefreshResult);
-  const totalMaterials = statNumber(qualificationStats.get("素材数"));
-  const eligibleMaterials = statNumber(qualificationStats.get("可用于后续"));
+  const totalMaterials = statNumber(qualificationStats.get("可铺货素材"));
+  const eligibleMaterials = totalMaterials;
   const hasBinding = bindingRows.length > 0;
   const flowState = useMemo(
     () =>
@@ -334,6 +333,7 @@ export function GravityMaterialsPage() {
   function selectProduct(product: string) {
     setSelectedProduct(product);
     setBindingForm((current) => ({ ...current, product }));
+    setMaterialPagination((current) => ({ ...current, current: 1 }));
     setSelectedUploadMaterialIds([]);
     setTargetAccountIds([]);
     setSyncPreviewResult(undefined);
@@ -689,17 +689,23 @@ export function GravityMaterialsPage() {
                     }
                   />
                 ) : null}
+                <Alert
+                  type="info"
+                  showIcon
+                  message="这里只展示可铺货素材：引力状态不是禁用、本地未停用、没有拒审、并且有 MD5。禁用素材不会出现在这张表里。"
+                />
                 <Row gutter={[12, 12]}>
-                  <Col xs={24} md={8}>
-                    <Space direction="vertical" size={4} className="full-width">
-                      <Typography.Text strong>素材范围</Typography.Text>
-                      <Select className="full-width" value={statusFilter} options={materialScopeOptions} onChange={setStatusFilter} />
-                    </Space>
-                  </Col>
                   <Col xs={24} md={16}>
                     <Space direction="vertical" size={4} className="full-width">
                       <Typography.Text strong>搜索素材</Typography.Text>
-                      <Input.Search value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索素材名 / 引力素材 ID / MD5" />
+                      <Input.Search
+                        value={keyword}
+                        onChange={(event) => {
+                          setKeyword(event.target.value);
+                          setMaterialPagination((current) => ({ ...current, current: 1 }));
+                        }}
+                        placeholder="搜索素材名 / 引力素材 ID / MD5"
+                      />
                     </Space>
                   </Col>
                 </Row>
@@ -723,7 +729,27 @@ export function GravityMaterialsPage() {
                     }),
                   }}
                   scroll={{ x: "max-content" }}
-                  pagination={{ pageSize: 20, showSizeChanger: true }}
+                  pagination={{
+                    current: materialPagination.current,
+                    pageSize: materialPagination.pageSize,
+                    total: materialTotal,
+                    showSizeChanger: true,
+                    pageSizeOptions: TABLE_PAGE_SIZE_OPTIONS,
+                    showTotal: (total) => `可铺货素材 ${total} 条`,
+                  }}
+                  onChange={(pagination, _filters, sorter) => {
+                    setMaterialPagination({
+                      current: pagination.current ?? 1,
+                      pageSize: pagination.pageSize ?? DEFAULT_TABLE_PAGE_SIZE,
+                    });
+                    const currentSorter = (Array.isArray(sorter) ? sorter[0] : sorter) as SorterResult<MaterialRow>;
+                    if (currentSorter?.order) {
+                      setMaterialSort({
+                        sortBy: String(currentSorter.field ?? currentSorter.columnKey ?? "引力创建时间"),
+                        sortOrder: currentSorter.order,
+                      });
+                    }
+                  }}
                 />
               </Space>
             </Card>
@@ -988,7 +1014,7 @@ function targetAlbumStatusColor(value: unknown): string {
 }
 
 function canSelectUploadMaterial(row: MaterialRow): boolean {
-  return Boolean(String(row["引力素材 ID"] ?? "").trim()) && String(row["资格状态"] ?? "") === "可用于后续";
+  return Boolean(String(row["引力素材 ID"] ?? "").trim()) && Boolean(String(row["MD5"] ?? "").trim());
 }
 
 function gravityTaskIdsFromResult(result?: ChineseResult): string[] {
@@ -1016,73 +1042,28 @@ function statNumber(value: string | number | boolean | null | undefined): number
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function materialTotalFromResult(result: ChineseResult | undefined, fallback: number): number {
+  const total = Number((result?.raw?.pagination as { total?: unknown } | undefined)?.total ?? fallback);
+  return Number.isFinite(total) ? total : fallback;
+}
+
 function materialColumns(): ColumnsType<MaterialRow> {
   return [
-    { title: "产品", dataIndex: "产品", width: 120 },
-    { title: "专辑", dataIndex: "专辑", width: 140 },
-    { title: "文件夹", dataIndex: "文件夹", width: 140 },
-    { title: "素材名", dataIndex: "素材名", width: 180, ellipsis: true },
-    { title: "引力素材 ID", dataIndex: "引力素材 ID", width: 160, ellipsis: true },
-    { title: "MD5", dataIndex: "MD5", width: 180, ellipsis: true, render: renderEmpty },
-    {
-      title: "状态",
-      dataIndex: "状态",
-      width: 88,
-      render: (value) => <Tag color={materialStatusColor(value)}>{String(value || "未知")}</Tag>,
-    },
-    {
-      title: "资格状态",
-      dataIndex: "资格状态",
-      width: 118,
-      render: (value) => <Tag color={String(value) === "可用于后续" ? "green" : "orange"}>{String(value || "未知")}</Tag>,
-    },
-    {
-      title: "不可用原因",
-      dataIndex: "不可用原因",
-      width: 180,
-      ellipsis: true,
-      render: (value) => (value ? <Typography.Text type="danger">{String(value)}</Typography.Text> : <Typography.Text type="secondary">-</Typography.Text>),
-    },
-    {
-      title: "推送状态",
-      dataIndex: "上传状态",
-      width: 106,
-      render: (value) => <Tag color={String(value) === "已上传" ? "blue" : "default"}>{renderPushStatus(value)}</Tag>,
-    },
-    { title: "媒体素材 ID", dataIndex: "媒体素材 ID", width: 150, ellipsis: true, render: renderEmpty },
-    { title: "消耗", dataIndex: "消耗", width: 92 },
-    { title: "展示", dataIndex: "展示", width: 92 },
-    { title: "点击", dataIndex: "点击", width: 92 },
-    { title: "转化", dataIndex: "转化", width: 92 },
-    { title: "同步时间", dataIndex: "同步时间", width: 180 },
+    { title: "专辑", dataIndex: "专辑", width: 180, sorter: true },
+    { title: "素材名", dataIndex: "素材名", width: 260, ellipsis: true, sorter: true },
+    { title: "7天消耗", dataIndex: "7天消耗", width: 112, sorter: true, render: renderEmpty },
+    { title: "7天转化", dataIndex: "7天转化", width: 112, sorter: true, render: renderEmpty },
+    { title: "30天消耗", dataIndex: "30天消耗", width: 120, sorter: true, render: renderEmpty },
+    { title: "30天转化", dataIndex: "30天转化", width: 120, sorter: true, render: renderEmpty },
+    { title: "引力素材 ID", dataIndex: "引力素材 ID", width: 160, ellipsis: true, sorter: true },
+    { title: "MD5", dataIndex: "MD5", width: 180, ellipsis: true, sorter: true, render: renderEmpty },
+    { title: "引力创建时间", dataIndex: "引力创建时间", width: 190, sorter: true, render: renderEmpty },
+    { title: "最近同步时间", dataIndex: "最近同步时间", width: 190, sorter: true, render: renderEmpty },
+    { title: "推送覆盖情况", dataIndex: "推送覆盖情况", width: 170, render: renderEmpty },
+    { title: "文件夹", dataIndex: "文件夹", width: 160, ellipsis: true, sorter: true, render: renderEmpty },
   ];
 }
 
-function renderPushStatus(value: unknown): string {
-  const text = String(value || "");
-  if (text === "已上传") {
-    return "已推送";
-  }
-  if (text === "未上传" || !text) {
-    return "未推送";
-  }
-  return text;
-}
-
 function renderEmpty(value: unknown) {
-  return value ? String(value) : <Typography.Text type="secondary">-</Typography.Text>;
-}
-
-function materialStatusColor(value: unknown): string {
-  const text = String(value || "");
-  if (text === "可用" || text === "1") {
-    return "green";
-  }
-  if (text.includes("拒审") || text.includes("不通过")) {
-    return "red";
-  }
-  if (text === "禁用" || text === "停用" || text === "2") {
-    return "orange";
-  }
-  return "default";
+  return value === undefined || value === null || value === "" ? <Typography.Text type="secondary">-</Typography.Text> : String(value);
 }

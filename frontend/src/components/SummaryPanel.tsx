@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 
 import type { ChineseResult } from "../types/api";
+import { DEFAULT_TABLE_PAGE_SIZE, TABLE_PAGE_SIZE_OPTIONS } from "../utils/tablePagination";
 import { RawJsonDrawer } from "./RawJsonDrawer";
 
 type SummaryRow = ChineseResult["table"]["rows"][number];
@@ -102,7 +103,7 @@ function compareSortableValues(left: SummaryRow[string], right: SummaryRow[strin
 }
 
 function PagedSummaryTable({ columns, dataSource, loading = false, rowClassName = "", onRow }: PagedSummaryTableProps) {
-  const [pagination, setPagination] = useState({ current: 1, pageSize: 20 });
+  const [pagination, setPagination] = useState({ current: 1, pageSize: DEFAULT_TABLE_PAGE_SIZE });
 
   useEffect(() => {
     setPagination((current) => {
@@ -120,7 +121,7 @@ function PagedSummaryTable({ columns, dataSource, loading = false, rowClassName 
       pagination={{
         ...pagination,
         showSizeChanger: true,
-        pageSizeOptions: ["10", "20", "50", "100"],
+        pageSizeOptions: TABLE_PAGE_SIZE_OPTIONS,
         onChange: (current, pageSize) => setPagination({ current, pageSize }),
         onShowSizeChange: (_current, pageSize) => setPagination({ current: 1, pageSize }),
       }}

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 import sys
 from pathlib import Path
 from typing import Any
 
+from backend.app.services.accounts_store import load_accounts
 from backend.app.services.artifacts import find_latest_artifact
 from backend.app.services.artifacts import read_json
 from roibang_v2.ui.background_tasks import build_runner_command
@@ -250,14 +252,24 @@ def list_gravity_materials(
     status: str = "",
     keyword: str = "",
     limit: int = 100,
+    page: int = 1,
+    page_size: int = 100,
+    sort_by: str = "",
+    sort_order: str = "",
 ) -> dict[str, Any]:
-    db_path = database_path(project_root)
+    root = Path(project_root)
+    db_path = database_path(root)
     bootstrap_database(db_path)
-    summary_rows = _material_rows(db_path, product=product, status="", keyword=keyword, limit=500)
-    rows = _material_rows(db_path, product=product, status=status, keyword=keyword, limit=limit)
-    counts = qualification_summary(summary_rows)
-    latest_sync = _latest_sync(project_root)
-    latest_qualification = _latest_qualification(project_root)
+    all_rows = _material_rows(db_path, product=product, keyword=keyword)
+    counts = qualification_summary(all_rows)
+    usable_rows = _visible_material_rows(all_rows, status=status)
+    sorted_rows = _sort_material_rows(usable_rows, sort_by=sort_by, sort_order=sort_order)
+    pagination = _pagination(page=page, page_size=page_size, total=len(sorted_rows), fallback_limit=limit)
+    rows = sorted_rows[pagination["offset"] : pagination["offset"] + pagination["page_size"]]
+    active_account_ids = _active_account_ids(root, product=product)
+    coverage = _push_coverage(db_path, product=product, active_account_ids=active_account_ids)
+    latest_sync = _latest_sync(root)
+    latest_qualification = _latest_qualification(root)
     return {
         "summary": {
             "title": "引力素材库",
@@ -265,13 +277,13 @@ def list_gravity_materials(
             "risk_level": "low",
             "execution_enabled": False,
             "items": [
-                {"label": "素材数", "value": len(summary_rows)},
-                {"label": "可用于后续", "value": counts["eligible_count"]},
-                {"label": "不可用", "value": counts["ineligible_count"]},
+                {"label": "素材数", "value": counts["material_count"]},
+                {"label": "可铺货素材", "value": counts["eligible_count"]},
+                {"label": "不可入库/不可铺货", "value": counts["ineligible_count"]},
                 {"label": "缺 MD5", "value": counts["missing_md5_count"]},
-                {"label": "已上传", "value": counts["uploaded_count"]},
-                {"label": "未上传", "value": counts["not_uploaded_count"]},
-                {"label": "有表现数据", "value": counts["has_performance_count"]},
+                {"label": "已推送", "value": counts["uploaded_count"]},
+                {"label": "未推送", "value": counts["not_uploaded_count"]},
+                {"label": "启用目标账户", "value": len(active_account_ids)},
                 {"label": "最近同步", "value": latest_sync.get("status_label") or "暂无"},
                 {"label": "最近资格汇总", "value": latest_qualification.get("status_label") or "暂无"},
             ],
@@ -280,41 +292,33 @@ def list_gravity_materials(
         },
         "table": {
             "columns": [
-                "产品",
                 "专辑",
-                "文件夹",
                 "素材名",
+                "7天消耗",
+                "7天转化",
+                "30天消耗",
+                "30天转化",
                 "引力素材 ID",
                 "MD5",
-                "状态",
-                "资格状态",
-                "不可用原因",
-                "上传状态",
-                "媒体素材 ID",
-                "消耗",
-                "展示",
-                "点击",
-                "转化",
-                "同步时间",
+                "引力创建时间",
+                "最近同步时间",
+                "推送覆盖情况",
+                "文件夹",
             ],
             "rows": [
                 {
-                    "产品": item["product"],
                     "专辑": item["album_name"],
-                    "文件夹": item["folder_name"],
                     "素材名": item["name"],
+                    "7天消耗": _metric_value(item.get("stat_cost_7d"), item.get("has_7d")),
+                    "7天转化": _metric_value(item.get("convert_cnt_7d"), item.get("has_7d")),
+                    "30天消耗": _metric_value(item.get("stat_cost_30d"), item.get("has_30d")),
+                    "30天转化": _metric_value(item.get("convert_cnt_30d"), item.get("has_30d")),
                     "引力素材 ID": item["material_id"],
                     "MD5": item["signature"],
-                    "状态": item["review_status"],
-                    "资格状态": item["qualification_status"],
-                    "不可用原因": item["qualification_reason"],
-                    "上传状态": item["upload_status"],
-                    "媒体素材 ID": item["video_id"],
-                    "消耗": item["stat_cost"],
-                    "展示": item["show_cnt"],
-                    "点击": item["click_cnt"],
-                    "转化": item["convert_cnt"],
-                    "同步时间": item["synced_at"],
+                    "引力创建时间": item["create_time"],
+                    "最近同步时间": item["synced_at"],
+                    "推送覆盖情况": _coverage_label(coverage.get(item["material_id"], 0), len(active_account_ids)),
+                    "文件夹": item["folder_name"],
                 }
                 for item in rows
             ],
@@ -348,7 +352,20 @@ def list_gravity_materials(
             },
         ],
         "artifact_path": "",
-        "raw": {"materials": rows, "qualification_summary": counts, "latest_sync": latest_sync, "latest_qualification": latest_qualification},
+        "raw": {
+            "materials": rows,
+            "qualification_summary": counts,
+            "latest_sync": latest_sync,
+            "latest_qualification": latest_qualification,
+            "pagination": {
+                "page": pagination["page"],
+                "page_size": pagination["page_size"],
+                "total": len(sorted_rows),
+                "total_pages": pagination["total_pages"],
+            },
+            "visible_scope": "可铺货素材",
+            "active_target_account_count": len(active_account_ids),
+        },
     }
 
 
@@ -636,24 +653,16 @@ def _sync_next_action(*, bindings: list[dict[str, Any]], status: str, blocking_r
     }
 
 
-def _material_rows(db_path: Path, *, product: str, status: str, keyword: str, limit: int) -> list[dict[str, Any]]:
-    normalized_limit = max(1, min(500, int(limit or 100)))
-    qualification_filters = {"eligible", "ineligible", "missing_md5", "uploaded", "not_uploaded", "has_performance"}
-    sql_limit = 500 if status in qualification_filters else normalized_limit
+def _material_rows(db_path: Path, *, product: str, keyword: str) -> list[dict[str, Any]]:
     clauses = ["psm.source = 'gravity_engine'"]
     params: list[Any] = []
     if product:
         clauses.append("psm.product = ?")
         params.append(product)
-    if status == "active":
-        clauses.append("psm.is_active = 1")
-    elif status == "inactive":
-        clauses.append("psm.is_active = 0")
     if keyword:
         clauses.append("(psm.name LIKE ? OR psm.material_id LIKE ? OR psm.signature LIKE ?)")
         like = f"%{keyword}%"
         params.extend([like, like, like])
-    params.append(sql_limit)
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
@@ -661,11 +670,17 @@ def _material_rows(db_path: Path, *, product: str, status: str, keyword: str, li
             SELECT
               psm.product, psm.source_advertiser_id, psm.organization_id,
               psm.material_id, psm.video_id, psm.name, psm.review_status, psm.signature,
-              psm.is_active, psm.synced_at, psm.payload_json,
+              psm.is_active, psm.create_time, psm.synced_at, psm.payload_json,
               COALESCE(MAX(psmr.stat_cost), psm.cost_lookback, 0) AS stat_cost,
               COALESCE(MAX(psmr.show_cnt), 0) AS show_cnt,
               COALESCE(MAX(psmr.click_cnt), 0) AS click_cnt,
-              COALESCE(MAX(psmr.convert_cnt), 0) AS convert_cnt
+              COALESCE(MAX(psmr.convert_cnt), 0) AS convert_cnt,
+              MAX(CASE WHEN psmr.window_days = 7 THEN 1 ELSE 0 END) AS has_7d,
+              MAX(CASE WHEN psmr.window_days = 7 THEN psmr.stat_cost END) AS stat_cost_7d,
+              MAX(CASE WHEN psmr.window_days = 7 THEN psmr.convert_cnt END) AS convert_cnt_7d,
+              MAX(CASE WHEN psmr.window_days = 30 THEN 1 ELSE 0 END) AS has_30d,
+              MAX(CASE WHEN psmr.window_days = 30 THEN psmr.stat_cost END) AS stat_cost_30d,
+              MAX(CASE WHEN psmr.window_days = 30 THEN psmr.convert_cnt END) AS convert_cnt_30d
             FROM product_source_materials psm
             LEFT JOIN product_source_material_metric_rollups psmr
               ON psmr.product = psm.product
@@ -675,15 +690,12 @@ def _material_rows(db_path: Path, *, product: str, status: str, keyword: str, li
             GROUP BY
               psm.product, psm.source_advertiser_id, psm.organization_id,
               psm.material_id, psm.video_id, psm.name, psm.review_status, psm.signature,
-              psm.is_active, psm.synced_at, psm.payload_json, psm.cost_lookback
+              psm.is_active, psm.create_time, psm.synced_at, psm.payload_json, psm.cost_lookback
             ORDER BY psm.is_active DESC, stat_cost DESC, psm.synced_at DESC, psm.material_id ASC
-            LIMIT ?
             """,
             tuple(params),
         ).fetchall()
-    hydrated_rows = [_material_payload(dict(row)) for row in rows]
-    filtered_rows = [row for row in hydrated_rows if matches_qualification_filter(row, status)]
-    return filtered_rows[:normalized_limit]
+    return [_material_payload(dict(row)) for row in rows]
 
 
 def _material_payload(row: dict[str, Any]) -> dict[str, Any]:
@@ -699,8 +711,134 @@ def _material_payload(row: dict[str, Any]) -> dict[str, Any]:
         "show_cnt": float(row.get("show_cnt") or 0),
         "click_cnt": float(row.get("click_cnt") or 0),
         "convert_cnt": float(row.get("convert_cnt") or 0),
+        "has_7d": bool(row.get("has_7d")),
+        "stat_cost_7d": row.get("stat_cost_7d"),
+        "convert_cnt_7d": row.get("convert_cnt_7d"),
+        "has_30d": bool(row.get("has_30d")),
+        "stat_cost_30d": row.get("stat_cost_30d"),
+        "convert_cnt_30d": row.get("convert_cnt_30d"),
         **qualify_gravity_material({**row, "gravity_status": _text(payload.get("status"))}),
     }
+
+
+def _visible_material_rows(rows: list[dict[str, Any]], *, status: str) -> list[dict[str, Any]]:
+    status_text = _text(status)
+    if status_text:
+        return [row for row in rows if matches_qualification_filter(row, status_text)]
+    return [row for row in rows if bool(row.get("is_eligible_for_next_step"))]
+
+
+def _sort_material_rows(rows: list[dict[str, Any]], *, sort_by: str, sort_order: str) -> list[dict[str, Any]]:
+    key = _text(sort_by) or "引力创建时间"
+    reverse = _text(sort_order) != "ascend"
+    return sorted(
+        rows,
+        key=lambda row: (
+            _material_sort_value(row, key),
+            _text(row.get("synced_at")),
+            _text(row.get("material_id")),
+        ),
+        reverse=reverse,
+    )
+
+
+def _material_sort_value(row: dict[str, Any], key: str) -> Any:
+    if key == "专辑":
+        return _text(row.get("album_name"))
+    if key == "素材名":
+        return _text(row.get("name"))
+    if key == "文件夹":
+        return _text(row.get("folder_name"))
+    if key == "引力素材 ID":
+        return _text(row.get("material_id"))
+    if key == "MD5":
+        return _text(row.get("signature"))
+    if key == "最近同步时间":
+        return _text(row.get("synced_at"))
+    if key == "7天消耗":
+        return _metric_sort_number(row.get("stat_cost_7d"), row.get("has_7d"))
+    if key == "7天转化":
+        return _metric_sort_number(row.get("convert_cnt_7d"), row.get("has_7d"))
+    if key == "30天消耗":
+        return _metric_sort_number(row.get("stat_cost_30d"), row.get("has_30d"))
+    if key == "30天转化":
+        return _metric_sort_number(row.get("convert_cnt_30d"), row.get("has_30d"))
+    return _text(row.get("create_time"))
+
+
+def _metric_sort_number(value: Any, has_metric: Any) -> float:
+    if not has_metric:
+        return -1
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return -1
+
+
+def _metric_value(value: Any, has_metric: Any) -> float | int | str:
+    if not has_metric:
+        return "-"
+    try:
+        number = float(value or 0)
+    except (TypeError, ValueError):
+        return "-"
+    return int(number) if number.is_integer() else round(number, 2)
+
+
+def _pagination(*, page: int, page_size: int, total: int, fallback_limit: int) -> dict[str, int]:
+    normalized_page_size = int(page_size or fallback_limit or 100)
+    normalized_page_size = max(1, min(100, normalized_page_size))
+    normalized_page = max(1, int(page or 1))
+    total_pages = max(1, math.ceil(total / normalized_page_size))
+    normalized_page = min(normalized_page, total_pages)
+    return {
+        "page": normalized_page,
+        "page_size": normalized_page_size,
+        "offset": (normalized_page - 1) * normalized_page_size,
+        "total_pages": total_pages,
+    }
+
+
+def _active_account_ids(project_root: Path, *, product: str) -> list[str]:
+    normalized_product = _text(product)
+    accounts = load_accounts(project_root / "configs")
+    rows = []
+    for account in accounts:
+        if account.get("status") != "active":
+            continue
+        if normalized_product and account.get("product_name") != normalized_product and account.get("product_key") != normalized_product:
+            continue
+        rows.append(account["advertiser_id"])
+    return sorted({account_id for account_id in rows if account_id})
+
+
+def _push_coverage(db_path: Path, *, product: str, active_account_ids: list[str]) -> dict[str, int]:
+    if not active_account_ids:
+        return {}
+    clauses = ["status = 'completed'"]
+    params: list[Any] = []
+    if product:
+        clauses.append("product = ?")
+        params.append(product)
+    placeholders = ", ".join("?" for _ in active_account_ids)
+    clauses.append(f"target_advertiser_id IN ({placeholders})")
+    params.extend(active_account_ids)
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            f"""
+            SELECT gravity_material_id, COUNT(DISTINCT target_advertiser_id) AS completed_accounts
+            FROM gravity_upload_tasks
+            WHERE {" AND ".join(clauses)}
+            GROUP BY gravity_material_id
+            """,
+            tuple(params),
+        ).fetchall()
+    return {str(row["gravity_material_id"]): int(row["completed_accounts"] or 0) for row in rows}
+
+
+def _coverage_label(completed: int, total: int) -> str:
+    return f"已推送 {completed}/{total} 个账户"
 
 
 def _latest_sync(project_root: str | Path) -> dict[str, Any]:

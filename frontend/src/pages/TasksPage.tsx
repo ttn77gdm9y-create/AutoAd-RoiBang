@@ -6,11 +6,13 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { apiGet } from "../api/client";
 import { SummaryPanel } from "../components/SummaryPanel";
 import type { TaskDetailResponse, TaskListResponse, TaskRow } from "../types/api";
+import { DEFAULT_TABLE_PAGE_SIZE, TABLE_PAGE_SIZE_OPTIONS } from "../utils/tablePagination";
 
 export function TasksPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [taskId, setTaskId] = useState<string | null>(searchParams.get("task_id"));
+  const [tasksPagination, setTasksPagination] = useState({ current: 1, pageSize: DEFAULT_TABLE_PAGE_SIZE });
   const returnTo = searchParams.get("return_to") ?? "";
   useEffect(() => {
     const nextTaskId = searchParams.get("task_id");
@@ -84,6 +86,14 @@ export function TasksPage() {
         ]}
         size="small"
         scroll={{ x: "max-content" }}
+        pagination={{
+          current: tasksPagination.current,
+          pageSize: tasksPagination.pageSize,
+          showSizeChanger: true,
+          pageSizeOptions: TABLE_PAGE_SIZE_OPTIONS,
+          onChange: (current, pageSize) => setTasksPagination({ current, pageSize }),
+          onShowSizeChange: (_current, pageSize) => setTasksPagination({ current: 1, pageSize }),
+        }}
       />
       <Drawer title={businessDetail?.summary.title ?? taskId ?? "任务详情"} open={Boolean(taskId)} width={860} onClose={() => selectTaskId(null)}>
         {detail.error ? <Alert type="error" showIcon message={(detail.error as Error).message} /> : null}

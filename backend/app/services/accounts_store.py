@@ -4,6 +4,7 @@ import csv
 import hashlib
 import io
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -123,6 +124,16 @@ def parse_paste_text(text: str) -> list[dict[str, str]]:
     delimiter = "\t" if "\t" in lines[0] else ","
     reader = csv.DictReader(lines, delimiter=delimiter)
     return [_normalize_account(row) for row in reader]
+
+
+def parse_account_ids_text(text: str) -> list[str]:
+    output: list[str] = []
+    seen: set[str] = set()
+    for account_id in re.findall(r"\d{6,}", str(text or "")):
+        if account_id not in seen:
+            seen.add(account_id)
+            output.append(account_id)
+    return output
 
 
 def parse_csv_bytes(content: bytes) -> list[dict[str, str]]:
@@ -266,8 +277,15 @@ def bulk_update_accounts(
     filters: dict[str, str],
     updates: dict[str, str],
     advertiser_ids: list[str] | None = None,
+    advertiser_ids_text: str = "",
 ) -> dict[str, Any]:
-    preview = preview_bulk_update_accounts(configs_dir, filters=filters, updates=updates, advertiser_ids=advertiser_ids)
+    preview = preview_bulk_update_accounts(
+        configs_dir,
+        filters=filters,
+        updates=updates,
+        advertiser_ids=advertiser_ids,
+        advertiser_ids_text=advertiser_ids_text,
+    )
     if preview["summary"]["status"] == "blocked":
         return preview
     updated_accounts = preview.get("raw", {}).get("updated_accounts")
@@ -288,6 +306,7 @@ def preview_bulk_update_accounts(
     filters: dict[str, str],
     updates: dict[str, str],
     advertiser_ids: list[str] | None = None,
+    advertiser_ids_text: str = "",
 ) -> dict[str, Any]:
     unsupported_fields = sorted(set(updates) - set(BULK_UPDATE_FIELDS))
     if unsupported_fields:
@@ -312,16 +331,26 @@ def preview_bulk_update_accounts(
         return _bulk_update_blocked(filters, ["状态必须是 active、paused 或 disabled"])
 
     accounts = load_accounts(configs_dir)
+    pasted_ids = parse_account_ids_text(advertiser_ids_text)
+    selected_ids = _unique_texts([*(advertiser_ids or []), *pasted_ids])
+    filter_scope = filter_accounts(
+        accounts,
+        product_key=str(filters.get("product_key") or "").strip(),
+        channel=_normalize_channel(str(filters.get("channel") or "").strip()),
+        owner=str(filters.get("owner") or "").strip(),
+        status=str(filters.get("status") or "").strip(),
+    )
     matched = filter_accounts(
         accounts,
         product_key=str(filters.get("product_key") or "").strip(),
         channel=_normalize_channel(str(filters.get("channel") or "").strip()),
         owner=str(filters.get("owner") or "").strip(),
         status=str(filters.get("status") or "").strip(),
-        advertiser_ids=advertiser_ids,
+        advertiser_ids=selected_ids,
     )
     if not matched:
-        return _bulk_update_blocked(filters, ["当前筛选条件没有命中任何账户"])
+        reason = "粘贴账户 ID 没有命中当前筛选结果中的账户" if selected_ids else "当前筛选条件没有命中任何账户"
+        return _bulk_update_blocked(filters, [reason])
 
     matched_ids = {row["advertiser_id"] for row in matched}
     updated_accounts = []
@@ -337,6 +366,18 @@ def preview_bulk_update_accounts(
             updated_accounts.append(account)
 
     changed_labels = "、".join(BULK_UPDATE_FIELDS[field] for field in normalized_updates)
+    store_ids = {account["advertiser_id"] for account in accounts}
+    filter_scope_ids = {account["advertiser_id"] for account in filter_scope}
+    unmatched_selected_ids = [account_id for account_id in selected_ids if account_id not in matched_ids]
+    missing_store_ids = [account_id for account_id in selected_ids if account_id not in store_ids]
+    outside_filter_ids = [
+        account_id
+        for account_id in selected_ids
+        if account_id in store_ids and account_id not in filter_scope_ids
+    ]
+    warnings = ["这里只预览批量修改结果；点击确认写入后才会修改产品账户库。"]
+    if selected_ids:
+        warnings.insert(0, "只会修改当前筛选结果中命中的账户；粘贴 ID 里不属于当前筛选的账户不会被修改。")
     return {
         "summary": {
             "title": "账户批量修改预览",
@@ -350,9 +391,11 @@ def preview_bulk_update_accounts(
                 {"label": "渠道筛选", "value": str(filters.get("channel") or "全部")},
                 {"label": "负责人筛选", "value": str(filters.get("owner") or "全部")},
                 {"label": "状态筛选", "value": str(filters.get("status") or "全部")},
-                {"label": "选中账户", "value": len({str(item or '').strip() for item in (advertiser_ids or []) if str(item or '').strip()}) or "未指定"},
+                {"label": "选中账户", "value": len(_unique_texts(advertiser_ids or [])) or "未指定"},
+                {"label": "粘贴账户", "value": len(pasted_ids) or "未指定"},
+                {"label": "未命中账户", "value": len(unmatched_selected_ids) if selected_ids else 0},
             ],
-            "warnings": ["这里只预览批量修改结果；点击确认写入后才会修改产品账户库。"],
+            "warnings": warnings,
             "blocking_reasons": [],
         },
         "table": {"columns": _table_columns(), "rows": updated_rows},
@@ -361,6 +404,11 @@ def preview_bulk_update_accounts(
             "filters": filters,
             "updates": normalized_updates,
             "matched_count": len(updated_rows),
+            "pasted_account_ids": pasted_ids,
+            "target_account_ids": selected_ids,
+            "unmatched_account_ids": unmatched_selected_ids,
+            "missing_store_account_ids": missing_store_ids,
+            "outside_filter_account_ids": outside_filter_ids,
             "updated_accounts": updated_accounts,
         },
     }
@@ -504,6 +552,17 @@ def _canonical_account_field(value: Any) -> str:
     if not text:
         return ""
     return ACCOUNT_FIELD_ALIASES.get(text, text if text in ACCOUNT_FIELDS else "")
+
+
+def _unique_texts(values: list[str] | tuple[str, ...]) -> list[str]:
+    output: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value or "").strip()
+        if text and text not in seen:
+            seen.add(text)
+            output.append(text)
+    return output
 
 
 def _bulk_update_blocked(filters: dict[str, str], reasons: list[str]) -> dict[str, Any]:

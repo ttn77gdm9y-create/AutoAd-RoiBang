@@ -90,10 +90,16 @@ test("keeps the gravity material update prompt inside the gravity materials page
   assert.match(source, /正在更新引力素材/);
 });
 
-test("renders numbered business sections and defaults the material list to all materials", () => {
+test("renders numbered business sections and only shows usable local materials", () => {
   const source = readFileSync(new URL("../src/pages/GravityMaterialsPage.tsx", import.meta.url), "utf-8");
 
-  assert.match(source, /const \[statusFilter, setStatusFilter\] = useState\(""\)/);
+  assert.doesNotMatch(source, /statusFilter/);
+  assert.doesNotMatch(source, /materialScopeOptions/);
+  assert.doesNotMatch(source, /素材范围/);
+  assert.doesNotMatch(source, /可用于后续/);
+  assert.doesNotMatch(source, /有表现数据/);
+  assert.match(source, /DEFAULT_TABLE_PAGE_SIZE/);
+  assert.match(source, /TABLE_PAGE_SIZE_OPTIONS/);
   assert.match(source, /stepTitle\("1", "绑定素材来源"/);
   assert.match(source, /stepTitle\("2", gravityMaterialSyncCopy.title/);
   assert.match(source, /stepTitle\("3", "本地素材库"/);
