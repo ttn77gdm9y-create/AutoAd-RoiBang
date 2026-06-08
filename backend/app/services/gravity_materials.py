@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from backend.app.services.accounts_store import account_source_label
 from backend.app.services.accounts_store import load_accounts
 from backend.app.services.artifacts import find_latest_artifact
 from backend.app.services.artifacts import read_json
@@ -27,6 +28,8 @@ from roibang_v2.materials.gravity_qualification import matches_qualification_fil
 from roibang_v2.materials.gravity_qualification import qualification_summary
 from roibang_v2.materials.gravity_qualification import qualify_gravity_material
 from roibang_v2.workflows.gravity_upload_to_account import build_gravity_upload_preview
+
+GRAVITY_PRELOAD_TARGET_OWNER = "郭靖"
 
 
 def database_path(project_root: str | Path) -> Path:
@@ -283,7 +286,7 @@ def list_gravity_materials(
                 {"label": "缺 MD5", "value": counts["missing_md5_count"]},
                 {"label": "已推送", "value": counts["uploaded_count"]},
                 {"label": "未推送", "value": counts["not_uploaded_count"]},
-                {"label": "启用目标账户", "value": len(active_account_ids)},
+                {"label": "郭靖启用目标账户", "value": len(active_account_ids)},
                 {"label": "最近同步", "value": latest_sync.get("status_label") or "暂无"},
                 {"label": "最近资格汇总", "value": latest_qualification.get("status_label") or "暂无"},
             ],
@@ -364,6 +367,7 @@ def list_gravity_materials(
                 "total_pages": pagination["total_pages"],
             },
             "visible_scope": "可铺货素材",
+            "target_owner": GRAVITY_PRELOAD_TARGET_OWNER,
             "active_target_account_count": len(active_account_ids),
         },
     }
@@ -421,6 +425,32 @@ def build_gravity_upload_preview_result(*, project_root: str | Path, body: dict[
     db_path = database_path(root)
     bootstrap_database(db_path)
     return build_gravity_upload_preview(body, db_path=db_path, runs_dir=root / "data" / "runs")
+
+
+def build_gravity_preload_preview_result(*, project_root: str | Path, body: dict[str, Any]) -> dict[str, Any]:
+    root = Path(project_root)
+    db_path = database_path(root)
+    bootstrap_database(db_path)
+    product = _text(body.get("product"))
+    active_accounts = _active_accounts(root, product=product)
+    all_rows = _material_rows(db_path, product=product, keyword="")
+    usable_materials = _visible_material_rows(all_rows, status="")
+    request = {
+        "product": product,
+        "target_accounts": [
+            {
+                "advertiser_id": account["advertiser_id"],
+                "account_name": account["advertiser_name"],
+                "account_source": account_source_label(account),
+            }
+            for account in active_accounts
+        ],
+        "material_ids": [row["material_id"] for row in usable_materials],
+        "batch_size": body.get("batch_size") or 50,
+        "preview_mode": "preload",
+        "target_owner": GRAVITY_PRELOAD_TARGET_OWNER,
+    }
+    return build_gravity_upload_preview(request, db_path=db_path, runs_dir=root / "data" / "runs")
 
 
 def start_gravity_upload_task(*, project_root: str | Path, body: dict[str, Any]) -> dict[str, Any]:
@@ -800,6 +830,10 @@ def _pagination(*, page: int, page_size: int, total: int, fallback_limit: int) -
 
 
 def _active_account_ids(project_root: Path, *, product: str) -> list[str]:
+    return sorted({account["advertiser_id"] for account in _active_accounts(project_root, product=product) if account.get("advertiser_id")})
+
+
+def _active_accounts(project_root: Path, *, product: str) -> list[dict[str, str]]:
     normalized_product = _text(product)
     accounts = load_accounts(project_root / "configs")
     rows = []
@@ -808,8 +842,10 @@ def _active_account_ids(project_root: Path, *, product: str) -> list[str]:
             continue
         if normalized_product and account.get("product_name") != normalized_product and account.get("product_key") != normalized_product:
             continue
-        rows.append(account["advertiser_id"])
-    return sorted({account_id for account_id in rows if account_id})
+        if account.get("owner") != GRAVITY_PRELOAD_TARGET_OWNER:
+            continue
+        rows.append(account)
+    return sorted(rows, key=lambda row: (row.get("advertiser_name", ""), row.get("advertiser_id", "")))
 
 
 def _push_coverage(db_path: Path, *, product: str, active_account_ids: list[str]) -> dict[str, int]:

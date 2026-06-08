@@ -538,8 +538,8 @@ export function CreatePlansPage() {
                       <Alert
                         type="info"
                         showIcon
-                        message="只使用已经上传完成并回填媒体素材 ID 的引力素材；这里不会上传素材。"
-                        description="如果目标账户还没有完成上传的引力素材，系统会阻止生成创建计划。"
+                        message="只使用已经提前铺货完成、并回填媒体素材 ID 的引力素材；这里不会上传素材。"
+                        description="如果目标账户还没有铺货完成，先到引力素材库第 4 步生成提前铺货预览并确认执行；系统不会在创建计划时临时上传。"
                       />
                     ) : (
                       <Typography.Text type="secondary">继续使用产品配置里的源素材账户素材池。</Typography.Text>

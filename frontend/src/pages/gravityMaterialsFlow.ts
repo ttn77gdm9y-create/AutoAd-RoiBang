@@ -28,8 +28,6 @@ export function buildGravityMaterialFlowState(input: GravityFlowInput): GravityF
   const bindingCount = Math.max(0, Number(input.bindingCount || 0));
   const totalMaterials = Math.max(0, Number(input.totalMaterials || 0));
   const eligibleMaterials = Math.max(0, Number(input.eligibleMaterials || 0));
-  const selectedMaterials = Math.max(0, Number(input.selectedMaterials || 0));
-  const selectedAccounts = Math.max(0, Number(input.selectedAccounts || 0));
   const blockedByToken = input.readinessStatus === "blocked" && input.readinessNextAction === "检查引力 Token";
 
   if (bindingCount <= 0) {
@@ -64,25 +62,9 @@ export function buildGravityMaterialFlowState(input: GravityFlowInput): GravityF
     });
   }
 
-  if (selectedMaterials <= 0) {
-    return flowState(2, ["finish", "finish", "process", "wait"], {
-      title: "选择可用素材",
-      description: "已经有可铺货素材。请在本地素材库勾选要推送的素材，再选择目标账户生成推送预览。",
-      type: "success",
-    });
-  }
-
-  if (selectedAccounts <= 0) {
-    return flowState(3, ["finish", "finish", "finish", "process"], {
-      title: "选择目标账户",
-      description: "已经选择素材。下一步选择要推送到的启用账户，预览会同时显示账户 ID 和账户名。",
-      type: "info",
-    });
-  }
-
   return flowState(3, ["finish", "finish", "finish", "process"], {
-    title: "可以生成推送预览",
-    description: "素材和目标账户都已选择。先生成推送预览并核对明细；真实推送前仍然必须输入“确认执行”。",
+    title: "可以生成提前铺货预览",
+    description: "系统会自动使用产品账户库里负责人为郭靖的启用账户和本地可铺货素材生成预览；真实铺货前仍然必须输入“确认执行”。",
     type: "warning",
   });
 }
@@ -92,8 +74,8 @@ function flowState(
   statuses: GravityFlowStepStatus[],
   recommendation: GravityFlowState["recommendation"],
 ): GravityFlowState {
-  const titles = ["绑定素材来源", "更新引力素材", "查看并选择素材", "生成推送预览"];
-  const descriptions = ["选产品和引力专辑", "只读取资料，不下载文件", "查看可铺货素材", "真实动作前复核"];
+  const titles = ["绑定素材来源", "更新引力素材", "本地素材库", "提前铺货预览"];
+  const descriptions = ["选产品和引力专辑", "只读取资料，不下载文件", "只展示可铺货素材", "真实动作前复核"];
   return {
     currentStep,
     recommendation,

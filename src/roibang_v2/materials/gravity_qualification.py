@@ -3,10 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 
-ELIGIBLE_STATUS = "可用于后续"
+ELIGIBLE_STATUS = "可铺货"
 INELIGIBLE_STATUS = "不可用"
-UPLOADED_STATUS = "已上传"
-NOT_UPLOADED_STATUS = "未上传"
+UPLOADED_STATUS = "已铺货"
+NOT_UPLOADED_STATUS = "未铺货"
 
 
 def qualify_gravity_material(row: dict[str, Any]) -> dict[str, Any]:

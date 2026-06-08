@@ -115,7 +115,7 @@ def build_create_plan_generate_preview(request: dict[str, Any], *, project_root:
             "warnings": [
                 *account_warnings,
                 *(
-                    ["引力素材库模式只使用已上传完成且已回填媒体素材 ID 的素材；本步骤不会上传素材。"]
+                    ["引力素材库模式只使用已提前铺货完成且已回填媒体素材 ID 的素材；本步骤不会临时上传素材。"]
                     if material_source == "gravity_engine"
                     else []
                 ),

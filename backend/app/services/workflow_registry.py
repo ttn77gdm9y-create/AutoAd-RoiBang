@@ -231,7 +231,7 @@ WORKFLOW_CATALOG: tuple[WorkflowDefinition, ...] = (
         workflow_id="gravity_material_qualification",
         name="检查可用素材",
         category="引力素材库",
-        description="基于本地引力素材计算可用于后续、不可用、缺 MD5、已上传等资格汇总，不上传素材、不创建广告。",
+        description="基于本地引力素材计算可铺货、不可用、缺 MD5、已铺货等资格汇总，不上传素材、不创建广告。",
         operation_type="gravity_material_qualification",
         latest_workflow="gravity_material_qualification",
         run_kind="gravity_material_qualification",
@@ -482,11 +482,11 @@ def _summary_metric_parts(summary: dict[str, Any]) -> list[str]:
         ("rollup_rows_written", "汇总行"),
         ("suggestion_count", "建议"),
         ("material_count", "素材"),
-        ("eligible_count", "可用于后续"),
+        ("eligible_count", "可铺货"),
         ("ineligible_count", "不可用"),
         ("missing_md5_count", "缺 MD5"),
-        ("uploaded_count", "已上传"),
-        ("not_uploaded_count", "未上传"),
+        ("uploaded_count", "已铺货"),
+        ("not_uploaded_count", "未铺货"),
     ]
     parts = []
     for key, label in mapping:

@@ -231,6 +231,29 @@ body {
   margin-top: 6px;
 }
 
+.gravity-preload-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.gravity-advanced-panel {
+  padding: 12px 14px;
+  border: 1px solid #d8dee6;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.gravity-advanced-panel summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.gravity-advanced-panel[open] summary {
+  margin-bottom: 12px;
+}
+
 .gravity-album-select-group {
   color: #334155;
   font-weight: 700;

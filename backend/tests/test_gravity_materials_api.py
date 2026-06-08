@@ -204,6 +204,17 @@ def test_gravity_materials_list_reads_local_gravity_source_materials(tmp_path: P
                     {
                         "product_key": "diandian-hero",
                         "product_name": "点点英雄",
+                        "advertiser_id": "acc-other-owner",
+                        "advertiser_name": "点点英雄-非郭靖账户",
+                        "channel": "微信",
+                        "owner": "任伊",
+                        "account_remark": "",
+                        "status": "active",
+                        "notes": "",
+                    },
+                    {
+                        "product_key": "diandian-hero",
+                        "product_name": "点点英雄",
                         "advertiser_id": "acc-disabled",
                         "advertiser_name": "点点英雄-停用账户",
                         "channel": "微信",
@@ -468,6 +479,149 @@ def test_gravity_materials_list_paginates_and_sorts_on_backend(tmp_path: Path):
     payload = response.json()
     assert payload["raw"]["pagination"] == {"page": 2, "page_size": 2, "total": 3, "total_pages": 2}
     assert [row["引力素材 ID"] for row in payload["table"]["rows"]] == ["gravity-low"]
+
+
+def test_gravity_preload_preview_uses_active_accounts_and_usable_materials(tmp_path: Path):
+    db_path = tmp_path / "data" / "roibang_v2.sqlite3"
+    bootstrap_database(db_path)
+    account_store = tmp_path / "configs" / "accounts" / "product-accounts.local.json"
+    account_store.parent.mkdir(parents=True)
+    account_store.write_text(
+        json.dumps(
+            {
+                "accounts": [
+                    {
+                        "product_key": "diandian-hero",
+                        "product_name": "点点英雄",
+                        "advertiser_id": "acc-1",
+                        "advertiser_name": "点点英雄-人工账户",
+                        "channel": "微信",
+                        "owner": "郭靖",
+                        "account_remark": "",
+                        "status": "active",
+                        "notes": "",
+                    },
+                    {
+                        "product_key": "diandian-hero",
+                        "product_name": "点点英雄",
+                        "advertiser_id": "acc-2",
+                        "advertiser_name": "点点英雄-历史账户",
+                        "channel": "微信",
+                        "owner": "郭靖",
+                        "account_remark": "",
+                        "status": "active",
+                        "notes": "历史数据自动补全",
+                    },
+                    {
+                        "product_key": "diandian-hero",
+                        "product_name": "点点英雄",
+                        "advertiser_id": "acc-disabled",
+                        "advertiser_name": "点点英雄-停用账户",
+                        "channel": "微信",
+                        "owner": "郭靖",
+                        "account_remark": "",
+                        "status": "disabled",
+                        "notes": "",
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            """
+            INSERT INTO product_source_materials (
+              product, source_advertiser_id, organization_id, material_id,
+              video_id, name, material_type, review_status, signature,
+              duration, file_size, create_time, tag_ids_json, is_active,
+              first_seen_at, last_seen_at, cost_lookback, score,
+              payload_json, source, synced_at
+            ) VALUES (
+              '点点英雄', 'gravity_engine_182', '182', ?,
+              '', ?, 'video', ?, ?,
+              15, 2048, '2026-06-01T10:00:00+08:00', '[]', ?,
+              'now', 'now', 0, 0,
+              ?, 'gravity_engine', 'now'
+            )
+            """,
+            [
+                ("gravity-ok", "可铺货素材", "可用", "md5-ok", 1, '{"album_name":"目标专辑","folder_name":"文件夹A","status":1}'),
+                ("gravity-disabled", "禁用素材", "禁用", "md5-disabled", 1, '{"album_name":"目标专辑","folder_name":"文件夹A","status":2}'),
+                ("gravity-missing-md5", "缺 MD5 素材", "可用", "", 1, '{"album_name":"目标专辑","folder_name":"文件夹A","status":1}'),
+            ],
+        )
+        conn.execute(
+            """
+            INSERT INTO account_materials (
+              advertiser_id, material_id, video_id, material_type, review_status,
+              cost_lookback, score, source, synced_at
+            ) VALUES ('acc-1', 'already-1', 'vUploaded123456', 'video', '可用', 0, 0, 'account_materials', 'now')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO materials (
+              material_id, name, material_type, video_id, review_status,
+              payload_json, source, synced_at
+            ) VALUES (
+              'already-1', '账户已有素材', 'video', 'vUploaded123456', '可用',
+              '{"md5":"md5-ok"}', 'account_materials', 'now'
+            )
+            """
+        )
+
+    response = _client(tmp_path).post(
+        "/api/gravity-materials/preload-preview",
+        json={"product": "点点英雄", "batch_size": 50},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["title"] == "引力素材提前铺货预览"
+    assert payload["summary"]["execution_enabled"] is False
+    items = {item["label"]: item["value"] for item in payload["summary"]["items"]}
+    assert items["郭靖启用账户"] == 2
+    assert items["目标负责人"] == "郭靖"
+    assert items["可铺货素材"] == 1
+    assert items["账户已有/已覆盖"] == 1
+    assert items["需铺货"] == 1
+    assert items["批次数"] == 1
+    assert payload["raw"]["upload_material_called"] is False
+    assert payload["raw"]["batch_size"] == 50
+    assert payload["raw"]["upload_batches"] == [
+        {
+            "batch_key": "点点英雄_acc-2_1",
+            "target_advertiser_id": "acc-2",
+            "target_account_name": "点点英雄-历史账户",
+            "target_account_source": "历史补全",
+            "material_ids": ["gravity-ok"],
+            "material_count": 1,
+        }
+    ]
+    assert payload["table"]["rows"] == [
+        {
+            "账户名": "点点英雄-人工账户",
+            "账户 ID": "acc-1",
+            "账户来源": "人工导入",
+            "素材名": "可铺货素材",
+            "引力素材 ID": "gravity-ok",
+            "MD5": "md5-ok",
+            "状态": "账户已有",
+            "媒体素材 ID": "vUploaded123456",
+        },
+        {
+            "账户名": "点点英雄-历史账户",
+            "账户 ID": "acc-2",
+            "账户来源": "历史补全",
+            "素材名": "可铺货素材",
+            "引力素材 ID": "gravity-ok",
+            "MD5": "md5-ok",
+            "状态": "需铺货",
+            "媒体素材 ID": "",
+        },
+    ]
 
 
 def test_gravity_album_tree_reads_latest_probe_artifact_for_binding_options(tmp_path: Path):

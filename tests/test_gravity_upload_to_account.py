@@ -3,6 +3,7 @@ import sqlite3
 from pathlib import Path
 
 from roibang_v2.db.bootstrap import bootstrap_database
+import roibang_v2.workflows.gravity_upload_to_account as gravity_upload_workflow
 from roibang_v2.workflows.gravity_upload_to_account import build_gravity_upload_preview
 from roibang_v2.workflows.gravity_upload_to_account import run_gravity_upload_execute_request
 from roibang_v2.workflows.gravity_upload_to_account import run_gravity_upload_status_poll_request
@@ -119,6 +120,78 @@ def test_gravity_upload_execute_reads_preview_and_records_async_task(tmp_path: P
             """
         ).fetchone()
     assert row == ("点点英雄", "gravity-missing", "acc-1", "点点英雄-账户A", "task-acc-1", "uploading", "")
+
+
+def test_gravity_upload_execute_batches_large_preload_preview(tmp_path: Path):
+    db_path = _seed_upload_db(tmp_path)
+    for material_id in ["gravity-batch-1", "gravity-batch-2", "gravity-batch-3"]:
+        _seed_gravity_material(db_path, material_id=material_id, signature=f"md5-{material_id}")
+    preview = build_gravity_upload_preview(
+        {
+            "product": "点点英雄",
+            "target_accounts": [{"advertiser_id": "acc-1", "account_name": "点点英雄-账户A"}],
+            "material_ids": ["gravity-batch-1", "gravity-batch-2", "gravity-batch-3"],
+            "preview_mode": "preload",
+            "batch_size": 2,
+        },
+        db_path=db_path,
+        runs_dir=tmp_path / "data" / "runs",
+    )
+    fake_client = FakeGravityUploadClient()
+
+    result = run_gravity_upload_execute_request(
+        {"preview_path": preview["artifact_path"], "auth": _auth()},
+        db_path=db_path,
+        runs_dir=tmp_path / "data" / "runs",
+        client=fake_client,
+    )
+
+    assert result["ok"] is True
+    assert result["external_api_calls"] == 2
+    assert result["summary"]["submitted_material_count"] == 3
+    assert result["summary"]["submitted_batch_count"] == 2
+    assert fake_client.upload_calls == [
+        {"advertiser_id": "acc-1", "material_ids": ["gravity-batch-1", "gravity-batch-2"]},
+        {"advertiser_id": "acc-1", "material_ids": ["gravity-batch-3"]},
+    ]
+    assert {row["引力素材 ID"] for row in result["table"]["rows"]} == {
+        "gravity-batch-1",
+        "gravity-batch-2",
+        "gravity-batch-3",
+    }
+
+
+def test_gravity_preload_preview_blocks_oversized_single_execute_and_caps_rows(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(gravity_upload_workflow, "PRELOAD_SINGLE_EXECUTE_PAIR_LIMIT", 2)
+    monkeypatch.setattr(gravity_upload_workflow, "PRELOAD_TABLE_ROW_LIMIT", 2)
+    db_path = _seed_upload_db(tmp_path)
+    for material_id in ["gravity-large-1", "gravity-large-2", "gravity-large-3"]:
+        _seed_gravity_material(db_path, material_id=material_id, signature=f"md5-{material_id}")
+
+    result = build_gravity_upload_preview(
+        {
+            "product": "点点英雄",
+            "target_accounts": [{"advertiser_id": "acc-1", "account_name": "点点英雄-账户A", "account_source": "历史补全"}],
+            "material_ids": ["gravity-large-1", "gravity-large-2", "gravity-large-3"],
+            "preview_mode": "preload",
+            "batch_size": 2,
+        },
+        db_path=db_path,
+        runs_dir=tmp_path / "data" / "runs",
+    )
+
+    assert result["ok"] is True
+    assert result["status"] == "blocked"
+    assert result["summary"]["status"] == "blocked"
+    assert "超过单次确认上限 2 条" in "；".join(result["blocking_reasons"])
+    assert len(result["table"]["rows"]) == 2
+    assert result["summary"]["upload_required_count"] == 3
+    assert result["raw"]["upload_items"] == []
+    assert result["raw"]["upload_items_omitted"] is True
+    assert result["raw"]["upload_item_count"] == 3
+    assert result["raw"]["upload_batch_count"] == 2
+    assert result["raw"]["display_row_count"] == 2
+    assert any(item["label"] == "页面展示" for item in result["summary"]["items"])
 
 
 def test_gravity_upload_execute_blocks_non_preview_artifact(tmp_path: Path):
@@ -248,6 +321,37 @@ def _seed_upload_db(tmp_path: Path) -> Path:
             ],
         )
     return db_path
+
+
+def _seed_gravity_material(db_path: Path, *, material_id: str, signature: str) -> None:
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO materials (
+              material_id, name, material_type, video_id, review_status,
+              cost_lookback, score, payload_json, source, synced_at
+            ) VALUES (?, ?, 'video', '', '可用', 0, 0, ?, 'gravity_engine', 'now')
+            """,
+            (material_id, material_id, json.dumps({"signature": signature}, ensure_ascii=False)),
+        )
+        conn.execute(
+            """
+            INSERT INTO product_source_materials (
+              product, source_advertiser_id, organization_id, material_id,
+              video_id, name, material_type, review_status, signature,
+              duration, file_size, create_time, tag_ids_json, is_active,
+              first_seen_at, last_seen_at, cost_lookback, score,
+              payload_json, source, synced_at
+            ) VALUES (
+              '点点英雄', 'gravity_engine_182', '182', ?,
+              '', ?, 'video', '可用', ?,
+              15, 2048, '2026-06-01T10:00:00+08:00', '[]', 1,
+              'now', 'now', 0, 0,
+              '{"album_name":"点点英雄专辑","folder_name":"6月新素材","status":1}', 'gravity_engine', 'now'
+            )
+            """,
+            (material_id, material_id, signature),
+        )
 
 
 def _seed_pending_upload_task(db_path: Path) -> None:

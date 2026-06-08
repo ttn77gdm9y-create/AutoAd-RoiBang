@@ -23,8 +23,8 @@ test("asks the user to bind material source before syncing", () => {
     [
       ["绑定素材来源", "process"],
       ["更新引力素材", "wait"],
-      ["查看并选择素材", "wait"],
-      ["生成推送预览", "wait"],
+      ["本地素材库", "wait"],
+      ["提前铺货预览", "wait"],
     ],
   );
 });
@@ -64,20 +64,21 @@ test("asks the user to check available materials when local materials exist but 
   assert.equal(state.steps[2].status, "process");
 });
 
-test("asks the user to generate push preview only after materials and accounts are selected", () => {
+test("asks the user to generate preload preview after usable local materials exist", () => {
   const state = buildGravityMaterialFlowState({
     bindingCount: 1,
     totalMaterials: 20,
     eligibleMaterials: 6,
-    selectedMaterials: 2,
-    selectedAccounts: 1,
+    selectedMaterials: 0,
+    selectedAccounts: 0,
     readinessStatus: "ready",
     readinessNextAction: "更新引力素材",
   });
 
   assert.equal(state.currentStep, 3);
-  assert.equal(state.recommendation.title, "可以生成推送预览");
-  assert.match(state.recommendation.description, /真实推送前仍然必须输入“确认执行”/);
+  assert.equal(state.recommendation.title, "可以生成提前铺货预览");
+  assert.match(state.recommendation.description, /负责人为郭靖的启用账户/);
+  assert.match(state.recommendation.description, /真实铺货前仍然必须输入“确认执行”/);
   assert.equal(state.steps[3].status, "process");
 });
 
@@ -103,5 +104,24 @@ test("renders numbered business sections and only shows usable local materials",
   assert.match(source, /stepTitle\("1", "绑定素材来源"/);
   assert.match(source, /stepTitle\("2", gravityMaterialSyncCopy.title/);
   assert.match(source, /stepTitle\("3", "本地素材库"/);
-  assert.match(source, /stepTitle\("4", "推送引力素材到巨量账户"/);
+  assert.match(source, /stepTitle\("4", "提前铺货到巨量账户"/);
+});
+
+test("offers automatic gravity material preloading before manual upload details", () => {
+  const source = readFileSync(new URL("../src/pages/GravityMaterialsPage.tsx", import.meta.url), "utf-8");
+
+  assert.match(source, /提前铺货到巨量账户/);
+  assert.match(source, /生成提前铺货预览/);
+  assert.match(source, /preloadPreview/);
+  assert.match(source, /\/gravity-materials\/preload-preview/);
+  assert.match(source, /负责人为郭靖的启用账户/);
+  assert.match(source, /郭靖启用账户/);
+  assert.match(source, /确认并铺货素材/);
+});
+
+test("auto-selects the first product so preload preview is not blocked by an empty product", () => {
+  const source = readFileSync(new URL("../src/pages/GravityMaterialsPage.tsx", import.meta.url), "utf-8");
+
+  assert.match(source, /const firstProduct = String\(productOptions\[0\]\?\.value/);
+  assert.match(source, /selectProduct\(firstProduct\)/);
 });

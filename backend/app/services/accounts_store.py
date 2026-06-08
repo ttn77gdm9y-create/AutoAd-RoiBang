@@ -83,6 +83,8 @@ ACCOUNT_FIELD_ALIASES = {
 
 REQUIRED_FIELDS = ["product_key", "product_name", "advertiser_id", "advertiser_name"]
 VALID_STATUSES = {"active", "paused", "disabled"}
+ACCOUNT_SOURCES = {"manual", "history", "example"}
+ACCOUNT_SOURCE_LABELS = {"manual": "人工导入", "history": "历史补全", "example": "示例"}
 CHANNEL_ALIASES = {"WECHAT_GAME": "微信", "wx": "微信", "wechat": "微信", "BYTEDANCE_GAME": "字节小游戏"}
 BULK_UPDATE_FIELDS = {"channel": "渠道", "owner": "负责人", "account_remark": "备注", "status": "状态"}
 
@@ -136,6 +138,16 @@ def parse_account_ids_text(text: str) -> list[str]:
     return output
 
 
+def account_source_key(account: dict[str, str]) -> str:
+    return _account_source(account)
+
+
+def account_source_label(account: dict[str, str] | str) -> str:
+    if isinstance(account, dict):
+        return _account_source_label(_account_source(account))
+    return _account_source_label(account)
+
+
 def parse_csv_bytes(content: bytes) -> list[dict[str, str]]:
     text = content.decode("utf-8-sig")
     reader = csv.DictReader(io.StringIO(text))
@@ -164,23 +176,28 @@ def filter_accounts(
     accounts: list[dict[str, str]],
     *,
     product_key: str = "",
+    product_query: str = "",
     channel: str = "",
     owner: str = "",
     status: str = "",
+    source: str = "",
     advertiser_ids: list[str] | None = None,
 ) -> list[dict[str, str]]:
     rows = accounts
     selected_ids = {str(item or "").strip() for item in (advertiser_ids or []) if str(item or "").strip()}
     if selected_ids:
         rows = [row for row in rows if row.get("advertiser_id") in selected_ids]
-    if product_key:
-        rows = [row for row in rows if row.get("product_key") == product_key]
+    product_text = str(product_query or product_key or "").strip()
+    if product_text:
+        rows = [row for row in rows if _matches_product_query(row, product_text)]
     if channel:
         rows = [row for row in rows if row.get("channel") == channel]
     if owner:
         rows = [row for row in rows if row.get("owner") == owner]
     if status:
         rows = [row for row in rows if row.get("status") == status]
+    if source:
+        rows = [row for row in rows if _account_source(row) == _normalize_account_source(source)]
     return rows
 
 
@@ -263,7 +280,7 @@ def accounts_result(accounts: list[dict[str, str]], *, artifact_path: str) -> di
             "blocking_reasons": [],
         },
         "table": {
-            "columns": ["产品", "产品 Key", "账户 ID", "账户名", "渠道", "负责人", "状态", "备注", "说明"],
+            "columns": ["产品", "产品 Key", "账户 ID", "账户名", "渠道", "负责人", "状态", "来源", "备注", "说明"],
             "rows": rows,
         },
         "artifact_path": artifact_path,
@@ -336,16 +353,20 @@ def preview_bulk_update_accounts(
     filter_scope = filter_accounts(
         accounts,
         product_key=str(filters.get("product_key") or "").strip(),
+        product_query=str(filters.get("product_query") or "").strip(),
         channel=_normalize_channel(str(filters.get("channel") or "").strip()),
         owner=str(filters.get("owner") or "").strip(),
         status=str(filters.get("status") or "").strip(),
+        source=str(filters.get("source") or "").strip(),
     )
     matched = filter_accounts(
         accounts,
         product_key=str(filters.get("product_key") or "").strip(),
+        product_query=str(filters.get("product_query") or "").strip(),
         channel=_normalize_channel(str(filters.get("channel") or "").strip()),
         owner=str(filters.get("owner") or "").strip(),
         status=str(filters.get("status") or "").strip(),
+        source=str(filters.get("source") or "").strip(),
         advertiser_ids=selected_ids,
     )
     if not matched:
@@ -387,10 +408,11 @@ def preview_bulk_update_accounts(
             "items": [
                 {"label": "匹配账户", "value": len(updated_rows)},
                 {"label": "修改字段", "value": changed_labels},
-                {"label": "产品 Key 筛选", "value": str(filters.get("product_key") or "全部")},
+                {"label": "产品筛选", "value": str(filters.get("product_query") or filters.get("product_key") or "全部")},
                 {"label": "渠道筛选", "value": str(filters.get("channel") or "全部")},
                 {"label": "负责人筛选", "value": str(filters.get("owner") or "全部")},
                 {"label": "状态筛选", "value": str(filters.get("status") or "全部")},
+                {"label": "来源筛选", "value": _account_source_label(str(filters.get("source") or "")) if filters.get("source") else "全部"},
                 {"label": "选中账户", "value": len(_unique_texts(advertiser_ids or [])) or "未指定"},
                 {"label": "粘贴账户", "value": len(pasted_ids) or "未指定"},
                 {"label": "未命中账户", "value": len(unmatched_selected_ids) if selected_ids else 0},
@@ -515,6 +537,38 @@ def _normalize_account(row: dict[str, Any]) -> dict[str, str]:
     return normalized
 
 
+def _matches_product_query(account: dict[str, str], query: str) -> bool:
+    text = str(query or "").strip().lower()
+    if not text:
+        return True
+    product_key = account.get("product_key", "").lower()
+    product_name = account.get("product_name", "").lower()
+    return text in product_key or text in product_name
+
+
+def _normalize_account_source(value: str) -> str:
+    text = str(value or "").strip()
+    if text in ACCOUNT_SOURCES:
+        return text
+    for key, label in ACCOUNT_SOURCE_LABELS.items():
+        if text == label:
+            return key
+    return text
+
+
+def _account_source(account: dict[str, str]) -> str:
+    notes = str(account.get("notes") or "").strip()
+    if "历史数据自动补全" in notes:
+        return "history"
+    if notes.startswith("示例") or "示例：" in notes:
+        return "example"
+    return "manual"
+
+
+def _account_source_label(source: str) -> str:
+    return ACCOUNT_SOURCE_LABELS.get(_normalize_account_source(source), source or "人工导入")
+
+
 def _validate_account(account: dict[str, str]) -> list[str]:
     errors = [f"缺少 {ACCOUNT_FIELD_LABELS.get(field, field)}" for field in REQUIRED_FIELDS if not account.get(field)]
     if account.get("status") not in VALID_STATUSES:
@@ -526,12 +580,13 @@ def _account_table_row(account: dict[str, str], action: str, issue: str) -> dict
     return {
         "处理方式": action,
         **_display_account_row(account),
+        "来源": _account_source_label(_account_source(account)),
         "问题": issue,
     }
 
 
 def _table_columns() -> list[str]:
-    return ["处理方式", "产品", "产品 Key", "账户 ID", "账户名", "渠道", "负责人", "状态", "备注", "说明", "问题"]
+    return ["处理方式", "产品", "产品 Key", "账户 ID", "账户名", "渠道", "负责人", "状态", "来源", "备注", "说明", "问题"]
 
 
 def _display_account_row(account: dict[str, str]) -> dict[str, str]:
@@ -573,10 +628,11 @@ def _bulk_update_blocked(filters: dict[str, str], reasons: list[str]) -> dict[st
             "risk_level": "low",
             "execution_enabled": False,
             "items": [
-                {"label": "产品 Key 筛选", "value": str(filters.get("product_key") or "全部")},
+                {"label": "产品筛选", "value": str(filters.get("product_query") or filters.get("product_key") or "全部")},
                 {"label": "渠道筛选", "value": str(filters.get("channel") or "全部")},
                 {"label": "负责人筛选", "value": str(filters.get("owner") or "全部")},
                 {"label": "状态筛选", "value": str(filters.get("status") or "全部")},
+                {"label": "来源筛选", "value": _account_source_label(str(filters.get("source") or "")) if filters.get("source") else "全部"},
             ],
             "warnings": [],
             "blocking_reasons": reasons,

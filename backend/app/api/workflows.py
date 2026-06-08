@@ -84,7 +84,7 @@ WORKFLOW_CATALOG = [
     {
         "value": "gravity_material_qualification",
         "label": "检查可用素材",
-        "description": "查看引力素材是否可用于后续上传/创建的本地资格汇总结果。",
+        "description": "查看引力素材是否可铺货、是否缺 MD5、是否已铺货到目标账户的本地结果。",
     },
     {
         "value": "project_update_execute",

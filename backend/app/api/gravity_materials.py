@@ -9,6 +9,7 @@ from pydantic import Field
 
 from backend.app.safety.confirmation import require_execute_confirmation
 from backend.app.services.gravity_materials import build_gravity_upload_preview_result
+from backend.app.services.gravity_materials import build_gravity_preload_preview_result
 from backend.app.services.gravity_materials import delete_gravity_binding
 from backend.app.services.gravity_materials import gravity_album_tree
 from backend.app.services.gravity_materials import gravity_sync_readiness
@@ -39,6 +40,12 @@ class GravityUploadPreviewRequest(BaseModel):
     product: str = ""
     target_accounts: list[GravityUploadTargetAccount] = Field(default_factory=list)
     material_ids: list[str] = Field(default_factory=list)
+    batch_size: int = 50
+
+
+class GravityPreloadPreviewRequest(BaseModel):
+    product: str = ""
+    batch_size: int = 50
 
 
 class GravityUploadExecuteRequest(BaseModel):
@@ -109,6 +116,14 @@ def gravity_material_albums(request: Request) -> dict[str, Any]:
 @router.post("/gravity-materials/upload-preview")
 def gravity_material_upload_preview(request: Request, body: GravityUploadPreviewRequest) -> dict[str, Any]:
     return build_gravity_upload_preview_result(
+        project_root=request.app.state.settings.project_root,
+        body=body.model_dump(),
+    )
+
+
+@router.post("/gravity-materials/preload-preview")
+def gravity_material_preload_preview(request: Request, body: GravityPreloadPreviewRequest) -> dict[str, Any]:
+    return build_gravity_preload_preview_result(
         project_root=request.app.state.settings.project_root,
         body=body.model_dump(),
     )

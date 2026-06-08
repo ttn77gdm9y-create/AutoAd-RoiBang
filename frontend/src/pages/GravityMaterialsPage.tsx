@@ -76,8 +76,10 @@ const qualificationStatsConfig = [
   { label: "缺 MD5", lookup: "缺 MD5" },
   { label: "已推送", lookup: "已推送" },
   { label: "未推送", lookup: "未推送" },
-  { label: "启用目标账户", lookup: "启用目标账户" },
+  { label: "郭靖启用目标账户", lookup: "郭靖启用目标账户" },
 ];
+
+const GRAVITY_PRELOAD_TARGET_OWNER = "郭靖";
 
 export function GravityMaterialsPage() {
   const queryClient = useQueryClient();
@@ -182,7 +184,8 @@ export function GravityMaterialsPage() {
     queryFn: () => apiGet<ChineseResult>(`/gravity-materials/upload-status/${encodeURIComponent(selectedGravityTaskId)}`),
     enabled: Boolean(selectedGravityTaskId),
   });
-  const uploadRequiredCount = summaryItemNumber(uploadPreviewResult, "需上传");
+  const uploadRequiredCount = summaryItemNumber(uploadPreviewResult, "需上传") + summaryItemNumber(uploadPreviewResult, "需铺货");
+  const isPreloadPreview = uploadPreviewResult?.summary.title === "引力素材提前铺货预览";
   const canConfirmUpload = uploadPreviewResult?.summary.status === "ready_for_confirmation" && uploadRequiredCount > 0;
   const syncTaskCurrentStatus = taskStatus(syncTaskDetail.data, syncRunResult);
   const uploadTaskCurrentStatus = taskStatus(uploadTaskDetail.data, uploadExecuteResult);
@@ -210,6 +213,16 @@ export function GravityMaterialsPage() {
       totalMaterials,
     ],
   );
+
+  useEffect(() => {
+    if (selectedProduct || !productOptions.length) {
+      return;
+    }
+    const firstProduct = String(productOptions[0]?.value ?? "");
+    if (firstProduct) {
+      selectProduct(firstProduct);
+    }
+  }, [productOptions, selectedProduct]);
 
   useEffect(() => {
     if (!gravityTaskIds.length) {
@@ -300,6 +313,19 @@ export function GravityMaterialsPage() {
       antdMessage.success("推送预览已生成，请核对明细");
     },
   });
+  const preloadPreview = useMutation({
+    mutationFn: () =>
+      apiPost<ChineseResult>("/gravity-materials/preload-preview", {
+        product: selectedProduct,
+        batch_size: 50,
+      }),
+    onSuccess: (result) => {
+      setUploadPreviewResult(result);
+      setUploadExecuteResult(undefined);
+      setUploadStatusRefreshResult(undefined);
+      antdMessage.success("提前铺货预览已生成，请核对账户和素材明细");
+    },
+  });
   const executeUpload = useMutation({
     mutationFn: () =>
       apiPost<TaskResponse>("/gravity-materials/upload-execute", {
@@ -327,6 +353,7 @@ export function GravityMaterialsPage() {
     },
   });
   const canPreviewUpload = Boolean(selectedProduct && selectedTargetAccounts.length && selectedUploadMaterialIds.length) && !previewUpload.isPending;
+  const canPreviewPreload = Boolean(selectedProduct) && !preloadPreview.isPending;
   const canRunSync = Boolean(syncPreviewResult?.raw.can_run) && !runSync.isPending && !isTaskActive(syncTaskCurrentStatus);
   const syncBusy = previewSync.isPending || runSync.isPending || isTaskActive(syncTaskCurrentStatus);
 
@@ -757,7 +784,7 @@ export function GravityMaterialsPage() {
               size="small"
               title={
                 <Space wrap>
-                  {stepTitle("4", "推送引力素材到巨量账户")}
+                  {stepTitle("4", "提前铺货到巨量账户")}
                   <Tag color="orange">真实媒体动作</Tag>
                 </Space>
               }
@@ -765,53 +792,89 @@ export function GravityMaterialsPage() {
             >
               <Space direction="vertical" size="middle" className="full-width">
                 <Alert
-                  type={selectedUploadMaterialIds.length && targetAccountIds.length ? "warning" : "info"}
+                  type="info"
                   showIcon
-                  message={
-                    selectedUploadMaterialIds.length && targetAccountIds.length
-                      ? "这一步会把已选引力素材推送到所选巨量账户素材库。生成预览后必须核对账户名、账户 ID、素材 ID、MD5；真实推送前还要输入“确认执行”。"
-                      : "这是后续步骤：先在本地素材库勾选可用素材，再选择目标巨量账户。不会创建广告、不会改预算、不会启动投放。"
-                  }
+                  message="系统会自动使用产品账户库里负责人为郭靖的启用账户，以及本地素材库里可铺货的引力素材，生成提前铺货预览；不会创建广告、不会改预算、不会启动投放。"
                 />
                 <Row gutter={[12, 12]} align="bottom">
-                  <Col xs={24} md={10}>
-                    <Typography.Text strong>目标账户</Typography.Text>
-                    <Select
-                      mode="multiple"
-                      showSearch
-                      className="full-width gravity-upload-control"
-                      loading={accounts.isLoading}
-                      value={targetAccountIds}
-                      options={uploadAccountOptions}
-                      placeholder={selectedProduct ? "选择要上传到的账户" : "先选择产品"}
-                      onChange={(values) => {
-                        setTargetAccountIds(values);
-                        setUploadPreviewResult(undefined);
-                        setUploadExecuteResult(undefined);
-                        setUploadStatusRefreshResult(undefined);
-                      }}
-                    />
+                  <Col xs={24} md={8}>
+                    <Typography.Text strong>铺货范围</Typography.Text>
+                    <div className="gravity-preload-stats">
+                      <Tag color="blue">郭靖启用账户 {uploadAccountOptions.length}</Tag>
+                      <Tag color="green">可铺货素材 {totalMaterials}</Tag>
+                      <Tag color="default">50 条/批</Tag>
+                    </div>
                     <Typography.Text type="secondary" className="gravity-upload-help">
-                      账户来自产品账户库，只展示启用账户；预览和结果会同时显示账户 ID 与账户名。
+                      停用账户、非郭靖负责人账户不会进入预览；历史补全账户会在明细里标出来源。
                     </Typography.Text>
                   </Col>
-                  <Col xs={24} md={7}>
+                  <Col xs={24} md={8}>
                     <Typography.Text strong>引力 Token 文件</Typography.Text>
                     <Input className="gravity-upload-control" value={authFile} onChange={(event) => setAuthFile(event.target.value)} />
                     <Typography.Text type="secondary" className="gravity-upload-help">
                       仅固定脚本读取，不在页面展示 token 明文。
                     </Typography.Text>
                   </Col>
-                  <Col xs={24} md={7}>
+                  <Col xs={24} md={8}>
                     <Space wrap className="gravity-upload-actions">
-                      <Button icon={<FileSearchOutlined />} loading={previewUpload.isPending} disabled={!canPreviewUpload} onClick={() => previewUpload.mutate()}>
-                        生成推送预览
+                      <Button
+                        icon={<FileSearchOutlined />}
+                        loading={preloadPreview.isPending}
+                        disabled={!canPreviewPreload}
+                        onClick={() => preloadPreview.mutate()}
+                      >
+                        生成提前铺货预览
                       </Button>
-                      <Tag color={selectedUploadMaterialIds.length ? "blue" : "default"}>已选素材 {selectedUploadMaterialIds.length}</Tag>
                     </Space>
                   </Col>
                 </Row>
-                {!selectedProduct ? <Alert type="info" showIcon message="先在左侧选择产品，再选择素材和目标账户。" /> : null}
+                <details className="gravity-advanced-panel">
+                  <summary>手动指定账户和素材（高级）</summary>
+                  <Space direction="vertical" size="middle" className="full-width">
+                    <Alert
+                      type={selectedUploadMaterialIds.length && targetAccountIds.length ? "warning" : "info"}
+                      showIcon
+                      message={
+                        selectedUploadMaterialIds.length && targetAccountIds.length
+                          ? "这一步会把已选引力素材推送到所选巨量账户素材库。生成预览后必须核对账户名、账户 ID、素材 ID、MD5；真实推送前还要输入“确认执行”。"
+                          : "只在需要临时指定少量账户或素材时使用；日常建议直接生成提前铺货预览。"
+                      }
+                    />
+                    <Row gutter={[12, 12]} align="bottom">
+                      <Col xs={24} md={12}>
+                        <Typography.Text strong>目标账户</Typography.Text>
+                        <Select
+                          mode="multiple"
+                          showSearch
+                          className="full-width gravity-upload-control"
+                          loading={accounts.isLoading}
+                          value={targetAccountIds}
+                          options={uploadAccountOptions}
+                          placeholder={selectedProduct ? "选择要上传到的账户" : "先选择产品"}
+                          onChange={(values) => {
+                            setTargetAccountIds(values);
+                            setUploadPreviewResult(undefined);
+                            setUploadExecuteResult(undefined);
+                            setUploadStatusRefreshResult(undefined);
+                          }}
+                        />
+                        <Typography.Text type="secondary" className="gravity-upload-help">
+                          账户来自产品账户库，只展示负责人为郭靖的启用账户；预览和结果会同时显示账户 ID 与账户名。
+                        </Typography.Text>
+                      </Col>
+                      <Col xs={24} md={12}>
+                        <Space wrap className="gravity-upload-actions">
+                          <Button icon={<FileSearchOutlined />} loading={previewUpload.isPending} disabled={!canPreviewUpload} onClick={() => previewUpload.mutate()}>
+                            生成指定范围预览
+                          </Button>
+                          <Tag color={selectedUploadMaterialIds.length ? "blue" : "default"}>已选素材 {selectedUploadMaterialIds.length}</Tag>
+                        </Space>
+                      </Col>
+                    </Row>
+                  </Space>
+                </details>
+                {!selectedProduct ? <Alert type="info" showIcon message="先在左侧选择产品，再生成提前铺货预览。" /> : null}
+                {preloadPreview.error ? <Alert type="error" showIcon message={(preloadPreview.error as Error).message} /> : null}
                 {previewUpload.error ? <Alert type="error" showIcon message={(previewUpload.error as Error).message} /> : null}
                 {uploadPreviewResult ? (
                   <SummaryPanel
@@ -822,7 +885,7 @@ export function GravityMaterialsPage() {
                     footer={
                       canConfirmUpload ? (
                         <ConfirmExecutePanel
-                          buttonText="确认并推送素材"
+                          buttonText={isPreloadPreview ? "确认并铺货素材" : "确认并推送素材"}
                           disabled={executeUpload.isPending || Boolean(uploadExecuteResult) || isTaskActive(uploadTaskCurrentStatus)}
                           onConfirm={() => executeUpload.mutate()}
                         />
@@ -977,20 +1040,22 @@ function accountOptionsFromResult(result: ChineseResult | undefined, selectedPro
       const product = String(row["产品"] ?? "").trim();
       const productKey = String(row["产品 Key"] ?? "").trim();
       const status = String(row["状态"] ?? "").trim();
+      const owner = String(row["负责人"] ?? "").trim();
       const active = !status || status === "active" || status === "启用";
-      return active && (!selectedProduct || product === selectedProduct || productKey === selectedProduct);
+      return active && owner === GRAVITY_PRELOAD_TARGET_OWNER && (!selectedProduct || product === selectedProduct || productKey === selectedProduct);
     })
     .map((row) => {
       const value = String(row["账户 ID"] ?? "").trim();
       const accountName = String(row["账户名"] ?? value).trim();
       const product = String(row["产品"] ?? "").trim();
       const status = String(row["状态"] ?? "").trim();
+      const owner = String(row["负责人"] ?? "").trim();
       return {
         value,
         account_name: accountName || value,
         product,
         status,
-        label: `${accountName || value}（${value}）${status ? ` · ${status}` : ""}`,
+        label: `${accountName || value}（${value}） · ${owner || "未填负责人"}${status ? ` · ${status}` : ""}`,
       };
     })
     .filter((option) => {

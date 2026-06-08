@@ -41,9 +41,9 @@ def run_gravity_material_qualification_request(
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "中文摘要": (
             f"{product_label}可用素材检查完成：素材 {counts['material_count']} 个，"
-            f"可用于后续 {counts['eligible_count']} 个，不可用 {counts['ineligible_count']} 个，"
-            f"缺 MD5 {counts['missing_md5_count']} 个，已上传 {counts['uploaded_count']} 个，"
-            f"未上传 {counts['not_uploaded_count']} 个；未上传素材、未创建广告。"
+            f"可铺货 {counts['eligible_count']} 个，不可用 {counts['ineligible_count']} 个，"
+            f"缺 MD5 {counts['missing_md5_count']} 个，已铺货 {counts['uploaded_count']} 个，"
+            f"未铺货 {counts['not_uploaded_count']} 个；未上传素材、未创建广告。"
         ),
         "summary": {
             "title": "检查可用素材",
@@ -53,7 +53,7 @@ def run_gravity_material_qualification_request(
             "upload_material_called": False,
         },
         "table": {
-            "columns": ["产品", "素材数", "可用于后续", "不可用", "缺 MD5", "已上传", "未上传", "有表现数据"],
+            "columns": ["产品", "素材数", "可铺货", "不可用", "缺 MD5", "已铺货", "未铺货", "有消耗或转化"],
             "rows": by_product,
         },
         "sections": [
@@ -176,12 +176,12 @@ def _summary_rows_by_product(rows: list[dict[str, Any]]) -> list[dict[str, Any]]
             {
                 "产品": product,
                 "素材数": counts["material_count"],
-                "可用于后续": counts["eligible_count"],
+                "可铺货": counts["eligible_count"],
                 "不可用": counts["ineligible_count"],
                 "缺 MD5": counts["missing_md5_count"],
-                "已上传": counts["uploaded_count"],
-                "未上传": counts["not_uploaded_count"],
-                "有表现数据": counts["has_performance_count"],
+                "已铺货": counts["uploaded_count"],
+                "未铺货": counts["not_uploaded_count"],
+                "有消耗或转化": counts["has_performance_count"],
             }
         )
     return result

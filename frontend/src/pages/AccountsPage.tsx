@@ -15,7 +15,11 @@ type BulkTargetMode = "filtered" | "selected" | "pasted";
 
 export function AccountsPage() {
   const queryClient = useQueryClient();
-  const [filters, setFilters] = useState({ product_key: "", channel: "", owner: "", status: "" });
+  const [filters, setFilters] = useState({ product_query: "", channel: "", owner: "", status: "", source: "" });
+  const [accountsPagination, setAccountsPagination] = useState({
+    current: 1,
+    pageSize: Number(accountTablePagination.defaultPageSize ?? 100),
+  });
   const [bulkFields, setBulkFields] = useState({ channel: false, owner: false, account_remark: false, status: false });
   const [bulkValues, setBulkValues] = useState({ channel: "", owner: "", account_remark: "", status: "disabled" });
   const [bulkTargetMode, setBulkTargetMode] = useState<BulkTargetMode>("filtered");
@@ -141,6 +145,7 @@ export function AccountsPage() {
     setFilters({ ...filters, ...patch });
     setSelectedAccountIds([]);
     setBulkPreviewReady(false);
+    setAccountsPagination((current) => ({ ...current, current: 1 }));
   }
 
   function updateBulkTargetMode(value: string | number) {
@@ -182,9 +187,9 @@ export function AccountsPage() {
       <Form layout="inline" className="filter-bar">
         <Form.Item label="产品">
           <Input
-            value={filters.product_key}
-            onChange={(event) => updateFilters({ product_key: event.target.value })}
-            placeholder="产品 Key，例如 diandian-hero"
+            value={filters.product_query}
+            onChange={(event) => updateFilters({ product_query: event.target.value })}
+            placeholder="产品名 / 产品 Key，例如 点点英雄 / diandian-hero"
           />
         </Form.Item>
         <Form.Item label="渠道">
@@ -203,6 +208,19 @@ export function AccountsPage() {
               { label: "启用", value: "active" },
               { label: "暂停", value: "paused" },
               { label: "停用", value: "disabled" },
+            ]}
+          />
+        </Form.Item>
+        <Form.Item label="账户来源">
+          <Select
+            allowClear
+            className="status-select"
+            value={filters.source || undefined}
+            onChange={(value) => updateFilters({ source: value ?? "" })}
+            options={[
+              { label: "人工导入", value: "manual" },
+              { label: "历史补全", value: "history" },
+              { label: "示例", value: "example" },
             ]}
           />
         </Form.Item>
@@ -234,7 +252,13 @@ export function AccountsPage() {
                 },
               }}
               scroll={accountTableScroll}
-              pagination={accountTablePagination}
+              pagination={{
+                ...accountTablePagination,
+                current: accountsPagination.current,
+                pageSize: accountsPagination.pageSize,
+                onChange: (current, pageSize) => setAccountsPagination({ current, pageSize }),
+                onShowSizeChange: (_current, pageSize) => setAccountsPagination({ current: 1, pageSize }),
+              }}
             />
           </Space>
         </div>
@@ -414,6 +438,7 @@ function accountColumns(): ColumnsType<AccountRow> {
       width: 90,
       render: (value) => <Tag color={accountStatusColor(value)}>{accountStatusLabel(value)}</Tag>,
     },
+    { title: "来源", dataIndex: "来源", width: 100 },
     { title: "备注", dataIndex: "备注", width: 180, ellipsis: true },
     { title: "说明", dataIndex: "说明", width: 220, ellipsis: true },
   ];

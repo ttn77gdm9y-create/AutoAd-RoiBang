@@ -34,9 +34,11 @@ class PasteImportRequest(BaseModel):
 
 class BulkUpdateAccountsRequest(BaseModel):
     product_key: str = ""
+    product_query: str = ""
     channel: str = ""
     owner: str = ""
     status: str = ""
+    source: str = ""
     advertiser_ids: list[str] = Field(default_factory=list)
     advertiser_ids_text: str = ""
     updates: dict[str, str] = Field(default_factory=dict)
@@ -46,17 +48,21 @@ class BulkUpdateAccountsRequest(BaseModel):
 def accounts(
     request: Request,
     product_key: str = "",
+    product_query: str = "",
     channel: str = "",
     owner: str = "",
     status: str = "",
+    source: str = "",
 ) -> dict:
     settings = request.app.state.settings
     rows = filter_accounts(
         load_accounts(settings.configs_dir),
         product_key=product_key,
+        product_query=product_query,
         channel=channel,
         owner=owner,
         status=status,
+        source=source,
     )
     return accounts_result(rows, artifact_path=str(account_store_path(settings.configs_dir)))
 
@@ -114,9 +120,11 @@ def bulk_update(request: Request, body: BulkUpdateAccountsRequest) -> dict:
         settings.configs_dir,
         filters={
             "product_key": body.product_key,
+            "product_query": body.product_query,
             "channel": body.channel,
             "owner": body.owner,
             "status": body.status,
+            "source": body.source,
         },
         updates=body.updates,
         advertiser_ids=body.advertiser_ids,
@@ -131,9 +139,11 @@ def bulk_update_preview(request: Request, body: BulkUpdateAccountsRequest) -> di
         settings.configs_dir,
         filters={
             "product_key": body.product_key,
+            "product_query": body.product_query,
             "channel": body.channel,
             "owner": body.owner,
             "status": body.status,
+            "source": body.source,
         },
         updates=body.updates,
         advertiser_ids=body.advertiser_ids,

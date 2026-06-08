@@ -185,6 +185,67 @@ def test_accounts_endpoint_filters_and_export_returns_csv(tmp_path):
     assert "点点英雄" in exported.text
 
 
+def test_accounts_endpoint_searches_product_name_and_filters_source(tmp_path):
+    store = tmp_path / "configs" / "accounts" / "product-accounts.local.json"
+    store.parent.mkdir(parents=True)
+    store.write_text(
+        json.dumps(
+            {
+                "accounts": [
+                    {
+                        "product_key": "diandian-hero",
+                        "product_name": "点点英雄",
+                        "advertiser_id": "1001",
+                        "advertiser_name": "人工账户",
+                        "channel": "微信",
+                        "owner": "郭靖",
+                        "account_remark": "",
+                        "status": "active",
+                        "notes": "",
+                    },
+                    {
+                        "product_key": "diandian-hero",
+                        "product_name": "点点英雄",
+                        "advertiser_id": "1002",
+                        "advertiser_name": "历史账户",
+                        "channel": "微信",
+                        "owner": "郭靖",
+                        "account_remark": "",
+                        "status": "active",
+                        "notes": "历史数据自动补全",
+                    },
+                    {
+                        "product_key": "other",
+                        "product_name": "其他产品",
+                        "advertiser_id": "2001",
+                        "advertiser_name": "其他账户",
+                        "channel": "微信",
+                        "owner": "运营A",
+                        "account_remark": "",
+                        "status": "active",
+                        "notes": "",
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    client = _client(tmp_path)
+
+    by_name = client.get("/api/accounts", params={"product_key": "点点英雄"})
+    history_only = client.get("/api/accounts", params={"product_key": "点点英雄", "source": "history"})
+    manual_only = client.get("/api/accounts", params={"product_key": "点点英雄", "source": "manual"})
+
+    assert by_name.status_code == 200
+    assert by_name.json()["summary"]["items"][0] == {"label": "账户数", "value": 2}
+    assert {row["来源"] for row in by_name.json()["table"]["rows"]} == {"人工导入", "历史补全"}
+    assert [row["账户 ID"] for row in history_only.json()["table"]["rows"]] == ["1002"]
+    assert history_only.json()["table"]["rows"][0]["来源"] == "历史补全"
+    assert [row["账户 ID"] for row in manual_only.json()["table"]["rows"]] == ["1001"]
+    assert manual_only.json()["table"]["rows"][0]["来源"] == "人工导入"
+
+
 def test_accounts_template_download_returns_fillable_csv(tmp_path):
     client = _client(tmp_path)
 

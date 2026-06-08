@@ -18,6 +18,8 @@ from roibang_v2.runs import write_run_artifact
 PREVIEW_WORKFLOW = "gravity_upload_to_account_preview"
 EXECUTE_WORKFLOW = "gravity_upload_to_account"
 STATUS_WORKFLOW = "gravity_upload_status_poll"
+PRELOAD_TABLE_ROW_LIMIT = 500
+PRELOAD_SINGLE_EXECUTE_PAIR_LIMIT = 5000
 _VALID_VIDEO_ID = re.compile(r"^v[0-9A-Za-z]{12,}$")
 
 
@@ -31,6 +33,10 @@ def build_gravity_upload_preview(
     product = _text(cfg.get("product"))
     target_accounts = _target_accounts(cfg.get("target_accounts"))
     material_ids = _material_ids(cfg.get("material_ids"))
+    preview_mode = _text(cfg.get("preview_mode"))
+    is_preload = preview_mode == "preload"
+    target_owner = _text(cfg.get("target_owner"))
+    batch_size = _batch_size(cfg.get("batch_size"))
     blocking_reasons = _preview_blocking_reasons(product=product, target_accounts=target_accounts, material_ids=material_ids)
     materials = _gravity_material_rows(db_path, product=product, material_ids=material_ids) if not blocking_reasons else []
     if not blocking_reasons:
@@ -58,7 +64,7 @@ def build_gravity_upload_preview(
         for material in materials:
             signature = _text(material.get("signature"))
             existing_material = account_existing.get(signature)
-            status = "账户已有" if existing_material else "需上传"
+            status = "账户已有" if existing_material else ("需铺货" if is_preload else "需上传")
             row = {
                 "账户名": account["account_name"],
                 "账户 ID": account["advertiser_id"],
@@ -68,6 +74,8 @@ def build_gravity_upload_preview(
                 "状态": status,
                 "媒体素材 ID": _text((existing_material or {}).get("video_id")),
             }
+            if is_preload:
+                row["账户来源"] = _text(account.get("account_source")) or "人工导入"
             table_rows.append(row)
             if not existing_material:
                 upload_items.append(
@@ -76,54 +84,112 @@ def build_gravity_upload_preview(
                         "product": product,
                         "target_advertiser_id": account["advertiser_id"],
                         "target_account_name": account["account_name"],
+                        "target_account_source": _text(account.get("account_source")) or "人工导入",
                         "gravity_material_id": material["material_id"],
                         "signature": signature,
                     }
                 )
 
     existing_count = len(table_rows) - len(upload_items)
+    upload_batches = _upload_batches(upload_items, batch_size=batch_size)
+    title = "引力素材提前铺货预览" if is_preload else "引力素材上传预览"
+    required_label = "需铺货" if is_preload else "需上传"
+    required_phrase = f"需铺货 {len(upload_items)} 条" if is_preload else f"需要上传 {len(upload_items)} 条"
+    existing_label = "账户已有/已覆盖" if is_preload else "账户已有"
+    target_account_label = f"{target_owner}启用账户" if is_preload and target_owner else ("启用账户" if is_preload else "目标账户")
+    preload_too_large = is_preload and len(upload_items) > PRELOAD_SINGLE_EXECUTE_PAIR_LIMIT
+    preview_status = "blocked" if preload_too_large else "ready_for_confirmation"
+    preview_blocking_reasons = []
+    if preload_too_large:
+        preview_blocking_reasons.append(
+            f"本次需铺货 {len(upload_items)} 条，超过单次确认上限 {PRELOAD_SINGLE_EXECUTE_PAIR_LIMIT} 条；"
+            "本结果只用于预览，请后续按产品、账户或部分素材拆分执行。"
+        )
+    columns = ["账户名", "账户 ID", "素材名", "引力素材 ID", "MD5", "状态", "媒体素材 ID"]
+    if is_preload:
+        columns = ["账户名", "账户 ID", "账户来源", "素材名", "引力素材 ID", "MD5", "状态", "媒体素材 ID"]
+    display_rows = _display_preview_rows(table_rows, is_preload=is_preload)
+    raw_upload_items = [] if preload_too_large else upload_items
+    raw_upload_batches = upload_batches[:PRELOAD_TABLE_ROW_LIMIT] if preload_too_large else upload_batches
+    warnings = [
+        "这是提前铺货预览，不会上传素材。真实铺货必须在页面输入“确认执行”。"
+        if is_preload
+        else "这是上传预览，不会上传素材。真实上传必须在页面输入“确认执行”。"
+    ]
+    if len(display_rows) < len(table_rows):
+        warnings.append(f"明细较多，页面只展示前 {len(display_rows)} 条样例；完整执行需要拆分批次。")
+    warnings.extend(preview_blocking_reasons)
     payload = {
         "ok": True,
         "workflow": PREVIEW_WORKFLOW,
         "phase": "gravity_upload_preview",
-        "status": "ready_for_confirmation",
+        "status": preview_status,
         "execution_enabled": False,
         "external_api_calls": 0,
         "generated_at": _now_iso(),
         "中文摘要": (
-            f"引力素材上传预览已生成：目标账户 {len(target_accounts)} 个，选择素材 {len(materials)} 个，"
-            f"账户已有 {existing_count} 条，需要上传 {len(upload_items)} 条；尚未调用 upload_material。"
+            f"{title}已生成：目标账户 {len(target_accounts)} 个，选择素材 {len(materials)} 个，"
+            f"{existing_label} {existing_count} 条，{required_phrase}，批次 {len(upload_batches)} 个；"
+            "尚未调用 upload_material。"
         ),
         "summary": {
-            "title": "引力素材上传预览",
-            "status": "ready_for_confirmation",
+            "title": title,
+            "status": preview_status,
             "risk_level": "high",
             "execution_enabled": False,
             "items": [
-                {"label": "目标账户", "value": len(target_accounts)},
-                {"label": "选择素材", "value": len(materials)},
-                {"label": "账户已有", "value": existing_count},
-                {"label": "需上传", "value": len(upload_items)},
+                {"label": target_account_label, "value": len(target_accounts)},
+                *(
+                    [{"label": "目标负责人", "value": target_owner}]
+                    if is_preload and target_owner
+                    else []
+                ),
+                {"label": "可铺货素材" if is_preload else "选择素材", "value": len(materials)},
+                {"label": existing_label, "value": existing_count},
+                {"label": required_label, "value": len(upload_items)},
+                {"label": "批次数", "value": len(upload_batches)},
+                *(
+                    [{"label": "页面展示", "value": f"前 {len(display_rows)} 条样例"}]
+                    if len(display_rows) < len(table_rows)
+                    else []
+                ),
             ],
-            "warnings": ["这是上传预览，不会上传素材。真实上传必须在页面输入“确认执行”。"],
-            "blocking_reasons": [],
+            "warnings": warnings,
+            "blocking_reasons": preview_blocking_reasons,
             "target_account_count": len(target_accounts),
             "selected_material_count": len(materials),
             "pair_count": len(table_rows),
             "existing_count": existing_count,
             "upload_required_count": len(upload_items),
+            "upload_batch_count": len(upload_batches),
             "upload_material_called": False,
         },
         "table": {
-            "columns": ["账户名", "账户 ID", "素材名", "引力素材 ID", "MD5", "状态", "媒体素材 ID"],
-            "rows": table_rows,
+            "columns": columns,
+            "rows": display_rows,
         },
-        "warnings": ["这是上传预览，不会上传素材。真实上传必须在页面输入“确认执行”。"],
-        "blocking_reasons": [],
+        "warnings": warnings,
+        "blocking_reasons": preview_blocking_reasons,
         "raw": {
-            "request": {"product": product, "target_accounts": target_accounts, "material_ids": material_ids},
+            "request": {
+                "product": product,
+                "target_accounts": target_accounts,
+                "material_ids": material_ids,
+                "preview_mode": preview_mode,
+                "batch_size": batch_size,
+                "target_owner": target_owner,
+            },
             "upload_material_called": False,
-            "upload_items": upload_items,
+            "upload_items": raw_upload_items,
+            "upload_batches": raw_upload_batches,
+            "batch_size": batch_size,
+            "upload_items_omitted": preload_too_large,
+            "upload_item_count": len(upload_items),
+            "upload_batch_count": len(upload_batches),
+            "display_row_count": len(display_rows),
+            "display_row_limit": PRELOAD_TABLE_ROW_LIMIT if is_preload else None,
+            "single_execute_pair_limit": PRELOAD_SINGLE_EXECUTE_PAIR_LIMIT if is_preload else None,
+            "target_owner": target_owner,
         },
     }
     payload["artifact_path"] = str(write_run_artifact(runs_dir, PREVIEW_WORKFLOW, payload))
@@ -166,17 +232,24 @@ def run_gravity_upload_execute_request(
             return payload
         upload_client = GravityMaterialClient(auth_payload)
 
-    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for item in upload_items:
-        grouped[_text(item.get("target_advertiser_id") or item.get("账户 ID"))].append(item)
-
+    batch_size = _batch_size((preview.get("raw") if isinstance(preview.get("raw"), dict) else {}).get("batch_size"))
+    grouped_account_ids = {
+        _text(item.get("target_advertiser_id") or item.get("账户 ID"))
+        for item in upload_items
+        if _text(item.get("target_advertiser_id") or item.get("账户 ID"))
+    }
+    upload_batches = _execution_batches(upload_items, batch_size=batch_size)
     results: list[dict[str, Any]] = []
     external_api_calls = 0
-    for advertiser_id, items in grouped.items():
-        material_ids = [_text(item.get("gravity_material_id") or item.get("引力素材 ID")) for item in items if _text(item.get("gravity_material_id") or item.get("引力素材 ID"))]
+    submitted_batch_count = 0
+    for batch in upload_batches:
+        advertiser_id = _text(batch.get("target_advertiser_id"))
+        items = [item for item in batch.get("items", []) if isinstance(item, dict)]
+        material_ids = list(batch.get("material_ids") or [])
         try:
             response = upload_client.upload_material_to_account(advertiser_id=advertiser_id, material_ids=material_ids)
             external_api_calls += 1
+            submitted_batch_count += 1
             task_id = _task_id(response)
             status = "uploading" if task_id else "failed"
             fail_reason = "" if task_id else _response_message(response) or "引力接口未返回 task_id"
@@ -220,8 +293,8 @@ def run_gravity_upload_execute_request(
         "external_api_calls": external_api_calls,
         "generated_at": _now_iso(),
         "中文摘要": (
-            f"引力素材上传任务已提交：素材 {len(results)} 条，账户 {len(grouped)} 个，"
-            f"失败 {failed_count} 条；已记录引力 task_id，等待后续状态回填。"
+            f"引力素材上传任务已提交：素材 {len(results)} 条，账户 {len(grouped_account_ids)} 个，"
+            f"批次 {submitted_batch_count} 个，失败 {failed_count} 条；已记录引力 task_id，等待后续状态回填。"
         ),
         "summary": {
             "title": "引力素材上传执行",
@@ -229,14 +302,16 @@ def run_gravity_upload_execute_request(
             "risk_level": "high",
             "execution_enabled": True,
             "items": [
-                {"label": "目标账户", "value": len(grouped)},
+                {"label": "目标账户", "value": len(grouped_account_ids)},
+                {"label": "提交批次", "value": submitted_batch_count},
                 {"label": "已提交素材", "value": len(results) - failed_count},
                 {"label": "失败素材", "value": failed_count},
                 {"label": "引力任务", "value": len({row["引力任务 ID"] for row in results if row["引力任务 ID"]})},
             ],
-            "warnings": ["上传是异步任务；创建计划必须等状态完成并回填合法媒体素材 ID 后才能使用。"],
+            "warnings": ["素材铺货是异步任务；要等系统回填合法媒体素材 ID 后，创建计划才能使用。"],
             "blocking_reasons": [],
-            "target_account_count": len(grouped),
+            "target_account_count": len(grouped_account_ids),
+            "submitted_batch_count": submitted_batch_count,
             "submitted_material_count": len(results) - failed_count,
             "failed_material_count": failed_count,
             "upload_task_count": len({row["引力任务 ID"] for row in results if row["引力任务 ID"]}),
@@ -246,11 +321,16 @@ def run_gravity_upload_execute_request(
             "columns": ["账户名", "账户 ID", "素材名", "引力素材 ID", "MD5", "引力任务 ID", "状态", "失败原因"],
             "rows": results,
         },
-        "warnings": ["上传是异步任务；创建计划必须等状态完成并回填合法媒体素材 ID 后才能使用。"],
+        "warnings": ["素材铺货是异步任务；要等系统回填合法媒体素材 ID 后，创建计划才能使用。"],
         "blocking_reasons": [],
         "raw": {
             "preview_path": preview_path,
             "upload_items": upload_items,
+            "upload_batches": [
+                {key: value for key, value in batch.items() if key != "items"}
+                for batch in upload_batches
+            ],
+            "batch_size": batch_size,
             "upload_material_called": True,
         },
     }
@@ -723,9 +803,76 @@ def _target_accounts(value: Any) -> list[dict[str, str]]:
             {
                 "advertiser_id": advertiser_id,
                 "account_name": _text(row.get("account_name") if isinstance(row, dict) else "") or advertiser_id,
+                "account_source": _text(row.get("account_source") if isinstance(row, dict) else ""),
             }
         )
     return result
+
+
+def _batch_size(value: Any) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = 50
+    return min(max(parsed, 1), 50)
+
+
+def _chunks(items: list[Any], size: int) -> list[list[Any]]:
+    chunk_size = max(size, 1)
+    return [items[index : index + chunk_size] for index in range(0, len(items), chunk_size)]
+
+
+def _upload_batches(upload_items: list[dict[str, Any]], *, batch_size: int) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in upload_items:
+        grouped[_text(item.get("target_advertiser_id") or item.get("账户 ID"))].append(item)
+    batches: list[dict[str, Any]] = []
+    for advertiser_id, items in grouped.items():
+        for index, chunk in enumerate(_chunks(items, batch_size), start=1):
+            batches.append(
+                {
+                    "batch_key": f"{_text(chunk[0].get('product'))}_{advertiser_id}_{index}",
+                    "target_advertiser_id": advertiser_id,
+                    "target_account_name": _text(chunk[0].get("target_account_name") or chunk[0].get("账户名")),
+                    "target_account_source": _text(chunk[0].get("target_account_source") or chunk[0].get("账户来源")),
+                    "material_ids": [
+                        _text(item.get("gravity_material_id") or item.get("引力素材 ID"))
+                        for item in chunk
+                        if _text(item.get("gravity_material_id") or item.get("引力素材 ID"))
+                    ],
+                    "material_count": len(chunk),
+                }
+            )
+    return batches
+
+
+def _execution_batches(upload_items: list[dict[str, Any]], *, batch_size: int) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in upload_items:
+        advertiser_id = _text(item.get("target_advertiser_id") or item.get("账户 ID"))
+        if advertiser_id:
+            grouped[advertiser_id].append(item)
+    batches: list[dict[str, Any]] = []
+    for advertiser_id, items in grouped.items():
+        for index, chunk in enumerate(_chunks(items, batch_size), start=1):
+            material_ids = [
+                _text(item.get("gravity_material_id") or item.get("引力素材 ID"))
+                for item in chunk
+                if _text(item.get("gravity_material_id") or item.get("引力素材 ID"))
+            ]
+            if not material_ids:
+                continue
+            batches.append(
+                {
+                    "batch_key": f"{_text(chunk[0].get('product'))}_{advertiser_id}_{index}",
+                    "target_advertiser_id": advertiser_id,
+                    "target_account_name": _text(chunk[0].get("target_account_name") or chunk[0].get("账户名")),
+                    "material_ids": material_ids,
+                    "material_count": len(material_ids),
+                    "items": chunk,
+                }
+            )
+    return batches
 
 
 def _material_ids(value: Any) -> list[str]:
@@ -750,6 +897,12 @@ def _task_ids(value: Any) -> list[str]:
             seen.add(text)
             result.append(text)
     return result
+
+
+def _display_preview_rows(table_rows: list[dict[str, Any]], *, is_preload: bool) -> list[dict[str, Any]]:
+    if not is_preload:
+        return table_rows
+    return table_rows[:PRELOAD_TABLE_ROW_LIMIT]
 
 
 def _upload_items(preview: dict[str, Any]) -> list[dict[str, Any]]:

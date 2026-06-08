@@ -102,11 +102,11 @@ def test_gravity_material_qualification_summarizes_local_materials_without_exter
     assert result["summary"]["not_uploaded_count"] == 3
     assert result["summary"]["has_performance_count"] == 1
     assert result["中文摘要"] == (
-        "点点英雄可用素材检查完成：素材 4 个，可用于后续 2 个，不可用 2 个，"
-        "缺 MD5 1 个，已上传 1 个，未上传 3 个；未上传素材、未创建广告。"
+        "点点英雄可用素材检查完成：素材 4 个，可铺货 2 个，不可用 2 个，"
+        "缺 MD5 1 个，已铺货 1 个，未铺货 3 个；未上传素材、未创建广告。"
     )
     assert result["table"]["rows"][0]["产品"] == "点点英雄"
-    assert result["table"]["rows"][0]["可用于后续"] == 2
+    assert result["table"]["rows"][0]["可铺货"] == 2
     assert result["table"]["rows"][0]["不可用"] == 2
     raw_text = str(result["raw"])
     assert "upload_material" not in raw_text
