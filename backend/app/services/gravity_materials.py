@@ -88,6 +88,7 @@ def gravity_sync_readiness(*, project_root: str | Path, product: str = "", auth_
             blocking_reasons.append(f"引力 Token 文件缺少字段：{', '.join(missing)}")
 
     status = "blocked" if blocking_reasons else "ready"
+    next_action = _sync_next_action(bindings=bindings, status=status, blocking_reasons=blocking_reasons)
     rows = [
         {
             "检查项": "同步内容",
@@ -126,6 +127,7 @@ def gravity_sync_readiness(*, project_root: str | Path, product: str = "", auth_
                 {"label": "真实媒体动作", "value": "否"},
                 {"label": "下载素材文件", "value": "否"},
                 {"label": "影响每日账户素材同步", "value": "否"},
+                {"label": "下一步", "value": next_action["title"]},
             ],
             "warnings": [
                 "这里只读取引力素材资料并写入 RoiBang 本地数据库；不会下载素材文件，不会上传到巨量账户。",
@@ -145,6 +147,7 @@ def gravity_sync_readiness(*, project_root: str | Path, product: str = "", auth_
             "external_api_calls": 0,
             "will_download_material_files": False,
             "will_touch_account_material_sync": False,
+            "next_action": next_action,
         },
     }
 
@@ -609,6 +612,28 @@ def _upload_status_label(status: str) -> str:
         "failed": "失败",
     }
     return labels.get(_text(status), _text(status))
+
+
+def _sync_next_action(*, bindings: list[dict[str, Any]], status: str, blocking_reasons: list[str]) -> dict[str, str]:
+    if not bindings:
+        return {
+            "title": "绑定素材来源",
+            "description": "先在引力素材库页面保存产品和目标专辑绑定，再更新引力素材。",
+        }
+    if any("Token" in reason or "token" in reason.lower() for reason in blocking_reasons):
+        return {
+            "title": "检查引力 Token",
+            "description": "先确认引力 Token 文件存在且字段完整；系统不会展示 token 明文。",
+        }
+    if status == "blocked":
+        return {
+            "title": "处理阻塞原因",
+            "description": "先处理准备检查里列出的阻塞原因，再生成更新预览。",
+        }
+    return {
+        "title": "更新引力素材",
+        "description": "准备检查已通过，可以生成更新预览；确认后只读取引力素材资料并写入本地。",
+    }
 
 
 def _material_rows(db_path: Path, *, product: str, status: str, keyword: str, limit: int) -> list[dict[str, Any]]:

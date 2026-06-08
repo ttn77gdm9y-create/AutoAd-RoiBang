@@ -101,6 +101,25 @@ def test_gravity_material_sync_readiness_blocks_missing_token_without_external_c
     assert payload["raw"]["external_api_calls"] == 0
     assert payload["raw"]["will_download_material_files"] is False
     assert payload["raw"]["will_touch_account_material_sync"] is False
+    assert payload["raw"]["next_action"]["title"] == "检查引力 Token"
+    assert "先确认引力 Token 文件" in payload["raw"]["next_action"]["description"]
+    assert {"label": "下一步", "value": "检查引力 Token"} in payload["summary"]["items"]
+
+
+def test_gravity_material_sync_readiness_tells_user_to_bind_source_first(tmp_path: Path):
+    response = _client(tmp_path).get(
+        "/api/gravity-materials/sync-readiness",
+        params={"product": "点点英雄", "auth_file": "data/missing-gravity-token.json"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["status"] == "blocked"
+    assert payload["raw"]["next_action"] == {
+        "title": "绑定素材来源",
+        "description": "先在引力素材库页面保存产品和目标专辑绑定，再更新引力素材。",
+    }
+    assert {"label": "下一步", "value": "绑定素材来源"} in payload["summary"]["items"]
 
 
 def test_gravity_material_sync_readiness_explains_local_metadata_sync_scope(tmp_path: Path):
@@ -145,6 +164,10 @@ def test_gravity_material_sync_readiness_explains_local_metadata_sync_scope(tmp_
     assert items["影响每日账户素材同步"] == "否"
     assert payload["table"]["rows"][0]["同步内容"] == "素材名、归属专辑/文件夹、引力素材 ID、MD5、状态和表现数据"
     assert payload["raw"]["source"] == "gravity_engine"
+    assert payload["raw"]["next_action"] == {
+        "title": "更新引力素材",
+        "description": "准备检查已通过，可以生成更新预览；确认后只读取引力素材资料并写入本地。",
+    }
 
 
 def test_gravity_materials_list_reads_local_gravity_source_materials(tmp_path: Path):

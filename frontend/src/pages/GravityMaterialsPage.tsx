@@ -13,6 +13,7 @@ import { InlineTaskStatus } from "../components/WorkflowScaffold";
 import { EXECUTE_CONFIRMATION_PHRASE } from "../constants/safety";
 import type { ChineseResult, TaskDetailResponse } from "../types/api";
 import { isTaskActive, isTaskCompleted, taskStatus } from "../utils/workflowState";
+import { buildGravityMaterialFlowState } from "./gravityMaterialsFlow";
 import { buildAlbumChoiceGroups, flattenAlbumChoiceGroups, type AlbumChoiceGroup, type AlbumChoiceOption, type TargetAlbumRow } from "./gravityMaterialsOptions";
 import { buildGravityMaterialSyncRequest, gravityMaterialSyncCopy } from "./gravityMaterialsSync";
 
@@ -188,8 +189,28 @@ export function GravityMaterialsPage() {
   const uploadTaskCurrentStatus = taskStatus(uploadTaskDetail.data, uploadExecuteResult);
   const statusRefreshCurrentStatus = taskStatus(statusRefreshTaskDetail.data, uploadStatusRefreshResult);
   const totalMaterials = statNumber(qualificationStats.get("素材数"));
+  const eligibleMaterials = statNumber(qualificationStats.get("可用于后续"));
   const hasBinding = bindingRows.length > 0;
-  const currentGravityStep = selectedUploadMaterialIds.length ? 3 : totalMaterials > 0 ? 2 : hasBinding ? 1 : 0;
+  const flowState = useMemo(
+    () =>
+      buildGravityMaterialFlowState({
+        bindingCount: bindingRows.length,
+        totalMaterials,
+        eligibleMaterials,
+        selectedMaterials: selectedUploadMaterialIds.length,
+        selectedAccounts: targetAccountIds.length,
+        readinessStatus: syncReadiness.data?.summary.status,
+        readinessNextAction: readinessNextActionTitle(syncReadiness.data),
+      }),
+    [
+      bindingRows.length,
+      eligibleMaterials,
+      selectedUploadMaterialIds.length,
+      syncReadiness.data,
+      targetAccountIds.length,
+      totalMaterials,
+    ],
+  );
 
   useEffect(() => {
     if (!gravityTaskIds.length) {
@@ -359,7 +380,7 @@ export function GravityMaterialsPage() {
               刷新页面数据
             </Button>
             <Link to="/workflow-center">
-              <Button icon={<SyncOutlined />}>去自动化工作台同步</Button>
+              <Button icon={<SyncOutlined />}>查看自动化工作台</Button>
             </Link>
           </Space>
         </div>
@@ -371,13 +392,14 @@ export function GravityMaterialsPage() {
         <Steps
           size="small"
           className="gravity-material-steps"
-          current={currentGravityStep}
-          items={[
-            { title: "绑定来源", description: "选产品和引力专辑" },
-            { title: "保存本地", description: "读取资料，不下载文件" },
-            { title: "查看素材", description: "看资格和表现" },
-            { title: "生成推送预览", description: "真实动作前复核" },
-          ]}
+          current={flowState.currentStep}
+          items={flowState.steps}
+        />
+        <Alert
+          type={flowState.recommendation.type}
+          showIcon
+          message={flowState.recommendation.title}
+          description={flowState.recommendation.description}
         />
         <div className="gravity-qualification-strip">
           {qualificationStatsConfig.map((item) => (
@@ -488,9 +510,9 @@ export function GravityMaterialsPage() {
                     <Button icon={<SaveOutlined />} type="primary" loading={saveBinding.isPending} onClick={() => saveBinding.mutate()}>
                       保存绑定
                     </Button>
-                    <Link to="/workflow-center">
-                      <Button icon={<SyncOutlined />}>去同步资料</Button>
-                    </Link>
+                    <Button icon={<SyncOutlined />} onClick={scrollToSyncCard}>
+                      去更新素材
+                    </Button>
                   </Space>
                 </Form>
                 <Table<BindingRow>
@@ -526,7 +548,7 @@ export function GravityMaterialsPage() {
             ) : null}
           </Col>
           <Col xs={24} xl={15}>
-            <Card size="small" title={gravityMaterialSyncCopy.title}>
+            <Card size="small" title={gravityMaterialSyncCopy.title} id="gravity-sync-card">
               <Space direction="vertical" size="middle" className="full-width">
                 <Alert type="info" showIcon message={gravityMaterialSyncCopy.description} />
                 <SummaryPanel result={syncReadiness.data} loading={syncReadiness.isFetching} detailsCollapsed showArtifactPath={false} showRawJson={false} />
@@ -625,11 +647,9 @@ export function GravityMaterialsPage() {
                     showIcon
                     message="已经有绑定，但本地还没有引力素材资料。下一步运行“更新引力素材”。"
                     action={
-                      <Link to="/workflow-center">
-                        <Button size="small" icon={<SyncOutlined />}>
-                          去更新
-                        </Button>
-                      </Link>
+                      <Button size="small" icon={<SyncOutlined />} onClick={scrollToSyncCard}>
+                        去更新素材
+                      </Button>
                     }
                   />
                 ) : null}
@@ -854,6 +874,19 @@ function targetAlbumRowsFromResult(result?: ChineseResult): TargetAlbumRow[] {
 
 function bindingRowsFromResult(result?: ChineseResult): BindingRow[] {
   return Array.isArray(result?.raw?.bindings) ? (result.raw.bindings as BindingRow[]) : [];
+}
+
+function readinessNextActionTitle(result?: ChineseResult): string {
+  const nextAction = result?.raw?.next_action;
+  if (!nextAction || typeof nextAction !== "object") {
+    return "";
+  }
+  const title = (nextAction as { title?: unknown }).title;
+  return typeof title === "string" ? title : "";
+}
+
+function scrollToSyncCard() {
+  document.getElementById("gravity-sync-card")?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function summaryLookup(result?: ChineseResult): Map<string, string | number | boolean | null> {
