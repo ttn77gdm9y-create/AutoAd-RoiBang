@@ -125,7 +125,24 @@ def run_gravity_material_sync_request(
 
     imported_count = sum(int(item["product_source_materials_imported"]) for item in imports)
     inactive_rows = sum(int(item["inactive_product_source_materials"]) for item in imports)
+    total_folders_scanned = sum(folders_scanned_by_binding.values())
+    total_pages_read = sum(pages_read_by_binding.values())
+    zero_material_warning = _zero_material_warning(
+        binding_count=len(bindings),
+        materials_received=imported_count + disabled_count,
+        folders_scanned=total_folders_scanned,
+        pages_read=total_pages_read,
+    )
+    result_warnings = list(warnings)
+    if zero_material_warning:
+        result_warnings.append(zero_material_warning)
     status = "completed"
+    chinese_summary = (
+        f"更新引力素材完成：读取 {len(bindings)} 个绑定，保存 {imported_count} 个可用素材资料，"
+        f"跳过 {disabled_count} 个禁用素材；未下载素材文件、未上传素材、未创建广告。"
+    )
+    if zero_material_warning:
+        chinese_summary = f"更新引力素材完成，但没有同步到素材：{zero_material_warning}未下载素材文件、未上传素材、未创建广告。"
     payload = {
         "ok": True,
         "workflow": WORKFLOW,
@@ -134,10 +151,7 @@ def run_gravity_material_sync_request(
         "execution_enabled": False,
         "external_api_calls": external_api_calls,
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "中文摘要": (
-            f"更新引力素材完成：读取 {len(bindings)} 个绑定，保存 {imported_count} 个可用素材资料，"
-            f"跳过 {disabled_count} 个禁用素材；未下载素材文件、未上传素材、未创建广告。"
-        ),
+        "中文摘要": chinese_summary,
         "summary": {
             "title": "更新引力素材",
             "status": status,
@@ -146,8 +160,8 @@ def run_gravity_material_sync_request(
             "active_materials_imported": imported_count,
             "inactive_materials_skipped": disabled_count,
             "inactive_product_source_materials": inactive_rows,
-            "folders_scanned": sum(folders_scanned_by_binding.values()),
-            "pages_read": sum(pages_read_by_binding.values()),
+            "folders_scanned": total_folders_scanned,
+            "pages_read": total_pages_read,
             "rollup_rows_written": rollup_rows_written,
             "source_advertiser_id": source_advertiser_id,
             "organization_id": organization_id,
@@ -163,7 +177,7 @@ def run_gravity_material_sync_request(
                 inactive_rows=inactive_rows,
             ),
         },
-        "warnings": warnings + ["更新引力素材只读取素材资料并写入本地数据库，不下载素材文件、不上传素材、不创建广告。"],
+        "warnings": result_warnings + ["更新引力素材只读取素材资料并写入本地数据库，不下载素材文件、不上传素材、不创建广告。"],
         "blocking_reasons": [],
         "guardrails": ["不调用 upload_material。", "不创建广告。", "不修改预算、出价或项目状态。"],
         "raw": raw,
@@ -291,9 +305,9 @@ def _scan_binding_materials(
             folders_scanned += 1
         page = 1
         while page <= max_pages:
+            request_album_id = folder_id or binding["album_id"]
             payload = client.get_album_material_list(
-                album_id=binding["album_id"],
-                folder_id=folder_id,
+                album_id=request_album_id,
                 page=page,
                 page_size=page_size,
             )
@@ -337,6 +351,7 @@ def _scan_binding_materials(
                 {
                     "product": binding["product"],
                     "album_id": binding["album_id"],
+                    "request_album_id": request_album_id,
                     "folder_id": folder_id,
                     "folder_name": _text(scope.get("folder_name")),
                     "folder_path": _text(scope.get("folder_path")),
@@ -569,6 +584,14 @@ def _summary_rows(
             }
         )
     return rows
+
+
+def _zero_material_warning(*, binding_count: int, materials_received: int, folders_scanned: int, pages_read: int) -> str:
+    if binding_count <= 0 or materials_received > 0:
+        return ""
+    if folders_scanned > 0:
+        return f"已扫描 {folders_scanned} 个文件夹，但没有发现素材；请检查绑定范围或引力接口返回。"
+    return f"已读取 {pages_read} 页引力列表，但没有发现素材；请检查绑定的专辑或文件夹是否为空。"
 
 
 def _report_date_range(cfg: dict[str, Any]) -> dict[str, str]:

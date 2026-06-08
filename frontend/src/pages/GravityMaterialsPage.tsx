@@ -329,6 +329,7 @@ export function GravityMaterialsPage() {
   });
   const canPreviewUpload = Boolean(selectedProduct && selectedTargetAccounts.length && selectedUploadMaterialIds.length) && !previewUpload.isPending;
   const canRunSync = Boolean(syncPreviewResult?.raw.can_run) && !runSync.isPending && !isTaskActive(syncTaskCurrentStatus);
+  const syncBusy = previewSync.isPending || runSync.isPending || isTaskActive(syncTaskCurrentStatus);
 
   function selectProduct(product: string) {
     setSelectedProduct(product);
@@ -368,6 +369,23 @@ export function GravityMaterialsPage() {
       folder_id: String(row.folder_id || ""),
       folder_name: String(row.folder_name || ""),
     }));
+  }
+
+  async function startSyncFromMaterialList() {
+    if (syncBusy) {
+      return;
+    }
+    try {
+      const preview = syncPreviewResult?.raw.can_run ? syncPreviewResult : await previewSync.mutateAsync();
+      if (!preview?.raw.can_run) {
+        antdMessage.warning("更新前检查未通过，请查看第 2 步明细。");
+        scrollToSyncCard();
+        return;
+      }
+      await runSync.mutateAsync();
+    } catch (error) {
+      antdMessage.error((error as Error).message || "更新引力素材失败，请查看第 2 步明细。");
+    }
   }
 
   return (
@@ -511,7 +529,7 @@ export function GravityMaterialsPage() {
                       保存绑定
                     </Button>
                     <Button icon={<SyncOutlined />} onClick={scrollToSyncCard}>
-                      去更新素材
+                      查看更新区域
                     </Button>
                   </Space>
                 </Form>
@@ -610,7 +628,7 @@ export function GravityMaterialsPage() {
                         重新检查
                       </Button>
                       <Button icon={<FileSearchOutlined />} onClick={() => previewSync.mutate()} loading={previewSync.isPending}>
-                        生成同步预览
+                        生成更新预览
                       </Button>
                       <Button
                         icon={<PlayCircleOutlined />}
@@ -619,7 +637,7 @@ export function GravityMaterialsPage() {
                         loading={runSync.isPending}
                         onClick={() => runSync.mutate()}
                       >
-                        启动资料同步
+                        启动更新素材
                       </Button>
                     </Space>
                   </Col>
@@ -645,11 +663,29 @@ export function GravityMaterialsPage() {
                   <Alert
                     type="info"
                     showIcon
-                    message="已经有绑定，但本地还没有引力素材资料。下一步运行“更新引力素材”。"
+                    message={
+                      syncBusy
+                        ? "正在更新引力素材。完成后这里会自动刷新本地素材库。"
+                        : isTaskCompleted(syncTaskCurrentStatus)
+                          ? "刚刚更新完成，但本地仍没有素材。请查看第 2 步结果，重点看绑定范围、扫描文件夹数和发现素材数。"
+                          : "已经有绑定，但本地还没有引力素材资料。下一步运行“更新引力素材”。"
+                    }
                     action={
-                      <Button size="small" icon={<SyncOutlined />} onClick={scrollToSyncCard}>
-                        去更新素材
-                      </Button>
+                      <Space wrap>
+                        <Button
+                          size="small"
+                          type="primary"
+                          icon={<SyncOutlined />}
+                          loading={syncBusy}
+                          disabled={!hasBinding || syncBusy}
+                          onClick={() => void startSyncFromMaterialList()}
+                        >
+                          立即更新引力素材
+                        </Button>
+                        <Button size="small" onClick={scrollToSyncCard}>
+                          查看第 2 步详情
+                        </Button>
+                      </Space>
                     }
                   />
                 ) : null}

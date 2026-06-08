@@ -85,7 +85,9 @@ test("keeps the gravity material update prompt inside the gravity materials page
   const source = readFileSync(new URL("../src/pages/GravityMaterialsPage.tsx", import.meta.url), "utf-8");
 
   assert.doesNotMatch(source, /action=\{[\s\S]*?<Link to="\/workflow-center">[\s\S]*?去更新[\s\S]*?<\/Link>/);
-  assert.match(source, /去更新素材/);
+  assert.match(source, /function startSyncFromMaterialList/);
+  assert.match(source, /立即更新引力素材/);
+  assert.match(source, /正在更新引力素材/);
 });
 
 test("renders numbered business sections and defaults the material list to all materials", () => {

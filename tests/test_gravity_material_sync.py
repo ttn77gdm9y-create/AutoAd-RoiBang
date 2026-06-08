@@ -109,7 +109,7 @@ class NestedFolderGravityMaterialClient:
         self.calls.append(f"get_album_material_list:{album_id}:{folder_id}:{page}:{page_size}")
         if page > 1:
             return {"code": 0, "data": {"list": [], "page_info": {"page": page, "total_page": 1}}}
-        if not folder_id:
+        if album_id == "album-1" and not folder_id:
             return {
                 "code": 0,
                 "data": {
@@ -120,7 +120,7 @@ class NestedFolderGravityMaterialClient:
                     "page_info": {"page": 1, "page_size": page_size, "total_number": 2, "total_page": 1},
                 },
             }
-        if folder_id == "folder-a":
+        if album_id == "folder-a" and not folder_id:
             return {
                 "code": 0,
                 "data": {
@@ -139,7 +139,7 @@ class NestedFolderGravityMaterialClient:
                     "page_info": {"page": 1, "page_size": page_size, "total_number": 1, "total_page": 1},
                 },
             }
-        if folder_id == "folder-b":
+        if album_id == "folder-b" and not folder_id:
             return {
                 "code": 0,
                 "data": {
@@ -149,7 +149,7 @@ class NestedFolderGravityMaterialClient:
                     "page_info": {"page": 1, "page_size": page_size, "total_number": 1, "total_page": 1},
                 },
             }
-        if folder_id == "folder-b-child":
+        if album_id == "folder-b-child" and not folder_id:
             return {
                 "code": 0,
                 "data": {
@@ -165,6 +165,33 @@ class NestedFolderGravityMaterialClient:
                             },
                         }
                     ],
+                    "page_info": {"page": 1, "page_size": page_size, "total_number": 1, "total_page": 1},
+                },
+            }
+        return {"code": 0, "data": {"list": [], "page_info": {"page": 1, "total_page": 1}}}
+
+    def get_material_report(self, *, material_ids: list[str], date_from: str, date_to: str, metrics: list[str]) -> dict:
+        self.calls.append(f"get_material_report:{','.join(material_ids)}:{date_from}:{date_to}")
+        return {"code": 0, "data": {"list": []}}
+
+
+class EmptyNestedFolderGravityMaterialClient:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def get_album_tree(self) -> dict:
+        self.calls.append("get_album_tree")
+        return {"code": 0, "data": {"tree": [{"id": "album-1", "label": "黑旗-6480咸鱼-微小合集"}]}}
+
+    def get_album_material_list(self, *, album_id: str, page: int, page_size: int, folder_id: str = "") -> dict:
+        self.calls.append(f"get_album_material_list:{album_id}:{folder_id}:{page}:{page_size}")
+        if page > 1:
+            return {"code": 0, "data": {"list": [], "page_info": {"page": page, "total_page": 1}}}
+        if album_id == "album-1":
+            return {
+                "code": 0,
+                "data": {
+                    "list": [{"type": 2, "group": {"id": "empty-folder", "name": "空文件夹", "material_num": 0}}],
                     "page_info": {"page": 1, "page_size": page_size, "total_number": 1, "total_page": 1},
                 },
             }
@@ -315,8 +342,8 @@ def test_gravity_material_sync_drills_bound_album_folders_before_importing(tmp_p
     assert result["summary"]["folders_scanned"] == 3
     assert result["table"]["rows"][0]["扫描文件夹"] == 3
     assert result["table"]["rows"][0]["发现素材"] == 2
-    assert "get_album_material_list:album-1:folder-a:1:10" in client.calls
-    assert "get_album_material_list:album-1:folder-b-child:1:10" in client.calls
+    assert "get_album_material_list:folder-a::1:10" in client.calls
+    assert "get_album_material_list:folder-b-child::1:10" in client.calls
 
     with sqlite3.connect(db_path) as conn:
         rows = conn.execute(
@@ -331,6 +358,41 @@ def test_gravity_material_sync_drills_bound_album_folders_before_importing(tmp_p
         ("gravity-folder-a-m-1", "基础素材A", "md5-folder-a", "基础素材"),
         ("gravity-folder-b-m-1", "外包素材B", "md5-folder-b", "郭靖"),
     ]
+
+
+def test_gravity_material_sync_warns_when_scan_finds_no_materials(tmp_path: Path):
+    db_path = tmp_path / "data" / "roibang_v2.sqlite3"
+    bootstrap_database(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO product_gravity_album_bindings (
+              product, album_id, album_name, folder_id, folder_name, is_active
+            ) VALUES ('点点英雄', 'album-1', '黑旗-6480咸鱼-微小合集', '', '', 1)
+            """
+        )
+    client = EmptyNestedFolderGravityMaterialClient()
+
+    result = run_gravity_material_sync_request(
+        {
+            "auth": {
+                "authorization": "token",
+                "gravity_cid": "182",
+                "gravity_email": "hongen@example.com",
+                "gravity_id": "406",
+            },
+            "target_album_names": ["黑旗-6480咸鱼-微小合集"],
+        },
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        client=client,
+    )
+
+    assert result["ok"] is True
+    assert result["summary"]["materials_received"] == 0
+    assert result["summary"]["folders_scanned"] == 1
+    assert "已扫描 1 个文件夹，但没有发现素材" in result["中文摘要"]
+    assert any("已扫描 1 个文件夹，但没有发现素材" in warning for warning in result["warnings"])
 
 
 def test_gravity_material_sync_blocks_when_no_active_bindings(tmp_path: Path):
