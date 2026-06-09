@@ -13,6 +13,7 @@ import { SummaryPanel } from "../components/SummaryPanel";
 import { InlineTaskStatus } from "../components/WorkflowScaffold";
 import { EXECUTE_CONFIRMATION_PHRASE } from "../constants/safety";
 import type { ChineseResult, TaskDetailResponse } from "../types/api";
+import { businessTableClassName, businessTableScrollX, businessTableSticky } from "../utils/tableLayout";
 import { DEFAULT_TABLE_PAGE_SIZE, TABLE_PAGE_SIZE_OPTIONS } from "../utils/tablePagination";
 import { isTaskActive, isTaskCompleted, taskStatus } from "../utils/workflowState";
 import { buildGravityMaterialFlowState } from "./gravityMaterialsFlow";
@@ -464,10 +465,12 @@ export function GravityMaterialsPage() {
                   message="先告诉系统：这个产品只从哪些引力专辑或文件夹同步素材。这里只展示允许同步的 3 个目标专辑，避免误选其他游戏素材。"
                 />
                 <Table<TargetAlbumRow>
+                  className={businessTableClassName("gravity-target-albums-table")}
                   rowKey={(row) => row["目标专辑"]}
                   size="small"
                   loading={albums.isLoading}
                   pagination={false}
+                  sticky={businessTableSticky}
                   dataSource={targetAlbumRows}
                   columns={[
                     {
@@ -561,10 +564,12 @@ export function GravityMaterialsPage() {
                   </Space>
                 </Form>
                 <Table<BindingRow>
+                  className={businessTableClassName("gravity-bindings-table")}
                   rowKey="id"
                   size="small"
                   loading={bindings.isLoading}
                   pagination={false}
+                  sticky={businessTableSticky}
                   dataSource={bindingRows}
                   columns={[
                     { title: "产品", dataIndex: "product" },
@@ -737,11 +742,13 @@ export function GravityMaterialsPage() {
                   </Col>
                 </Row>
                 <Table<MaterialRow>
+                  className={businessTableClassName("gravity-materials-table")}
                   rowKey={(row) => String(row["引力素材 ID"] ?? "")}
                   loading={materials.isLoading}
                   size="small"
                   columns={materialColumns()}
                   dataSource={materialRows}
+                  sticky={businessTableSticky}
                   rowSelection={{
                     selectedRowKeys: selectedUploadMaterialIds,
                     onChange: (keys) => {
@@ -755,7 +762,7 @@ export function GravityMaterialsPage() {
                       name: String(record["素材名"] ?? record["引力素材 ID"] ?? ""),
                     }),
                   }}
-                  scroll={{ x: "max-content" }}
+                  scroll={businessTableScrollX}
                   pagination={{
                     current: materialPagination.current,
                     pageSize: materialPagination.pageSize,

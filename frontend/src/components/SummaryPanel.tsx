@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 
 import type { ChineseResult } from "../types/api";
+import { businessTableClassName, businessTableScrollX, businessTableSticky } from "../utils/tableLayout";
 import { DEFAULT_TABLE_PAGE_SIZE, TABLE_PAGE_SIZE_OPTIONS } from "../utils/tablePagination";
 import { RawJsonDrawer } from "./RawJsonDrawer";
 
@@ -114,10 +115,12 @@ function PagedSummaryTable({ columns, dataSource, loading = false, rowClassName 
 
   return (
     <Table<KeyedSummaryRow>
+      className={businessTableClassName("summary-result-table")}
       rowKey="__row_key"
       loading={loading}
       columns={columns}
       dataSource={dataSource}
+      sticky={businessTableSticky}
       pagination={{
         ...pagination,
         showSizeChanger: true,
@@ -126,7 +129,7 @@ function PagedSummaryTable({ columns, dataSource, loading = false, rowClassName 
         onShowSizeChange: (_current, pageSize) => setPagination({ current: 1, pageSize }),
       }}
       size="small"
-      scroll={{ x: "max-content" }}
+      scroll={businessTableScrollX}
       rowClassName={rowClassName}
       onRow={onRow}
     />

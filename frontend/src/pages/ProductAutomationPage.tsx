@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from "react";
 import { apiGet, apiPost, apiUpload, apiUrl } from "../api/client";
 import { SummaryPanel } from "../components/SummaryPanel";
 import type { ChineseResult } from "../types/api";
+import { businessTableClassName, businessTableSticky } from "../utils/tableLayout";
 
 type ProductAutomationForm = {
   product_key: string;
@@ -294,11 +295,13 @@ export function ProductAutomationPage() {
                 <Col xs={24}>
                   <Form.Item label="定时任务开关">
                     <Table<JobSwitchRow>
+                      className={businessTableClassName("product-automation-jobs-table")}
                       size="small"
                       rowKey="value"
                       pagination={false}
                       columns={taskSwitchColumns}
                       dataSource={taskSwitchRows}
+                      sticky={businessTableSticky}
                       scroll={{ x: 680 }}
                     />
                     <Typography.Text type="secondary" className="allowed-account-help">

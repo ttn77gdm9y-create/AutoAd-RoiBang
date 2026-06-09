@@ -6,6 +6,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { apiGet } from "../api/client";
 import { SummaryPanel } from "../components/SummaryPanel";
 import type { TaskDetailResponse, TaskListResponse, TaskRow } from "../types/api";
+import { businessTableClassName, businessTableScrollX, businessTableSticky } from "../utils/tableLayout";
 import { DEFAULT_TABLE_PAGE_SIZE, TABLE_PAGE_SIZE_OPTIONS } from "../utils/tablePagination";
 
 export function TasksPage() {
@@ -53,6 +54,7 @@ export function TasksPage() {
       />
       {tasks.error ? <Alert type="error" showIcon message={(tasks.error as Error).message} /> : null}
       <Table<TaskRow>
+        className={businessTableClassName("tasks-table")}
         rowKey="task_id"
         loading={tasks.isLoading}
         dataSource={tasks.data?.items ?? []}
@@ -85,7 +87,8 @@ export function TasksPage() {
           { title: "更新时间", dataIndex: "updated_at" },
         ]}
         size="small"
-        scroll={{ x: "max-content" }}
+        sticky={businessTableSticky}
+        scroll={businessTableScrollX}
         pagination={{
           current: tasksPagination.current,
           pageSize: tasksPagination.pageSize,

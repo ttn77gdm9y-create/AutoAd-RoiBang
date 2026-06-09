@@ -15,6 +15,10 @@ body {
   min-height: 100vh;
 }
 
+.app-shell > .ant-layout {
+  min-width: 0;
+}
+
 .app-sider {
   background: #172026 !important;
 }
@@ -27,11 +31,14 @@ body {
 }
 
 .app-content {
+  min-width: 0;
   min-height: 100vh;
+  overflow-x: clip;
   padding: 24px;
 }
 
 .page {
+  width: 100%;
   max-width: 1440px;
   margin: 0 auto;
 }
@@ -100,7 +107,12 @@ body {
 .import-column {
   display: grid;
   gap: 12px;
+  min-width: 0;
   align-content: start;
+}
+
+.import-column.full-width {
+  grid-column: 1 / -1;
 }
 
 .bulk-edit-panel {
@@ -118,13 +130,53 @@ body {
   min-width: 140px;
 }
 
-.accounts-table .ant-table-pagination {
+.business-table {
+  min-width: 0;
+}
+
+.business-table.ant-table-wrapper {
+  width: 100%;
+  max-width: 100%;
+}
+
+.business-table .ant-table-wrapper,
+.business-table .ant-spin-nested-loading,
+.business-table .ant-spin-container,
+.business-table .ant-table {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.business-table .ant-table-container {
+  max-width: 100%;
+}
+
+.business-table .ant-table-body {
+  overflow-x: auto !important;
+}
+
+.business-table .ant-table-sticky-holder {
+  z-index: 4;
+}
+
+.business-table .ant-table-thead > tr > th {
+  white-space: nowrap;
+}
+
+.business-table .ant-table-cell {
+  vertical-align: middle;
+}
+
+.business-table .ant-table-pagination {
   justify-content: flex-start;
   position: sticky;
   left: 0;
+  z-index: 3;
   width: fit-content;
   max-width: 100%;
-  padding-left: 4px;
+  padding: 10px 4px 4px;
+  background: #ffffff;
 }
 
 .operation-select {
@@ -268,6 +320,12 @@ body {
 .full-width,
 .confirm-panel {
   width: 100%;
+}
+
+.full-width.ant-space,
+.full-width > .ant-space-item {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .workflow-steps {
@@ -468,5 +526,15 @@ body {
 
   .workflow-select {
     width: 100%;
+  }
+}
+
+@media (min-width: 992px) {
+  .app-sider {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+    align-self: flex-start;
   }
 }

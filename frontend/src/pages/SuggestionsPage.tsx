@@ -27,6 +27,7 @@ import { apiGet, apiPost } from "../api/client";
 import { InlineTaskStatus, WorkflowSteps } from "../components/WorkflowScaffold";
 import { SummaryPanel } from "../components/SummaryPanel";
 import type { ChineseResult, TaskDetailResponse } from "../types/api";
+import { businessTableClassName, businessTableScrollX, businessTableSticky } from "../utils/tableLayout";
 import { DEFAULT_TABLE_PAGE_SIZE, TABLE_PAGE_SIZE_OPTIONS } from "../utils/tablePagination";
 import { isTaskActive, isTaskCompleted, taskStatus } from "../utils/workflowState";
 
@@ -1081,10 +1082,12 @@ export function SuggestionsPage() {
               />
             ) : null}
             <Table
+              className={businessTableClassName("suggestions-table")}
               rowKey={(row) => String(row["建议 ID"] ?? "")}
               loading={suggestions.isLoading}
               columns={suggestionColumns}
               dataSource={visibleSuggestionRows}
+              sticky={businessTableSticky}
               pagination={{
                 current: suggestionsPagination.current,
                 pageSize: suggestionsPagination.pageSize,
@@ -1094,7 +1097,7 @@ export function SuggestionsPage() {
                 onShowSizeChange: (_current, pageSize) => setSuggestionsPagination({ current: 1, pageSize }),
               }}
               size="small"
-              scroll={{ x: "max-content" }}
+              scroll={businessTableScrollX}
               expandable={{
                 expandedRowRender: (row) => (
                   <Descriptions size="small" column={{ xs: 1, md: 2 }} bordered>
@@ -1495,12 +1498,14 @@ export function SuggestionsPage() {
                   message="所选扩量机会需要拆分批次；请按批次检查，再进入创建计划页确认。"
                 />
                 <Table
+                  className={businessTableClassName("create-plan-groups-table")}
                   rowKey="groupId"
                   columns={createPlanGroupColumns}
                   dataSource={createPlanGroups}
                   pagination={false}
                   size="small"
-                  scroll={{ x: "max-content" }}
+                  sticky={businessTableSticky}
+                  scroll={businessTableScrollX}
                 />
                 {createPlanGroupPreview.error ? (
                   <Alert type="error" showIcon message={(createPlanGroupPreview.error as Error).message} />

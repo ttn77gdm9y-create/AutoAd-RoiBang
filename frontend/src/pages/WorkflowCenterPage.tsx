@@ -10,6 +10,7 @@ import { apiGet, apiPost } from "../api/client";
 import { SummaryPanel } from "../components/SummaryPanel";
 import { InlineTaskStatus } from "../components/WorkflowScaffold";
 import type { ChineseResult, TaskDetailResponse, WorkflowCatalogItem, WorkflowParameter, WorkflowRunResponse } from "../types/api";
+import { businessTableClassName, businessTableSticky } from "../utils/tableLayout";
 
 type WorkflowRequest = Record<string, string>;
 
@@ -117,11 +118,13 @@ export function WorkflowCenterPage() {
           <Col xs={24} xl={9}>
             <Card size="small" title="任务状态列表">
               <Table<WorkflowCatalogItem>
+                className={businessTableClassName("workflow-catalog-table")}
                 rowKey="workflow_id"
                 loading={catalog.isLoading}
                 dataSource={workflows}
                 pagination={false}
                 size="small"
+                sticky={businessTableSticky}
                 rowClassName={(record) => (record.workflow_id === selectedWorkflowId ? "workflow-row-selected" : "summary-row-clickable")}
                 onRow={(record) => ({ onClick: () => selectWorkflow(record.workflow_id) })}
                 columns={workflowColumns()}

@@ -8,6 +8,7 @@ import { useMemo, useState } from "react";
 import { apiGet, apiPost, apiUpload, apiUrl } from "../api/client";
 import { SummaryPanel } from "../components/SummaryPanel";
 import type { ChineseResult } from "../types/api";
+import { businessTableClassName, businessTableSticky } from "../utils/tableLayout";
 import { accountTablePagination, accountTableScroll } from "./accountsPageLayout";
 
 type AccountRow = Record<string, string | number | boolean | null>;
@@ -235,12 +236,13 @@ export function AccountsPage() {
               <Tag color="default">当前 {accountCount}</Tag>
             </Space>
             <Table<AccountRow>
-              className="accounts-table"
+              className={businessTableClassName("accounts-table")}
               rowKey={(row) => String(row["账户 ID"] ?? "")}
               size="small"
               loading={query.isLoading}
               dataSource={accountRows}
               columns={accountColumns()}
+              sticky={businessTableSticky}
               rowSelection={{
                 selectedRowKeys: selectedAccountIds,
                 onChange: (keys) => {
