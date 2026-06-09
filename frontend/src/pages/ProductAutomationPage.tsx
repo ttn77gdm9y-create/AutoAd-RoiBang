@@ -1,6 +1,7 @@
 import { DownloadOutlined, FileSearchOutlined, SaveOutlined, UploadOutlined } from "@ant-design/icons";
-import { Alert, Button, Card, Checkbox, Col, Form, Input, Row, Select, Space, Typography, Upload, message as antdMessage } from "antd";
+import { Alert, Button, Card, Col, Form, Input, Row, Select, Space, Switch, Table, Tag, Typography, Upload, message as antdMessage } from "antd";
 import type { UploadFile } from "antd";
+import type { ColumnsType } from "antd/es/table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 
@@ -26,6 +27,12 @@ type JobOption = {
   value: string;
   label: string;
   description: string;
+};
+
+type JobSwitchRow = JobOption & {
+  enabled: boolean;
+  type_label: string;
+  type_color: string;
 };
 
 type DryRunRequest = {
@@ -62,23 +69,21 @@ export function ProductAutomationPage() {
   const [allowedImportResult, setAllowedImportResult] = useState<ChineseResult | undefined>();
   const [saveResult, setSaveResult] = useState<ChineseResult | undefined>();
   const [dryRunResult, setDryRunResult] = useState<ChineseResult | undefined>();
-  const [aiTemplateDraftResult, setAiTemplateDraftResult] = useState<ChineseResult | undefined>();
-  const [selectedAiDraftKey, setSelectedAiDraftKey] = useState("");
-  const [aiTemplateDraftPreviewResult, setAiTemplateDraftPreviewResult] = useState<ChineseResult | undefined>();
-  const [aiTemplateDraftPromoteResult, setAiTemplateDraftPromoteResult] = useState<ChineseResult | undefined>();
   const overview = useQuery({
     queryKey: ["product-automation", "overview"],
     queryFn: () => apiGet<ChineseResult>("/product-automation/overview"),
   });
   const products = useMemo(() => productFormsFromOverview(overview.data), [overview.data]);
   const jobs = useMemo(() => jobOptionsFromOverview(overview.data), [overview.data]);
-  const aiDraftOptions = useMemo(() => draftOptionsFromResult(aiTemplateDraftResult), [aiTemplateDraftResult]);
   const productOptions = products.map((product) => ({ label: `${product.product}（${product.product_key}）`, value: product.product_key }));
   const jobOptions = jobs.map((job) => ({ label: job.label, value: job.value }));
+  const taskSwitchRows = jobs.map((job) => ({
+    ...job,
+    enabled: form.enabled_jobs.includes(job.value),
+    ...jobTypeMeta(job.value),
+  }));
   const templateReady = Boolean(form.product.trim() && form.product_key.trim());
   const selectedAllowedFile = Boolean(allowedFileList[0]?.originFileObj);
-  const aiTemplateDraftArtifactPath = aiTemplateDraftResult?.artifact_path ?? "";
-  const aiTemplateDraftPreviewArtifactPath = aiTemplateDraftPreviewResult?.artifact_path ?? "";
 
   useEffect(() => {
     if (!selectedProductKey) {
@@ -121,57 +126,57 @@ export function ProductAutomationPage() {
       antdMessage.success("预演 JSON 已生成，没有执行真实业务动作");
     },
   });
-  const aiTemplateDraft = useMutation({
-    mutationFn: () =>
-      apiPost<ChineseResult>("/product-automation/ai-template-drafts", {
-        product_key: form.product_key,
-        max_drafts: 5,
-      }),
-    onSuccess: (result) => {
-      setAiTemplateDraftResult(result);
-      setSelectedAiDraftKey(firstDraftKeyFromResult(result));
-      setAiTemplateDraftPreviewResult(undefined);
-      setAiTemplateDraftPromoteResult(undefined);
-      antdMessage.success("AI 模板草稿已生成，没有执行真实业务动作");
-    },
-  });
-  const aiTemplateDraftPreview = useMutation({
-    mutationFn: () =>
-      apiPost<ChineseResult>("/product-automation/ai-template-draft-preview", {
-        product_key: form.product_key,
-        artifact_path: aiTemplateDraftArtifactPath,
-        draft_key: selectedAiDraftKey,
-      }),
-    onSuccess: (result) => {
-      setAiTemplateDraftPreviewResult(result);
-      setAiTemplateDraftPromoteResult(undefined);
-      antdMessage.success("转正预览 JSON 已生成，没有写入人工模板");
-    },
-  });
-  const aiTemplateDraftPromote = useMutation({
-    mutationFn: () =>
-      apiPost<ChineseResult>("/product-automation/ai-template-draft-promote", {
-        product_key: form.product_key,
-        preview_path: aiTemplateDraftPreviewArtifactPath,
-      }),
-    onSuccess: (result) => {
-      setAiTemplateDraftPromoteResult(result);
-      antdMessage.success("创建模式已写入本地 JSON，没有执行真实投放");
-    },
-  });
 
   function updateForm(patch: Partial<ProductAutomationForm>) {
     setForm((current) => ({ ...current, ...patch }));
     setSaveResult(undefined);
-    setAiTemplateDraftResult(undefined);
-    setSelectedAiDraftKey("");
-    setAiTemplateDraftPreviewResult(undefined);
-    setAiTemplateDraftPromoteResult(undefined);
   }
 
-  function updateJobs(values: Array<string | number | boolean>) {
-    updateForm({ enabled_jobs: values.map((value) => String(value)) });
+  function updateJob(job: string, enabled: boolean) {
+    const current = new Set(form.enabled_jobs);
+    if (enabled) {
+      current.add(job);
+    } else {
+      current.delete(job);
+    }
+    updateForm({ enabled_jobs: jobs.map((item) => item.value).filter((value) => current.has(value)) });
   }
+
+  const taskSwitchColumns: ColumnsType<JobSwitchRow> = [
+    {
+      title: "任务",
+      dataIndex: "label",
+      width: 220,
+      render: (value: string, record) => (
+        <Space direction="vertical" size={2}>
+          <Typography.Text strong>{value}</Typography.Text>
+          <Typography.Text type="secondary" className="job-help">
+            {record.description}
+          </Typography.Text>
+        </Space>
+      ),
+    },
+    {
+      title: "类型",
+      dataIndex: "type_label",
+      width: 130,
+      render: (value: string, record) => <Tag color={record.type_color}>{value}</Tag>,
+    },
+    {
+      title: "当前状态",
+      dataIndex: "enabled",
+      width: 120,
+      render: (enabled: boolean) => <Tag color={enabled ? "green" : "default"}>{enabled ? "已开启" : "已关闭"}</Tag>,
+    },
+    {
+      title: "开关",
+      dataIndex: "enabled",
+      width: 110,
+      render: (enabled: boolean, record) => (
+        <Switch checked={enabled} checkedChildren="开" unCheckedChildren="关" onChange={(checked) => updateJob(record.value, checked)} />
+      ),
+    },
+  ];
 
   return (
     <main className="page">
@@ -201,10 +206,6 @@ export function ProductAutomationPage() {
                         if (!value) {
                           setForm(emptyForm);
                           setSaveResult(undefined);
-                          setAiTemplateDraftResult(undefined);
-                          setSelectedAiDraftKey("");
-                          setAiTemplateDraftPreviewResult(undefined);
-                          setAiTemplateDraftPromoteResult(undefined);
                         }
                       }}
                       options={productOptions}
@@ -291,19 +292,18 @@ export function ProductAutomationPage() {
                   </Form.Item>
                 </Col>
                 <Col xs={24}>
-                  <Form.Item label="启用定时任务">
-                    <Checkbox.Group value={form.enabled_jobs} onChange={updateJobs}>
-                      <Row gutter={[16, 8]}>
-                        {jobs.map((job) => (
-                          <Col xs={24} md={12} xl={8} key={job.value}>
-                            <Checkbox value={job.value}>{job.label}</Checkbox>
-                            <Typography.Text type="secondary" className="job-help">
-                              {job.description}
-                            </Typography.Text>
-                          </Col>
-                        ))}
-                      </Row>
-                    </Checkbox.Group>
+                  <Form.Item label="定时任务开关">
+                    <Table<JobSwitchRow>
+                      size="small"
+                      rowKey="value"
+                      pagination={false}
+                      columns={taskSwitchColumns}
+                      dataSource={taskSwitchRows}
+                      scroll={{ x: 680 }}
+                    />
+                    <Typography.Text type="secondary" className="allowed-account-help">
+                      关闭后只是不再自动定时跑这个任务；不会删除历史数据，也不会中断已经开始的任务。
+                    </Typography.Text>
                   </Form.Item>
                 </Col>
                 <Col xs={24}>
@@ -330,81 +330,6 @@ export function ProductAutomationPage() {
               showRawJson={false}
             />
             <SummaryPanel result={saveResult} loading={save.isPending} detailsCollapsed showArtifactPath={false} showRawJson={false} />
-          </Space>
-        </Card>
-
-        <Card size="small" title="AI 模板草稿">
-          <Space direction="vertical" size="middle" className="full-width">
-            <Alert
-              type="info"
-              showIcon
-              message="这里只生成 AI 模板草稿，草稿不写入人工固定模板，也不能被创建脚本直接使用。"
-            />
-            <Space wrap className="workflow-actions">
-              <Button
-                icon={<FileSearchOutlined />}
-                type="primary"
-                disabled={!form.product_key}
-                loading={aiTemplateDraft.isPending}
-                onClick={() => aiTemplateDraft.mutate()}
-              >
-                生成 AI 模板草稿
-              </Button>
-              <Select
-                allowClear
-                className="draft-select"
-                value={selectedAiDraftKey || undefined}
-                onChange={(value) => {
-                  setSelectedAiDraftKey(value ?? "");
-                  setAiTemplateDraftPreviewResult(undefined);
-                  setAiTemplateDraftPromoteResult(undefined);
-                }}
-                options={aiDraftOptions}
-                placeholder="选择要预览转正的草稿"
-              />
-              <Button
-                icon={<FileSearchOutlined />}
-                disabled={!form.product_key || !aiTemplateDraftArtifactPath || !selectedAiDraftKey}
-                loading={aiTemplateDraftPreview.isPending}
-                onClick={() => aiTemplateDraftPreview.mutate()}
-              >
-                生成转正预览 JSON
-              </Button>
-            </Space>
-            {aiTemplateDraft.error ? <Alert type="error" showIcon message={(aiTemplateDraft.error as Error).message} /> : null}
-            {aiTemplateDraftPreview.error ? <Alert type="error" showIcon message={(aiTemplateDraftPreview.error as Error).message} /> : null}
-            {aiTemplateDraftPromote.error ? <Alert type="error" showIcon message={(aiTemplateDraftPromote.error as Error).message} /> : null}
-            <SummaryPanel
-              result={aiTemplateDraftResult}
-              loading={aiTemplateDraft.isPending}
-              detailsCollapsed
-              showArtifactPath
-              showRawJson
-            />
-            <SummaryPanel
-              result={aiTemplateDraftPreviewResult}
-              loading={aiTemplateDraftPreview.isPending}
-              detailsCollapsed
-              showArtifactPath
-              showRawJson
-            />
-            <Space wrap className="workflow-actions">
-              <Button
-                icon={<SaveOutlined />}
-                disabled={!form.product_key || !aiTemplateDraftPreviewArtifactPath}
-                loading={aiTemplateDraftPromote.isPending}
-                onClick={() => aiTemplateDraftPromote.mutate()}
-              >
-                保存为创建模式 JSON
-              </Button>
-            </Space>
-            <SummaryPanel
-              result={aiTemplateDraftPromoteResult}
-              loading={aiTemplateDraftPromote.isPending}
-              detailsCollapsed
-              showArtifactPath
-              showRawJson
-            />
           </Space>
         </Card>
 
@@ -498,21 +423,17 @@ function jobOptionsFromOverview(result?: ChineseResult): JobOption[] {
     .filter((item) => item.value);
 }
 
-function draftOptionsFromResult(result?: ChineseResult): Array<{ label: string; value: string }> {
-  return (result?.table.rows ?? [])
-    .map((row) => {
-      const draftKey = String(row["草稿 Key"] ?? "");
-      if (!draftKey) {
-        return undefined;
-      }
-      const draftName = String(row["草稿名"] ?? draftKey);
-      return { label: `${draftName}（${draftKey}）`, value: draftKey };
-    })
-    .filter((item): item is { label: string; value: string } => Boolean(item));
-}
-
-function firstDraftKeyFromResult(result?: ChineseResult): string {
-  return draftOptionsFromResult(result)[0]?.value ?? "";
+function jobTypeMeta(job: string): Pick<JobSwitchRow, "type_label" | "type_color"> {
+  if (job === "source_material_auto_push" || job === "source_material_preload") {
+    return { type_label: "真实动作预览", type_color: "orange" };
+  }
+  if (job === "source_material_rollup") {
+    return { type_label: "本地重算", type_color: "blue" };
+  }
+  if (job === "delivery_patrol") {
+    return { type_label: "只读巡检", type_color: "cyan" };
+  }
+  return { type_label: "只读同步", type_color: "green" };
 }
 
 function allowedAccountsTemplatePath(form: ProductAutomationForm): string {

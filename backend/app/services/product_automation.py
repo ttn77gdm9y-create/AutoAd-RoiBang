@@ -100,7 +100,8 @@ def build_product_automation_overview(
                 "允许创建账户": allowed_count,
                 "账户发现关键词": _account_keyword(product),
                 "预推送目标": _preload_scope_label(preload_scope),
-                "启用定时任务": "、".join(JOB_INFO[job]["label"] for job in enabled_jobs) if enabled_jobs else "未启用",
+                "已开启定时任务": _job_labels(enabled_jobs, empty="未开启"),
+                "已关闭定时任务": _job_labels(_disabled_jobs(product), empty="未关闭"),
                 "最近运行": latest_status,
             }
         )
@@ -129,7 +130,8 @@ def build_product_automation_overview(
                 "允许创建账户",
                 "账户发现关键词",
                 "预推送目标",
-                "启用定时任务",
+                "已开启定时任务",
+                "已关闭定时任务",
                 "最近运行",
             ],
             "rows": rows,
@@ -190,7 +192,8 @@ def save_product_automation_config(
         {"配置项": "允许创建账户名单", "值": payload["allowed_target_accounts_path"]},
         {"配置项": "账户发现关键词", "值": automation["account_discovery"]["account_name_keyword"]},
         {"配置项": "源素材预推送目标", "值": "允许创建账户名单"},
-        {"配置项": "启用定时任务", "值": "、".join(JOB_INFO[job]["label"] for job in enabled_jobs)},
+        {"配置项": "已开启定时任务", "值": _job_labels(enabled_jobs, empty="未开启")},
+        {"配置项": "已关闭定时任务", "值": _job_labels([job for job in JOB_INFO if job not in enabled_jobs], empty="未关闭")},
     ]
     return {
         "summary": {
@@ -200,7 +203,8 @@ def save_product_automation_config(
             "execution_enabled": False,
             "items": [
                 {"label": "产品", "value": payload["product"]},
-                {"label": "启用任务", "value": len(enabled_jobs)},
+                {"label": "开启任务", "value": len(enabled_jobs)},
+                {"label": "关闭任务", "value": len(JOB_INFO) - len(enabled_jobs)},
                 {"label": "真实执行", "value": "未执行"},
             ],
             "warnings": ["保存只写本地产品配置；真实同步、补材和预推送仍由固定定时脚本执行。"],
@@ -410,6 +414,14 @@ def build_product_automation_dry_run(
         return _blocked_result("产品自动化预演不可用", [f"不支持的任务类型：{job}"], {"job": job})
     if not _text(product_key):
         return _blocked_result("产品自动化预演不可用", ["请选择产品"], {"job": job})
+    products = load_product_configs(Path(configs_dir) / "products", product_key=product_key)
+    if products and job not in _enabled_jobs(products[0]):
+        product_label = _text(products[0].get("product")) or product_key
+        return _blocked_result(
+            "产品自动化预演不可用",
+            [f"{product_label} 已关闭“{JOB_INFO[job]['label']}”，不会生成这个定时任务请求。"],
+            {"product_key": product_key, "job": job},
+        )
 
     result = run_product_automation_job(
         job=job,
@@ -829,8 +841,10 @@ def _validate_save_request(body: dict[str, Any]) -> list[str]:
         if not _text(body.get(key)):
             reasons.append(f"{label}不能为空")
     enabled_jobs = body.get("enabled_jobs")
-    if not isinstance(enabled_jobs, list) or not [job for job in enabled_jobs if job in JOB_INFO]:
-        reasons.append("至少启用一个定时任务")
+    if not isinstance(enabled_jobs, list):
+        reasons.append("定时任务开关格式不正确")
+    elif any(job not in JOB_INFO for job in enabled_jobs):
+        reasons.append("定时任务包含系统不支持的任务")
     return reasons
 
 
@@ -948,6 +962,16 @@ def _enabled_jobs(product: dict[str, Any]) -> list[str]:
         for job in JOB_INFO
         if _enabled((automation.get(job) if isinstance(automation.get(job), dict) else {}).get("enabled"), False)
     ]
+
+
+def _disabled_jobs(product: dict[str, Any]) -> list[str]:
+    enabled = set(_enabled_jobs(product))
+    return [job for job in JOB_INFO if job not in enabled]
+
+
+def _job_labels(jobs: list[str], *, empty: str) -> str:
+    labels = [JOB_INFO[job]["label"] for job in jobs if job in JOB_INFO]
+    return "、".join(labels) if labels else empty
 
 
 def _job_catalog() -> list[dict[str, str]]:

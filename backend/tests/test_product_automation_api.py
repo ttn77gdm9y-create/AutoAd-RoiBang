@@ -151,7 +151,8 @@ def test_product_automation_overview_lists_product_configs_with_chinese_labels(t
     assert row["源素材账户 ID"] == "source-1"
     assert row["允许创建账户"] == 1
     assert row["预推送目标"] == "允许创建账户名单"
-    assert "源素材预推送" in row["启用定时任务"]
+    assert "源素材预推送" in row["已开启定时任务"]
+    assert "每日素材明细同步" in row["已关闭定时任务"]
     assert payload["raw"]["jobs"][0]["label"] == "每日素材明细同步"
 
 
