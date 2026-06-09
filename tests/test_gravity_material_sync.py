@@ -1,6 +1,8 @@
+import json
 import sqlite3
 from pathlib import Path
 
+from roibang_v2.fetch import gravity_material_library
 from roibang_v2.db.bootstrap import bootstrap_database
 from roibang_v2.fetch.gravity_material_library import GravityMaterialClient
 from roibang_v2.workflows.gravity_material_sync import run_gravity_material_sync_request
@@ -79,6 +81,43 @@ class FakeGravityMaterialClient:
                         "AdConvert": 1,
                     }
                 ]
+            },
+        }
+
+    def get_album_material_report(
+        self,
+        *,
+        album_id: str,
+        date_from: str,
+        date_to: str,
+        page: int,
+        page_size: int,
+        metrics: list[str],
+        gravity_metrics: list[str],
+        folder_id: str = "",
+    ) -> dict:
+        self.calls.append(f"get_album_material_report:{album_id}:{folder_id}:{date_from}:{date_to}:{page}:{page_size}")
+        if page > 1:
+            return {"code": 0, "data": {"list": [], "page_info": {"page": page, "total_page": 1}}}
+        cost = 12.5 if date_from == "2026-05-26" else 30.5
+        return {
+            "code": 0,
+            "data": {
+                "list": [
+                    {
+                        "gravity_material_id": "gravity-m-1",
+                        "material_id": "",
+                        "file_name": "素材A",
+                        "file_md5": "md5-a",
+                        "AdCost": cost,
+                        "AdShow": 100,
+                        "AdClick": 5,
+                        "AdConvert": 1,
+                        "AdAppActivate": 1,
+                        "AppFirstDayPayROI": "5.30%",
+                    }
+                ],
+                "page_info": {"page": 1, "page_size": page_size, "total_number": 1, "total_page": 1},
             },
         }
 
@@ -174,6 +213,21 @@ class NestedFolderGravityMaterialClient:
         self.calls.append(f"get_material_report:{','.join(material_ids)}:{date_from}:{date_to}")
         return {"code": 0, "data": {"list": []}}
 
+    def get_album_material_report(
+        self,
+        *,
+        album_id: str,
+        date_from: str,
+        date_to: str,
+        page: int,
+        page_size: int,
+        metrics: list[str],
+        gravity_metrics: list[str],
+        folder_id: str = "",
+    ) -> dict:
+        self.calls.append(f"get_album_material_report:{album_id}:{folder_id}:{date_from}:{date_to}:{page}:{page_size}")
+        return {"code": 0, "data": {"list": [], "page_info": {"page": page, "total_page": 1}}}
+
 
 class EmptyNestedFolderGravityMaterialClient:
     def __init__(self) -> None:
@@ -201,6 +255,110 @@ class EmptyNestedFolderGravityMaterialClient:
         self.calls.append(f"get_material_report:{','.join(material_ids)}:{date_from}:{date_to}")
         return {"code": 0, "data": {"list": []}}
 
+    def get_album_material_report(
+        self,
+        *,
+        album_id: str,
+        date_from: str,
+        date_to: str,
+        page: int,
+        page_size: int,
+        metrics: list[str],
+        gravity_metrics: list[str],
+        folder_id: str = "",
+    ) -> dict:
+        self.calls.append(f"get_album_material_report:{album_id}:{folder_id}:{date_from}:{date_to}:{page}:{page_size}")
+        return {"code": 0, "data": {"list": [], "page_info": {"page": page, "total_page": 1}}}
+
+
+class PagedAlbumReportGravityMaterialClient:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def get_album_tree(self) -> dict:
+        self.calls.append("get_album_tree")
+        return {"code": 0, "data": [{"id": "album-1", "name": "黑旗-6480咸鱼-微小合集"}]}
+
+    def get_album_material_list(self, *, album_id: str, page: int, page_size: int, folder_id: str = "") -> dict:
+        self.calls.append(f"get_album_material_list:{album_id}:{folder_id}:{page}:{page_size}")
+        if page > 1:
+            return {"code": 0, "data": {"list": [], "page_info": {"page": page, "total_page": 1}}}
+        return {
+            "code": 0,
+            "data": {
+                "list": [
+                    {
+                        "type": 1,
+                        "material": {
+                            "id": "gravity-m-1",
+                            "file_name": "素材A",
+                            "file_md5": "md5-a",
+                            "status": 1,
+                            "file_type": "video",
+                            "create_time": "2026-06-01 10:00:00",
+                        },
+                    },
+                    {
+                        "type": 1,
+                        "material": {
+                            "id": "gravity-m-2",
+                            "file_name": "素材B",
+                            "file_md5": "md5-b",
+                            "status": 1,
+                            "file_type": "video",
+                            "create_time": "2026-06-01 11:00:00",
+                        },
+                    },
+                ],
+                "page_info": {"page": 1, "page_size": page_size, "total_number": 2, "total_page": 1},
+            },
+        }
+
+    def get_material_report(self, *, material_ids: list[str], date_from: str, date_to: str, metrics: list[str]) -> dict:
+        self.calls.append(f"legacy_get_material_report:{','.join(material_ids)}:{date_from}:{date_to}")
+        return {"code": 0, "data": {"list": []}}
+
+    def get_album_material_report(
+        self,
+        *,
+        album_id: str,
+        date_from: str,
+        date_to: str,
+        page: int,
+        page_size: int,
+        metrics: list[str],
+        gravity_metrics: list[str],
+        folder_id: str = "",
+    ) -> dict:
+        self.calls.append(f"get_album_material_report:{album_id}:{folder_id}:{date_from}:{date_to}:{page}:{page_size}")
+        base = 7 if date_from == "2026-05-26" else 30
+        material_id = "gravity-m-1" if page == 1 else "gravity-m-2"
+        return {
+            "code": 0,
+            "data": {
+                "list": [
+                    {
+                        "gravity_material_id": material_id,
+                        "material_id": "",
+                        "file_md5": f"md5-{material_id[-1]}",
+                        "file_name": f"素材{material_id[-1]}",
+                        "file_type": "video",
+                        "album_id": int(album_id.replace("album-", "")) if album_id.replace("album-", "").isdigit() else album_id,
+                        "album_name": "黑旗-6480咸鱼-微小合集",
+                        "folder_id": 345703,
+                        "folder_name": "老素材",
+                        "create_time": "2026-04-30 21:37:15",
+                        "AdCost": str(base + page / 10),
+                        "AdShow": base * 100 + page,
+                        "AdClick": base * 10 + page,
+                        "AdConvert": base + page,
+                        "AppFirstDayPayROI": f"{base + page}.30%",
+                    }
+                ],
+                "page_info": {"page": page, "page_size": page_size, "total_number": 2, "total_page": 2},
+            },
+        }
+
 
 def test_gravity_material_client_uses_authorization_header_as_saved():
     client = GravityMaterialClient(
@@ -214,6 +372,73 @@ def test_gravity_material_client_uses_authorization_header_as_saved():
     )
 
     assert client.headers["Authorization"] == "document-token-value"
+
+
+def test_gravity_material_client_requests_album_material_report_like_browser_curl(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return b'{"code": 0, "data": {"list": [], "page_info": {"total_page": 1}}}'
+
+    def fake_urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["method"] = request.get_method()
+        captured["headers"] = dict(request.header_items())
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        captured["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr(gravity_material_library.urllib.request, "urlopen", fake_urlopen)
+    client = GravityMaterialClient(
+        {
+            "authorization": "document-token-value",
+            "gravity_cid": "182",
+            "gravity_email": "hongen@example.com",
+            "gravity_id": "406",
+            "gravity_super": "false",
+        },
+        base_url="https://api-insight.gravity-engine.com",
+    )
+
+    result = client.get_album_material_report(
+        album_id="334580",
+        folder_id="360675",
+        date_from="2026-06-01",
+        date_to="2026-06-07",
+        page=2,
+        page_size=100,
+        metrics=["AdCost", "AdShow", "AdClick", "AdConvert"],
+        gravity_metrics=["AppFirstDayPayROI"],
+    )
+
+    assert result["code"] == 0
+    assert captured["url"] == "https://api-insight.gravity-engine.com/report/api/v3/datareport/material_get/"
+    assert captured["method"] == "POST"
+    body = captured["body"]
+    assert body == {
+        "data_dims": ["material"],
+        "date_dims": "total",
+        "filters": [
+            {"field": "ad_platform", "operator": "EQUALS", "values": ["aggregate"]},
+            {"field": "album_id", "operator": "IN", "values": [334580]},
+            {"field": "folder_id", "operator": "IN", "values": [360675]},
+        ],
+        "metrics_list": ["AdCost", "AdShow", "AdClick", "AdConvert"],
+        "gravity_metrics_list": ["AppFirstDayPayROI"],
+        "stat_list": [],
+        "date_list": ["2026-06-01", "2026-06-07"],
+        "relate_dims": [],
+        "order_by": [],
+        "page": 2,
+        "page_size": 100,
+    }
 
 
 def test_gravity_material_sync_imports_bound_album_materials_without_uploading(tmp_path: Path):
@@ -296,14 +521,80 @@ def test_gravity_material_sync_imports_bound_album_materials_without_uploading(t
             ("gravity_engine_182", "182", "gravity-m-1", "", "素材A", "可用", "md5-a", 1, "gravity_engine"),
             ("gravity_engine_182", "182", "old-gravity", "", "旧素材", "可用", "old-md5", 0, "gravity_engine"),
         ]
-        rollup = conn.execute(
+        rollups = conn.execute(
             """
-            SELECT material_id, stat_cost, show_cnt, click_cnt, convert_cnt
+            SELECT window_key, window_days, material_id, stat_cost, show_cnt, click_cnt, convert_cnt, active_register,
+                   ROUND(roi_1day_cost_weighted, 3)
             FROM product_source_material_metric_rollups
             WHERE product = '点点英雄' AND material_id = 'gravity-m-1'
+            ORDER BY window_days
             """
-        ).fetchone()
-        assert rollup == ("gravity-m-1", 12.5, 100, 5, 1)
+        ).fetchall()
+        assert rollups == [
+            ("last_7d", 7, "gravity-m-1", 12.5, 100, 5, 1, 1, 0.053),
+            ("last_30d", 30, "gravity-m-1", 30.5, 100, 5, 1, 1, 0.053),
+        ]
+
+
+def test_gravity_material_sync_reads_paged_album_reports_for_7d_and_30d(tmp_path: Path):
+    db_path = tmp_path / "data" / "roibang_v2.sqlite3"
+    bootstrap_database(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO product_gravity_album_bindings (
+              product, album_id, album_name, folder_id, folder_name, is_active
+            ) VALUES ('点点英雄', 'album-1', '黑旗-6480咸鱼-微小合集', '', '', 1)
+            """
+        )
+    client = PagedAlbumReportGravityMaterialClient()
+
+    result = run_gravity_material_sync_request(
+        {
+            "auth": {
+                "authorization": "token",
+                "gravity_cid": "182",
+                "gravity_email": "hongen@example.com",
+                "gravity_id": "406",
+            },
+            "target_album_names": ["黑旗-6480咸鱼-微小合集"],
+            "page_size": 10,
+            "report_page_size": 1,
+            "report_date_range": {"start": "2026-05-02", "end": "2026-06-01"},
+        },
+        db_path=db_path,
+        runs_dir=tmp_path / "runs",
+        client=client,
+    )
+
+    assert result["ok"] is True
+    assert result["summary"]["rollup_rows_written"] == 4
+    assert result["summary"]["report_pages_read"] == 4
+    assert result["summary"]["report_rows_received"] == 4
+    assert not any(call.startswith("legacy_get_material_report") for call in client.calls)
+    assert "get_album_material_report:album-1::2026-05-26:2026-06-01:1:1" in client.calls
+    assert "get_album_material_report:album-1::2026-05-26:2026-06-01:2:1" in client.calls
+    assert "get_album_material_report:album-1::2026-05-02:2026-06-01:1:1" in client.calls
+    assert "get_album_material_report:album-1::2026-05-02:2026-06-01:2:1" in client.calls
+
+    with sqlite3.connect(db_path) as conn:
+        rollups = conn.execute(
+            """
+            SELECT window_key, window_days, period_start, period_end, material_id,
+                   stat_cost, show_cnt, click_cnt, convert_cnt, roi_1day_cost_weighted
+            FROM product_source_material_metric_rollups
+            WHERE product = '点点英雄'
+            ORDER BY window_days, material_id
+            """
+        ).fetchall()
+
+    normalized_rollups = [(*row[:9], round(row[9], 3)) for row in rollups]
+    assert normalized_rollups == [
+        ("last_7d", 7, "2026-05-26", "2026-06-01", "gravity-m-1", 7.1, 701, 71, 8, 0.083),
+        ("last_7d", 7, "2026-05-26", "2026-06-01", "gravity-m-2", 7.2, 702, 72, 9, 0.093),
+        ("last_30d", 30, "2026-05-02", "2026-06-01", "gravity-m-1", 30.1, 3001, 301, 31, 0.313),
+        ("last_30d", 30, "2026-05-02", "2026-06-01", "gravity-m-2", 30.2, 3002, 302, 32, 0.323),
+    ]
 
 
 def test_gravity_material_sync_drills_bound_album_folders_before_importing(tmp_path: Path):

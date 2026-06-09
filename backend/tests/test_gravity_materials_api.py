@@ -261,12 +261,12 @@ def test_gravity_materials_list_reads_local_gravity_source_materials(tmp_path: P
               product, source_advertiser_id, organization_id, window_key, window_days,
               period_start, period_end, material_id, material_type, source_video_id,
               name, review_status, signature, duration, file_size, create_time,
-              tag_ids_json, stat_cost, show_cnt, click_cnt, convert_cnt, source, synced_at
+              tag_ids_json, stat_cost, show_cnt, click_cnt, convert_cnt, roi_1day_cost_weighted, source, synced_at
             ) VALUES (
               '点点英雄', 'gravity_engine_182', '182', 'last_30d', 30,
               '2026-05-02', '2026-06-01', 'gravity-m-1', 'video', '',
               '素材A', '可用', 'md5-a', 15, 2048, '2026-06-01T10:00:00+08:00',
-              '[]', 12.5, 100, 5, 1, 'gravity_engine', 'now'
+              '[]', 12.5, 100, 5, 1, 0.123, 'gravity_engine', 'now'
             )
             """
         )
@@ -276,12 +276,12 @@ def test_gravity_materials_list_reads_local_gravity_source_materials(tmp_path: P
               product, source_advertiser_id, organization_id, window_key, window_days,
               period_start, period_end, material_id, material_type, source_video_id,
               name, review_status, signature, duration, file_size, create_time,
-              tag_ids_json, stat_cost, show_cnt, click_cnt, convert_cnt, source, synced_at
+              tag_ids_json, stat_cost, show_cnt, click_cnt, convert_cnt, roi_1day_cost_weighted, source, synced_at
             ) VALUES (
               '点点英雄', 'gravity_engine_182', '182', 'last_7d', 7,
               '2026-05-26', '2026-06-01', 'gravity-m-1', 'video', '',
               '素材A', '可用', 'md5-a', 15, 2048, '2026-06-01T10:00:00+08:00',
-              '[]', 3.5, 70, 4, 1, 'gravity_engine', 'now'
+              '[]', 3.5, 70, 4, 1, 0.087, 'gravity_engine', 'now'
             )
             """
         )
@@ -311,8 +311,10 @@ def test_gravity_materials_list_reads_local_gravity_source_materials(tmp_path: P
         "素材名",
         "7天消耗",
         "7天转化",
+        "7天ROI",
         "30天消耗",
         "30天转化",
+        "30天ROI",
         "引力素材 ID",
         "MD5",
         "引力创建时间",
@@ -325,8 +327,10 @@ def test_gravity_materials_list_reads_local_gravity_source_materials(tmp_path: P
     assert row["素材名"] == "素材A"
     assert row["7天消耗"] == 3.5
     assert row["7天转化"] == 1
+    assert row["7天ROI"] == "8.7%"
     assert row["30天消耗"] == 12.5
     assert row["30天转化"] == 1
+    assert row["30天ROI"] == "12.3%"
     assert row["引力素材 ID"] == "gravity-m-1"
     assert row["MD5"] == "md5-a"
     assert row["引力创建时间"] == "2026-06-01T10:00:00+08:00"

@@ -21,7 +21,20 @@ from roibang_v2.materials.product_source import import_product_source_materials
 from roibang_v2.runs import write_run_artifact
 
 WORKFLOW = "gravity_material_sync"
-REPORT_METRICS = ["AdCost", "AdShow", "AdClick", "AdConvert"]
+REPORT_METRICS = [
+    "AdCost",
+    "AdAvgShowCost",
+    "AdShow",
+    "AdClick",
+    "AdClickRate",
+    "AdAvgClickCost",
+    "AdConvert",
+    "AdConvertCost",
+    "AdConvertRate",
+    "AdAppActivate",
+    "AdAppRegister",
+]
+REPORT_GRAVITY_METRICS = ["AppFirstDayPayROI"]
 
 
 def run_gravity_material_sync_request(
@@ -56,7 +69,9 @@ def run_gravity_material_sync_request(
     max_pages = _int_value(cfg.get("max_pages"), default=50, minimum=1, maximum=500)
     max_folders = _int_value(cfg.get("max_folders"), default=500, minimum=1, maximum=5000)
     max_depth = _int_value(cfg.get("max_depth"), default=8, minimum=1, maximum=20)
-    date_range = _report_date_range(cfg)
+    report_page_size = _int_value(cfg.get("report_page_size"), default=100, minimum=1, maximum=500)
+    report_max_pages = _int_value(cfg.get("report_max_pages"), default=100, minimum=1, maximum=500)
+    report_windows = _report_windows(cfg)
     probe_client = client or GravityMaterialClient(auth_payload)
     external_api_calls = 0
     warnings: list[str] = []
@@ -99,6 +114,8 @@ def run_gravity_material_sync_request(
     organization_id = _text(auth_payload.get("gravity_cid"))
     imports = []
     rollup_rows_written = 0
+    report_pages_read = 0
+    report_rows_received = 0
     for product, rows in rows_by_product.items():
         imports.append(
             import_product_source_materials(
@@ -111,17 +128,27 @@ def run_gravity_material_sync_request(
                 mark_absent_inactive=True,
             )
         )
-        rollup_rows_written += _write_report_rollups(
+    for binding in bindings:
+        binding_rows = rows_by_binding.get(binding["id"], [])
+        if not binding_rows:
+            continue
+        report_result = _write_report_rollups(
             db_path=db_path,
             client=probe_client,
-            product=product,
+            binding=binding,
             source_advertiser_id=source_advertiser_id,
             organization_id=organization_id,
-            materials=rows,
-            date_range=date_range,
-        )[0]
-        if rows:
-            external_api_calls += 1
+            materials=binding_rows,
+            report_windows=report_windows,
+            page_size=report_page_size,
+            max_pages=report_max_pages,
+            raw=raw,
+        )
+        rollup_rows_written += report_result["rows_written"]
+        report_pages_read += report_result["pages_read"]
+        report_rows_received += report_result["rows_received"]
+        warnings.extend(report_result["warnings"])
+        external_api_calls += report_result["pages_read"]
 
     imported_count = sum(int(item["product_source_materials_imported"]) for item in imports)
     inactive_rows = sum(int(item["inactive_product_source_materials"]) for item in imports)
@@ -163,6 +190,8 @@ def run_gravity_material_sync_request(
             "folders_scanned": total_folders_scanned,
             "pages_read": total_pages_read,
             "rollup_rows_written": rollup_rows_written,
+            "report_pages_read": report_pages_read,
+            "report_rows_received": report_rows_received,
             "source_advertiser_id": source_advertiser_id,
             "organization_id": organization_id,
             "upload_material_called": False,
@@ -488,76 +517,142 @@ def _write_report_rollups(
     *,
     db_path: str | Path,
     client: Any,
-    product: str,
+    binding: dict[str, str],
     source_advertiser_id: str,
     organization_id: str,
     materials: list[dict[str, Any]],
-    date_range: dict[str, str],
-) -> tuple[int, dict[str, Any]]:
-    material_ids = [_material_id(item) for item in materials if _material_id(item)]
-    if not material_ids:
-        return 0, {}
-    payload = client.get_material_report(
-        material_ids=material_ids,
-        date_from=date_range["start"],
-        date_to=date_range["end"],
-        metrics=REPORT_METRICS,
-    )
-    reports = {_text(row.get("material_id") or row.get("id")): row for row in _report_rows(payload)}
+    report_windows: list[dict[str, Any]],
+    page_size: int,
+    max_pages: int,
+    raw: dict[str, Any],
+) -> dict[str, Any]:
+    material_by_id = {_material_id(item): item for item in materials if _material_id(item)}
+    if not material_by_id:
+        return {"rows_written": 0, "pages_read": 0, "rows_received": 0, "warnings": []}
     written = 0
+    pages_read = 0
+    rows_received = 0
+    warnings: list[str] = []
     with sqlite3.connect(db_path) as conn:
-        for material in materials:
-            material_id = _material_id(material)
-            report = reports.get(material_id, {})
-            cursor = conn.execute(
-                """
-                INSERT INTO product_source_material_metric_rollups (
-                  product, source_advertiser_id, organization_id, window_key, window_days,
-                  period_start, period_end, material_id, material_type, source_video_id,
-                  name, review_status, signature, duration, file_size, create_time,
-                  tag_ids_json, stat_cost, show_cnt, click_cnt, convert_cnt, source, synced_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(product, source_advertiser_id, window_key, period_start, period_end, material_id)
-                DO UPDATE SET
-                  name = excluded.name,
-                  review_status = excluded.review_status,
-                  signature = excluded.signature,
-                  duration = excluded.duration,
-                  file_size = excluded.file_size,
-                  create_time = excluded.create_time,
-                  stat_cost = excluded.stat_cost,
-                  show_cnt = excluded.show_cnt,
-                  click_cnt = excluded.click_cnt,
-                  convert_cnt = excluded.convert_cnt,
-                  source = excluded.source,
-                  synced_at = excluded.synced_at
-                """,
-                (
-                    product,
-                    source_advertiser_id,
-                    organization_id,
-                    "last_30d",
-                    30,
-                    date_range["start"],
-                    date_range["end"],
-                    material_id,
-                    _material_type(material),
-                    _first_text(material, "name", "material_name", "file_name", "title"),
-                    _status_label(material),
-                    _material_md5(material),
-                    _material_duration(material),
-                    _float_value(material, "file_size"),
-                    _first_text(material, "create_time", "created_at", "upload_time"),
-                    _float_value(report, "AdCost"),
-                    _float_value(report, "AdShow"),
-                    _float_value(report, "AdClick"),
-                    _float_value(report, "AdConvert"),
-                    "gravity_engine",
-                    datetime.now().astimezone().isoformat(timespec="seconds"),
-                ),
+        for window in report_windows:
+            report_result = _read_report_window(
+                client=client,
+                binding=binding,
+                window=window,
+                page_size=page_size,
+                max_pages=max_pages,
+                raw=raw,
             )
-            written += int(cursor.rowcount or 0)
-    return written, payload
+            pages_read += report_result["pages_read"]
+            rows_received += len(report_result["rows"])
+            warnings.extend(report_result["warnings"])
+            reports = {_report_material_id(row): row for row in report_result["rows"] if _report_material_id(row) in material_by_id}
+            for material_id, report in reports.items():
+                material = material_by_id[material_id]
+                cursor = conn.execute(
+                    """
+                    INSERT INTO product_source_material_metric_rollups (
+                      product, source_advertiser_id, organization_id, window_key, window_days,
+                      period_start, period_end, material_id, material_type, source_video_id,
+                      name, review_status, signature, duration, file_size, create_time,
+                      tag_ids_json, stat_cost, show_cnt, click_cnt, convert_cnt, active_register,
+                      roi_1day_cost_weighted, source, synced_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(product, source_advertiser_id, window_key, period_start, period_end, material_id)
+                    DO UPDATE SET
+                      name = excluded.name,
+                      review_status = excluded.review_status,
+                      signature = excluded.signature,
+                      duration = excluded.duration,
+                      file_size = excluded.file_size,
+                      create_time = excluded.create_time,
+                      stat_cost = excluded.stat_cost,
+                      show_cnt = excluded.show_cnt,
+                      click_cnt = excluded.click_cnt,
+                      convert_cnt = excluded.convert_cnt,
+                      active_register = excluded.active_register,
+                      roi_1day_cost_weighted = excluded.roi_1day_cost_weighted,
+                      source = excluded.source,
+                      synced_at = excluded.synced_at
+                    """,
+                    (
+                        binding["product"],
+                        source_advertiser_id,
+                        organization_id,
+                        window["window_key"],
+                        window["window_days"],
+                        window["start"],
+                        window["end"],
+                        material_id,
+                        _material_type({**material, **report}),
+                        _first_text(report, "file_name", "name", "material_name", "title")
+                        or _first_text(material, "name", "material_name", "file_name", "title"),
+                        _status_label(material),
+                        _material_md5(report) or _material_md5(material),
+                        _material_duration(material),
+                        _float_value(report, "file_size") or _float_value(material, "file_size"),
+                        _first_text(report, "create_time", "created_at", "upload_time")
+                        or _first_text(material, "create_time", "created_at", "upload_time"),
+                        _float_value(report, "AdCost"),
+                        _float_value(report, "AdShow"),
+                        _float_value(report, "AdClick"),
+                        _float_value(report, "AdConvert"),
+                        _float_value(report, "AdAppActivate"),
+                        _ratio_value(report, "AppFirstDayPayROI"),
+                        "gravity_engine",
+                        datetime.now().astimezone().isoformat(timespec="seconds"),
+                    ),
+                )
+                written += int(cursor.rowcount or 0)
+    return {"rows_written": written, "pages_read": pages_read, "rows_received": rows_received, "warnings": warnings}
+
+
+def _read_report_window(
+    *,
+    client: Any,
+    binding: dict[str, str],
+    window: dict[str, Any],
+    page_size: int,
+    max_pages: int,
+    raw: dict[str, Any],
+) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    page = 1
+    pages_read = 0
+    while page <= max_pages:
+        payload = client.get_album_material_report(
+            album_id=binding["album_id"],
+            folder_id=binding["folder_id"],
+            date_from=window["start"],
+            date_to=window["end"],
+            page=page,
+            page_size=page_size,
+            metrics=REPORT_METRICS,
+            gravity_metrics=REPORT_GRAVITY_METRICS,
+        )
+        pages_read += 1
+        page_rows = _report_rows(payload)
+        rows.extend(page_rows)
+        raw.setdefault("report_pages", []).append(
+            {
+                "product": binding["product"],
+                "album_id": binding["album_id"],
+                "folder_id": binding["folder_id"],
+                "window_key": window["window_key"],
+                "period_start": window["start"],
+                "period_end": window["end"],
+                "page": page,
+                "row_count": len(page_rows),
+                "payload": _sanitized_payload(payload),
+            }
+        )
+        if not _has_next_page(payload, page=page, row_count=len(page_rows), page_size=page_size):
+            break
+        page += 1
+    if page > max_pages:
+        warnings.append(f"{binding['product']}：{binding['album_name']} 报表分页达到上限 {max_pages}，后续表现数据本次未继续读取。")
+    return {"rows": rows, "pages_read": pages_read, "warnings": warnings}
 
 
 def _summary_rows(
@@ -594,15 +689,19 @@ def _zero_material_warning(*, binding_count: int, materials_received: int, folde
     return f"已读取 {pages_read} 页引力列表，但没有发现素材；请检查绑定的专辑或文件夹是否为空。"
 
 
-def _report_date_range(cfg: dict[str, Any]) -> dict[str, str]:
+def _report_windows(cfg: dict[str, Any]) -> list[dict[str, Any]]:
     value = cfg.get("report_date_range") if isinstance(cfg.get("report_date_range"), dict) else {}
     end = _text(value.get("end"))
-    start = _text(value.get("start"))
     if not end:
         end = date.today().isoformat()
-    if not start:
-        start = (date.fromisoformat(end) - timedelta(days=29)).isoformat()
-    return {"start": start, "end": end}
+    start_30d = _text(value.get("start"))
+    if not start_30d:
+        start_30d = (date.fromisoformat(end) - timedelta(days=29)).isoformat()
+    start_7d = _text(value.get("start_7d")) or (date.fromisoformat(end) - timedelta(days=6)).isoformat()
+    return [
+        {"window_key": "last_7d", "window_days": 7, "start": start_7d, "end": end},
+        {"window_key": "last_30d", "window_days": 30, "start": start_30d, "end": end},
+    ]
 
 
 def _is_active_material(material: dict[str, Any]) -> bool:
@@ -622,7 +721,11 @@ def _status_label(material: dict[str, Any]) -> str:
 
 
 def _material_id(material: dict[str, Any]) -> str:
-    return _first_text(material, "material_id", "id", "素材ID")
+    return _first_text(material, "gravity_material_id", "material_id", "id", "素材ID")
+
+
+def _report_material_id(row: dict[str, Any]) -> str:
+    return _first_text(row, "gravity_material_id", "material_id", "id", "素材ID")
 
 
 def _material_md5(material: dict[str, Any]) -> str:
@@ -651,6 +754,18 @@ def _first_text(row: dict[str, Any], *keys: str) -> str:
 def _float_value(row: dict[str, Any], key: str) -> float:
     try:
         return float(str(row.get(key) or "0").replace(",", ""))
+    except ValueError:
+        return 0.0
+
+
+def _ratio_value(row: dict[str, Any], key: str) -> float:
+    raw = _text(row.get(key)).replace(",", "")
+    if not raw:
+        return 0.0
+    try:
+        if raw.endswith("%"):
+            return float(raw[:-1]) / 100
+        return float(raw)
     except ValueError:
         return 0.0
 

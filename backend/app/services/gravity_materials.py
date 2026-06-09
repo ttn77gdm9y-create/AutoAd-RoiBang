@@ -299,8 +299,10 @@ def list_gravity_materials(
                 "素材名",
                 "7天消耗",
                 "7天转化",
+                "7天ROI",
                 "30天消耗",
                 "30天转化",
+                "30天ROI",
                 "引力素材 ID",
                 "MD5",
                 "引力创建时间",
@@ -314,8 +316,10 @@ def list_gravity_materials(
                     "素材名": item["name"],
                     "7天消耗": _metric_value(item.get("stat_cost_7d"), item.get("has_7d")),
                     "7天转化": _metric_value(item.get("convert_cnt_7d"), item.get("has_7d")),
+                    "7天ROI": _roi_value(item.get("roi_1day_7d"), item.get("has_7d")),
                     "30天消耗": _metric_value(item.get("stat_cost_30d"), item.get("has_30d")),
                     "30天转化": _metric_value(item.get("convert_cnt_30d"), item.get("has_30d")),
+                    "30天ROI": _roi_value(item.get("roi_1day_30d"), item.get("has_30d")),
                     "引力素材 ID": item["material_id"],
                     "MD5": item["signature"],
                     "引力创建时间": item["create_time"],
@@ -708,9 +712,11 @@ def _material_rows(db_path: Path, *, product: str, keyword: str) -> list[dict[st
               MAX(CASE WHEN psmr.window_days = 7 THEN 1 ELSE 0 END) AS has_7d,
               MAX(CASE WHEN psmr.window_days = 7 THEN psmr.stat_cost END) AS stat_cost_7d,
               MAX(CASE WHEN psmr.window_days = 7 THEN psmr.convert_cnt END) AS convert_cnt_7d,
+              MAX(CASE WHEN psmr.window_days = 7 THEN psmr.roi_1day_cost_weighted END) AS roi_1day_7d,
               MAX(CASE WHEN psmr.window_days = 30 THEN 1 ELSE 0 END) AS has_30d,
               MAX(CASE WHEN psmr.window_days = 30 THEN psmr.stat_cost END) AS stat_cost_30d,
-              MAX(CASE WHEN psmr.window_days = 30 THEN psmr.convert_cnt END) AS convert_cnt_30d
+              MAX(CASE WHEN psmr.window_days = 30 THEN psmr.convert_cnt END) AS convert_cnt_30d,
+              MAX(CASE WHEN psmr.window_days = 30 THEN psmr.roi_1day_cost_weighted END) AS roi_1day_30d
             FROM product_source_materials psm
             LEFT JOIN product_source_material_metric_rollups psmr
               ON psmr.product = psm.product
@@ -744,9 +750,11 @@ def _material_payload(row: dict[str, Any]) -> dict[str, Any]:
         "has_7d": bool(row.get("has_7d")),
         "stat_cost_7d": row.get("stat_cost_7d"),
         "convert_cnt_7d": row.get("convert_cnt_7d"),
+        "roi_1day_7d": row.get("roi_1day_7d"),
         "has_30d": bool(row.get("has_30d")),
         "stat_cost_30d": row.get("stat_cost_30d"),
         "convert_cnt_30d": row.get("convert_cnt_30d"),
+        "roi_1day_30d": row.get("roi_1day_30d"),
         **qualify_gravity_material({**row, "gravity_status": _text(payload.get("status"))}),
     }
 
@@ -789,10 +797,14 @@ def _material_sort_value(row: dict[str, Any], key: str) -> Any:
         return _metric_sort_number(row.get("stat_cost_7d"), row.get("has_7d"))
     if key == "7天转化":
         return _metric_sort_number(row.get("convert_cnt_7d"), row.get("has_7d"))
+    if key == "7天ROI":
+        return _metric_sort_number(row.get("roi_1day_7d"), row.get("has_7d"))
     if key == "30天消耗":
         return _metric_sort_number(row.get("stat_cost_30d"), row.get("has_30d"))
     if key == "30天转化":
         return _metric_sort_number(row.get("convert_cnt_30d"), row.get("has_30d"))
+    if key == "30天ROI":
+        return _metric_sort_number(row.get("roi_1day_30d"), row.get("has_30d"))
     return _text(row.get("create_time"))
 
 
@@ -813,6 +825,19 @@ def _metric_value(value: Any, has_metric: Any) -> float | int | str:
     except (TypeError, ValueError):
         return "-"
     return int(number) if number.is_integer() else round(number, 2)
+
+
+def _roi_value(value: Any, has_metric: Any) -> str:
+    if not has_metric:
+        return "-"
+    try:
+        number = float(value or 0)
+    except (TypeError, ValueError):
+        return "-"
+    percent = number * 100
+    rounded = round(percent, 2)
+    text = str(int(rounded)) if float(rounded).is_integer() else f"{rounded:.2f}".rstrip("0").rstrip(".")
+    return f"{text}%"
 
 
 def _pagination(*, page: int, page_size: int, total: int, fallback_limit: int) -> dict[str, int]:

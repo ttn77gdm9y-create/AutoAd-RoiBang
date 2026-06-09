@@ -106,6 +106,42 @@ class GravityMaterialClient:
             },
         )
 
+    def get_album_material_report(
+        self,
+        *,
+        album_id: str,
+        date_from: str,
+        date_to: str,
+        page: int,
+        page_size: int,
+        metrics: list[str],
+        gravity_metrics: list[str],
+        folder_id: str = "",
+    ) -> dict[str, Any]:
+        filters: list[dict[str, Any]] = [
+            {"field": "ad_platform", "operator": "EQUALS", "values": ["aggregate"]},
+            {"field": "album_id", "operator": "IN", "values": [_report_filter_value(album_id)]},
+        ]
+        if _text(folder_id):
+            filters.append({"field": "folder_id", "operator": "IN", "values": [_report_filter_value(folder_id)]})
+        return self._request(
+            "POST",
+            "/report/api/v3/datareport/material_get/",
+            {
+                "data_dims": ["material"],
+                "date_dims": "total",
+                "filters": filters,
+                "metrics_list": metrics,
+                "gravity_metrics_list": gravity_metrics,
+                "stat_list": [],
+                "date_list": [date_from, date_to],
+                "relate_dims": [],
+                "order_by": [],
+                "page": page,
+                "page_size": page_size,
+            },
+        )
+
     def upload_material_to_account(self, *, advertiser_id: str, material_ids: list[str]) -> dict[str, Any]:
         return self._request(
             "POST",
@@ -178,6 +214,11 @@ def _auth_token(auth_payload: dict[str, Any]) -> str:
 
 def _authorization_header(auth_payload: dict[str, Any]) -> str:
     return _auth_token(auth_payload)
+
+
+def _report_filter_value(value: str) -> int | str:
+    text = _text(value)
+    return int(text) if text.isdigit() else text
 
 
 def _text(value: Any) -> str:
