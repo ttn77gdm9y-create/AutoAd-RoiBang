@@ -118,7 +118,10 @@ def load_product_configs(products_dir: str | Path, *, product_key: str = "") -> 
     directory = Path(products_dir)
     if not directory.exists():
         return []
-    candidates = sorted([*directory.glob("*.local.json"), *directory.glob("*.json"), *directory.glob("*.example.json")])
+    candidates = sorted(
+        [*directory.glob("*.local.json"), *directory.glob("*.json"), *directory.glob("*.example.json")],
+        key=_product_config_sort_key,
+    )
     rows: list[dict[str, Any]] = []
     seen: set[str] = set()
     for path in candidates:
@@ -136,6 +139,20 @@ def load_product_configs(products_dir: str | Path, *, product_key: str = "") -> 
         rows.append(product)
         seen.add(key)
     return rows
+
+
+def _product_config_sort_key(path: Path) -> tuple[int, str]:
+    name = path.name
+    if name.endswith(".local.json"):
+        priority = 0
+        base = name.removesuffix(".local.json")
+    elif name.endswith(".example.json"):
+        priority = 2
+        base = name.removesuffix(".example.json")
+    else:
+        priority = 1
+        base = name.removesuffix(".json")
+    return (priority, base)
 
 
 def _resolve_product_path(path_text: str, product: dict[str, Any] | None) -> Path:

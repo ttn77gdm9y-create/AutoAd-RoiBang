@@ -156,6 +156,58 @@ def test_product_automation_overview_lists_product_configs_with_chinese_labels(t
     assert payload["raw"]["jobs"][0]["label"] == "每日素材明细同步"
 
 
+def test_product_automation_overview_prefers_local_config_over_example(tmp_path: Path):
+    example = {
+        "product_key": "yzt-wechat-mini-game",
+        "product": "勇者突进",
+        "platform": "WECHAT_GAME",
+        "source_advertiser_id": "source-1",
+        "source_advertiser_name": "示例源素材账户",
+        "organization_id": "org-1",
+        "allowed_target_accounts_path": "",
+        "automation": {
+            "enabled": True,
+            "material_daily_sync": {"enabled": True},
+            "operation_log_sync": {"enabled": True},
+            "daily_report_sync": {"enabled": True},
+            "source_material_auto_push": {"enabled": True},
+            "source_material_preload": {"enabled": True},
+            "source_material_rollup": {"enabled": True},
+            "delivery_patrol": {"enabled": True},
+        },
+    }
+    local = {
+        **example,
+        "source_advertiser_name": "本地源素材账户",
+        "automation": {
+            "enabled": True,
+            "material_daily_sync": {"enabled": False},
+            "operation_log_sync": {"enabled": False},
+            "daily_report_sync": {"enabled": False},
+            "source_material_auto_push": {"enabled": False},
+            "source_material_preload": {"enabled": False, "target_scope": "allowed_accounts"},
+            "source_material_rollup": {"enabled": False},
+            "delivery_patrol": {"enabled": False},
+        },
+    }
+    _write_json(tmp_path / "configs" / "products" / "yzt-wechat-mini-game.example.json", example)
+    _write_json(tmp_path / "configs" / "products" / "yzt-wechat-mini-game.local.json", local)
+    client = _client(tmp_path)
+
+    response = client.get("/api/product-automation/overview")
+
+    assert response.status_code == 200
+    payload = response.json()
+    row = payload["table"]["rows"][0]
+    raw_product = payload["raw"]["products"][0]
+    assert row["产品"] == "勇者突进"
+    assert row["源素材账户名"] == "本地源素材账户"
+    assert row["已开启定时任务"] == "未开启"
+    assert "每日素材明细同步" in row["已关闭定时任务"]
+    assert raw_product["enabled_jobs"] == []
+    assert raw_product["config_path"].endswith("yzt-wechat-mini-game.local.json")
+
+
 def test_product_automation_save_defaults_preload_to_allowed_accounts(tmp_path: Path):
     client = _client(tmp_path)
     body = {

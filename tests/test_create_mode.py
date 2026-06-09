@@ -4,7 +4,10 @@ import sqlite3
 from pathlib import Path
 
 from roibang_v2.db.bootstrap import bootstrap_database
-from roibang_v2.workflows.create_mode import build_create_mode_request, load_create_mode_config, run_create_mode_request
+from roibang_v2.workflows.create_mode import build_create_mode_request
+from roibang_v2.workflows.create_mode import load_create_mode_config
+from roibang_v2.workflows.create_mode import load_product_config
+from roibang_v2.workflows.create_mode import run_create_mode_request
 
 
 def _seed_source_materials(db_path: Path, count: int = 80) -> None:
@@ -130,6 +133,51 @@ def _load_script(name: str):
     assert spec and spec.loader
     spec.loader.exec_module(module)
     return module
+
+
+def test_load_product_config_merges_local_over_example_foundation(tmp_path: Path):
+    products_dir = tmp_path / "configs" / "products"
+    products_dir.mkdir(parents=True)
+    example = {
+        "product_key": "demo-game",
+        "product": "演示游戏",
+        "platform": "WECHAT_GAME",
+        "source_advertiser_id": "source-example",
+        "organization_id": "org-example",
+        "foundation": {
+            "effective_touch_url": "https://example.test/click",
+            "anchor_id": "anchor-1",
+            "anchor_type": "APP_GAME",
+            "anchor_related_type": "SELECT",
+            "landing_url": "https://example.test/landing",
+            "product_image_id": "image-1",
+            "fixed_video_cover_id": "cover-1",
+            "micro_app_instance_id": "mini-1",
+            "micro_promotion_type": "WECHAT_GAME",
+        },
+        "automation": {"daily_report_sync": {"enabled": True}},
+    }
+    local = {
+        "product_key": "demo-game",
+        "product": "演示游戏",
+        "platform": "WECHAT_GAME",
+        "source_advertiser_id": "source-local",
+        "organization_id": "org-local",
+        "automation": {"daily_report_sync": {"enabled": False}},
+    }
+    (products_dir / "demo-game.example.json").write_text(json.dumps(example, ensure_ascii=False), encoding="utf-8")
+    (products_dir / "demo-game.local.json").write_text(json.dumps(local, ensure_ascii=False), encoding="utf-8")
+
+    config = load_product_config(
+        {"product_config_dir": str(products_dir)},
+        {"product_key": "demo-game"},
+    )
+
+    assert config["source_advertiser_id"] == "source-local"
+    assert config["organization_id"] == "org-local"
+    assert config["automation"]["daily_report_sync"]["enabled"] is False
+    assert config["foundation"]["landing_url"] == "https://example.test/landing"
+    assert config["foundation"]["micro_app_instance_id"] == "mini-1"
 
 
 def test_create_mode_builds_scale_create_request_from_mode_config():

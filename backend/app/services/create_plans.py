@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 from typing import Any
 
+from roibang_v2.db.bootstrap import bootstrap_database
 from roibang_v2.ui.background_tasks import build_runner_command
 from roibang_v2.ui.background_tasks import build_task_record
 from roibang_v2.ui.background_tasks import start_runner
@@ -94,10 +96,48 @@ def build_create_plan_generate_preview(request: dict[str, Any], *, project_root:
         }
         for advertiser_id in advertiser_ids
     ]
+    sections: list[dict[str, Any]] = []
+    gravity_selection: dict[str, Any] | None = None
+    summary_status = "planned"
+    gravity_items: list[dict[str, Any]] = []
+    gravity_warnings: list[str] = []
+    gravity_blocking_reasons: list[str] = []
+    if material_source == "gravity_engine":
+        gravity_selection = _gravity_material_selection_preview(
+            project_root=project_root,
+            product=product_name,
+            mode_metadata=mode_metadata,
+            advertiser_ids=advertiser_ids,
+            account_names=account_names,
+        )
+        gravity_items = [
+            {"label": "候选引力素材", "value": gravity_selection["candidate_count"]},
+            {
+                "label": "已可直接用",
+                "value": f"{gravity_selection['ready_material_count']} 个素材 / {gravity_selection['ready_pair_count']} 个账户覆盖",
+            },
+            {"label": "需要实时推送", "value": f"{gravity_selection['pending_push_pairs']} 个素材账户组合"},
+        ]
+        gravity_warnings = list(gravity_selection.get("warnings") or [])
+        gravity_blocking_reasons = list(gravity_selection.get("blocking_reasons") or [])
+        if gravity_selection["candidate_count"] > 0:
+            sections.append(
+                {
+                    "title": "引力素材自动选材",
+                    "table": {
+                        "columns": ["素材名", "引力素材 ID", "7天消耗", "7天转化", "ROI", "推送覆盖", "下一步"],
+                        "rows": gravity_selection["rows"],
+                    },
+                }
+            )
+        if gravity_blocking_reasons:
+            summary_status = "blocked"
+        elif gravity_selection["pending_push_pairs"] > 0:
+            summary_status = "warning"
     return {
         "summary": {
             "title": "创建计划生成预览",
-            "status": "planned",
+            "status": summary_status,
             "risk_level": "medium",
             "execution_enabled": False,
             "items": [
@@ -111,22 +151,28 @@ def build_create_plan_generate_preview(request: dict[str, Any], *, project_root:
                 {"label": "账户来源", "value": _account_source_label(account_source)},
                 {"label": "负责人", "value": owner},
                 {"label": "目标日期", "value": target_date},
+                *gravity_items,
             ],
             "warnings": [
                 *account_warnings,
                 *(
-                    ["引力素材库模式只使用已提前铺货完成且已回填媒体素材 ID 的素材；本步骤不会临时上传素材。"]
+                    [
+                        "系统会按固定创建模式里的素材规则自动筛选引力素材。",
+                        "本步骤只做自动选材预览，不上传素材、不创建广告。",
+                    ]
                     if material_source == "gravity_engine"
                     else []
                 ),
+                *gravity_warnings,
                 "这里只生成创建计划 JSON，不会创建项目、单元或绑定素材。",
             ],
-            "blocking_reasons": [],
+            "blocking_reasons": gravity_blocking_reasons,
         },
         "table": {
             "columns": ["账户 ID", "账户名", "创建模式", "产品", "素材来源", "负责人", "目标日期", "出价", "ROI 系数"],
             "rows": rows,
         },
+        "sections": sections,
         "artifact_path": "",
         "raw": {
             "project_root": str(project_root),
@@ -138,13 +184,14 @@ def build_create_plan_generate_preview(request: dict[str, Any], *, project_root:
             "product_key": product_key,
             "material_source": material_source,
             "mode_metadata": mode_metadata,
+            "gravity_material_selection": gravity_selection,
         },
     }
 
 
 def start_create_plan_generate_task(request: dict[str, Any], *, project_root: str | Path) -> dict[str, Any]:
     preview = build_create_plan_generate_preview(request, project_root=project_root)
-    if preview["summary"]["status"] == "blocked":
+    if preview["summary"]["status"] != "planned":
         return preview
 
     root = Path(project_root)
@@ -1294,6 +1341,237 @@ def _resolve_create_mode_metadata(*, project_root: str | Path, mode: str, produc
     }
 
 
+def _gravity_material_selection_preview(
+    *,
+    project_root: str | Path,
+    product: str,
+    mode_metadata: dict[str, str],
+    advertiser_ids: list[str],
+    account_names: dict[str, str],
+) -> dict[str, Any]:
+    root = Path(project_root)
+    db_path = root / "data" / "roibang_v2.sqlite3"
+    bootstrap_database(db_path)
+    mode_config = _load_create_mode_config_for_preview(root, _text(mode_metadata.get("path")))
+    material_selection = mode_config.get("material_selection") if isinstance(mode_config.get("material_selection"), dict) else {}
+    material_selection = {**material_selection, "source_scope": "gravity_engine"}
+    material_requirements = mode_config.get("material_requirements") if isinstance(mode_config.get("material_requirements"), dict) else {}
+    material_type = _text(material_requirements.get("material_type")) or "video"
+    lookback_days = _int(material_selection.get("lookback_days")) or 7
+    min_stat_cost = _float(material_selection.get("min_stat_cost"))
+    min_convert_cnt = material_selection.get("min_convert_cnt")
+    max_convert_cnt = material_selection.get("max_convert_cnt")
+    candidate_pool_limit = _int(material_selection.get("candidate_pool_limit"))
+
+    candidates = _gravity_material_candidates(
+        db_path=db_path,
+        product=product,
+        material_type=material_type,
+        lookback_days=lookback_days,
+    )
+    filtered_candidates: list[dict[str, Any]] = []
+    rejected_count = 0
+    for candidate in candidates:
+        if not _gravity_material_is_usable(candidate):
+            rejected_count += 1
+            continue
+        if float(candidate.get("stat_cost") or 0) < min_stat_cost:
+            rejected_count += 1
+            continue
+        if min_convert_cnt is not None and float(candidate.get("convert_cnt") or 0) < _float(min_convert_cnt):
+            rejected_count += 1
+            continue
+        if max_convert_cnt is not None and float(candidate.get("convert_cnt") or 0) > _float(max_convert_cnt):
+            rejected_count += 1
+            continue
+        filtered_candidates.append(candidate)
+
+    filtered_candidates = _sort_gravity_candidates(filtered_candidates, material_selection=material_selection)
+    if candidate_pool_limit > 0:
+        filtered_candidates = filtered_candidates[:candidate_pool_limit]
+
+    upload_map = _gravity_upload_coverage(
+        db_path=db_path,
+        product=product,
+        material_ids=[_text(item.get("material_id")) for item in filtered_candidates],
+        advertiser_ids=advertiser_ids,
+    )
+    rows: list[dict[str, Any]] = []
+    ready_pair_count = 0
+    pending_push_pairs = 0
+    ready_material_ids: set[str] = set()
+    for candidate in filtered_candidates:
+        material_id = _text(candidate.get("material_id"))
+        ready_accounts = sorted(upload_map.get(material_id, set()))
+        ready_count = len(ready_accounts)
+        account_count = len(advertiser_ids)
+        missing_count = max(account_count - ready_count, 0)
+        ready_pair_count += ready_count
+        pending_push_pairs += missing_count
+        if ready_count > 0:
+            ready_material_ids.add(material_id)
+        rows.append(
+            {
+                "素材名": _text(candidate.get("name")) or material_id,
+                "引力素材 ID": material_id,
+                "7天消耗": _format_metric(candidate.get("stat_cost")),
+                "7天转化": _format_metric(candidate.get("convert_cnt")),
+                "ROI": _format_roi(candidate.get("roi_1day_cost_weighted")),
+                "推送覆盖": f"已可用 {ready_count}/{account_count} 个账户",
+                "下一步": "可直接用于已覆盖账户" if missing_count == 0 else "缺失账户需实时推送",
+                "账户明细": "；".join(
+                    f"{account_name_for(account_names, advertiser_id)}（{advertiser_id}）"
+                    for advertiser_id in ready_accounts
+                ),
+            }
+        )
+
+    warnings: list[str] = []
+    blocking_reasons: list[str] = []
+    if rejected_count:
+        warnings.append(f"已按固定素材规则过滤 {rejected_count} 个不符合条件的引力素材。")
+    if pending_push_pairs:
+        warnings.append(
+            f"有 {pending_push_pairs} 个素材到账户的组合还没有媒体素材 ID；下一步需要先生成实时推送预览并确认执行。"
+        )
+    display_row_limit = 100
+    if len(rows) > display_row_limit:
+        warnings.append(f"自动选材命中 {len(rows)} 个素材，页面先展示前 {display_row_limit} 个；总数和缺口统计仍按全部素材计算。")
+    if not filtered_candidates:
+        blocking_reasons.append("没有命中可用于创建计划的本地引力素材；请先更新引力素材并确认固定模式里的素材规则。")
+    if filtered_candidates and ready_pair_count == 0:
+        blocking_reasons.append("命中了引力素材，但目标账户都还没有可直接使用的媒体素材 ID；请先走实时推送预览确认。")
+
+    return {
+        "candidate_count": len(filtered_candidates),
+        "ready_material_count": len(ready_material_ids),
+        "ready_pair_count": ready_pair_count,
+        "pending_push_pairs": pending_push_pairs,
+        "lookback_days": lookback_days,
+        "selection_type": _text(material_selection.get("selection_type")) or "未配置",
+        "min_stat_cost": min_stat_cost,
+        "rows": rows[:display_row_limit],
+        "warnings": warnings,
+        "blocking_reasons": blocking_reasons,
+        "mode_material_selection": material_selection,
+        "mode_material_requirements": material_requirements,
+    }
+
+
+def _load_create_mode_config_for_preview(project_root: Path, path: str) -> dict[str, Any]:
+    if not path:
+        return {}
+    mode_path = project_root / path
+    try:
+        payload = json.loads(mode_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return {}
+    return dict(payload) if isinstance(payload, dict) else {}
+
+
+def _gravity_material_candidates(
+    *,
+    db_path: Path,
+    product: str,
+    material_type: str,
+    lookback_days: int,
+) -> list[dict[str, Any]]:
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT
+              psm.material_id,
+              psm.name,
+              psm.material_type,
+              psm.review_status,
+              psm.signature,
+              psm.create_time,
+              psm.first_seen_at,
+              psm.synced_at,
+              psm.payload_json,
+              COALESCE(MAX(CASE WHEN psmr.window_days = ? THEN psmr.stat_cost END), MAX(psmr.stat_cost), psm.cost_lookback, 0) AS stat_cost,
+              COALESCE(MAX(CASE WHEN psmr.window_days = ? THEN psmr.convert_cnt END), MAX(psmr.convert_cnt), 0) AS convert_cnt,
+              COALESCE(
+                MAX(CASE WHEN psmr.window_days = ? THEN psmr.roi_1day_cost_weighted END),
+                MAX(psmr.roi_1day_cost_weighted),
+                0
+              ) AS roi_1day_cost_weighted
+            FROM product_source_materials psm
+            LEFT JOIN product_source_material_metric_rollups psmr
+              ON psmr.product = psm.product
+             AND psmr.source_advertiser_id = psm.source_advertiser_id
+             AND psmr.material_id = psm.material_id
+            WHERE psm.product = ?
+              AND psm.source = 'gravity_engine'
+              AND psm.material_type = ?
+              AND psm.is_active = 1
+              AND psm.signature != ''
+            GROUP BY
+              psm.material_id, psm.name, psm.material_type, psm.review_status,
+              psm.signature, psm.create_time, psm.first_seen_at, psm.synced_at,
+              psm.payload_json, psm.cost_lookback
+            """,
+            (lookback_days, lookback_days, lookback_days, product, material_type),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _gravity_upload_coverage(
+    *,
+    db_path: Path,
+    product: str,
+    material_ids: list[str],
+    advertiser_ids: list[str],
+) -> dict[str, set[str]]:
+    material_ids = _unique_account_ids(material_ids)
+    advertiser_ids = _unique_account_ids(advertiser_ids)
+    if not material_ids or not advertiser_ids:
+        return {}
+    material_placeholders = ",".join("?" for _ in material_ids)
+    account_placeholders = ",".join("?" for _ in advertiser_ids)
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            f"""
+            SELECT gravity_material_id, target_advertiser_id
+            FROM gravity_upload_tasks
+            WHERE product = ?
+              AND status = 'completed'
+              AND video_id != ''
+              AND gravity_material_id IN ({material_placeholders})
+              AND target_advertiser_id IN ({account_placeholders})
+            """,
+            (product, *material_ids, *advertiser_ids),
+        ).fetchall()
+    coverage: dict[str, set[str]] = {}
+    for row in rows:
+        coverage.setdefault(_text(row["gravity_material_id"]), set()).add(_text(row["target_advertiser_id"]))
+    return coverage
+
+
+def _gravity_material_is_usable(row: dict[str, Any]) -> bool:
+    status = _text(row.get("review_status")).lower()
+    blocked_terms = ["禁用", "拒", "reject", "disable", "disabled", "unavailable"]
+    return not any(term in status for term in blocked_terms)
+
+
+def _sort_gravity_candidates(rows: list[dict[str, Any]], *, material_selection: dict[str, Any]) -> list[dict[str, Any]]:
+    selection_type = _text(material_selection.get("selection_type"))
+    sort_by = _text(material_selection.get("sort_by"))
+    if selection_type == "test_new" or sort_by in {"create_time_desc", "effective_create_date_desc"}:
+        return sorted(
+            rows,
+            key=lambda row: (_text(row.get("create_time") or row.get("first_seen_at")), _float(row.get("stat_cost"))),
+            reverse=True,
+        )
+    return sorted(
+        rows,
+        key=lambda row: (_float(row.get("stat_cost")), _float(row.get("convert_cnt")), _text(row.get("material_id"))),
+        reverse=True,
+    )
+
+
 def _derive_mode_key(path: Path) -> str:
     name = path.name
     for suffix in (".local.json", ".example.json", ".json"):
@@ -1486,3 +1764,22 @@ def _int(value: Any) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+def _float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _format_metric(value: Any) -> int | float:
+    number = _float(value)
+    return int(number) if number.is_integer() else round(number, 2)
+
+
+def _format_roi(value: Any) -> str:
+    number = _float(value)
+    if number <= 0:
+        return "-"
+    return f"{number:.2f}"

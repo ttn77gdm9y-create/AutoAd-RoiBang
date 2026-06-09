@@ -183,7 +183,7 @@ def test_create_plan_preview_returns_chinese_summary(tmp_path):
     assert "--execute" not in payload["raw"]["command"]
 
 
-def test_create_plan_preview_can_select_gravity_material_source(tmp_path):
+def test_create_plan_preview_blocks_gravity_source_without_local_materials(tmp_path):
     client = TestClient(create_app(project_root=tmp_path))
 
     response = client.post(
@@ -193,8 +193,12 @@ def test_create_plan_preview_can_select_gravity_material_source(tmp_path):
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["summary"]["status"] == "planned"
+    assert payload["summary"]["status"] == "blocked"
     assert {"label": "素材来源", "value": "引力素材库"} in payload["summary"]["items"]
+    assert {"label": "候选引力素材", "value": 0} in payload["summary"]["items"]
+    assert payload["summary"]["blocking_reasons"] == [
+        "没有命中可用于创建计划的本地引力素材；请先更新引力素材并确认固定模式里的素材规则。"
+    ]
     assert payload["table"]["columns"] == [
         "账户 ID",
         "账户名",
@@ -211,6 +215,121 @@ def test_create_plan_preview_can_select_gravity_material_source(tmp_path):
     assert "--material-source" in command
     assert command[command.index("--material-source") + 1] == "gravity_engine"
     assert "--execute" not in command
+
+
+def test_create_plan_preview_shows_gravity_auto_material_selection(tmp_path):
+    mode_dir = tmp_path / "configs" / "create-modes" / "diandian-hero"
+    mode_dir.mkdir(parents=True)
+    (mode_dir / "wx_pay_male_random_materials.local.json").write_text(
+        json.dumps(
+            {
+                "mode_key": "wx_pay_male_random_materials",
+                "display_name": "每付男包随机素材",
+                "product": "点点英雄",
+                "product_key": "diandian-hero",
+                "template_key": "wx_pay_general",
+                "material_requirements": {"material_type": "video", "materials_per_unit": 1},
+                "material_selection": {
+                    "lookback_days": 7,
+                    "selection_type": "high_spend",
+                    "min_stat_cost": 100,
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    db_path = tmp_path / "data" / "roibang_v2.sqlite3"
+    bootstrap_database(db_path)
+    with sqlite3.connect(db_path) as conn:
+        for material_id, name, stat_cost, convert_cnt in [
+            ("gravity-m-1", "引力素材A", 300.0, 8),
+            ("gravity-m-2", "引力素材B", 180.0, 3),
+        ]:
+            conn.execute(
+                """
+                INSERT INTO materials (
+                  material_id, name, material_type, video_id, review_status,
+                  cost_lookback, score, source, synced_at
+                ) VALUES (?, ?, 'video', '', '可用', ?, ?, 'gravity_engine', 'now')
+                """,
+                (material_id, name, stat_cost, stat_cost),
+            )
+            conn.execute(
+                """
+                INSERT INTO product_source_materials (
+                  product, source_advertiser_id, organization_id, material_id,
+                  video_id, name, material_type, review_status, signature, create_time,
+                  is_active, cost_lookback, score, payload_json, source, synced_at
+                ) VALUES (
+                  '点点英雄', 'gravity_engine_182', '182', ?, '', ?, 'video', '可用', ?,
+                  '2026-06-08T10:00:00+08:00', 1, ?, ?, ?, 'gravity_engine', 'now'
+                )
+                """,
+                (
+                    material_id,
+                    name,
+                    f"md5-{material_id}",
+                    stat_cost,
+                    stat_cost,
+                    json.dumps({"album_name": "黑旗-6480咸鱼-微小合集", "folder_name": "测试素材"}, ensure_ascii=False),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO product_source_material_metric_rollups (
+                  product, source_advertiser_id, organization_id, window_key, window_days,
+                  period_start, period_end, material_id, material_type, source_video_id,
+                  name, review_status, signature, stat_cost, convert_cnt,
+                  roi_1day_cost_weighted, source, synced_at
+                ) VALUES (
+                  '点点英雄', 'gravity_engine_182', '182', 'last_7d', 7,
+                  '2026-06-02', '2026-06-08', ?, 'video', '', ?, '可用', ?,
+                  ?, ?, 0.42, 'gravity_engine', 'now'
+                )
+                """,
+                (material_id, name, f"md5-{material_id}", stat_cost, convert_cnt),
+            )
+        conn.execute(
+            """
+            INSERT INTO gravity_upload_tasks (
+              product, gravity_material_id, signature, target_advertiser_id,
+              target_account_name, status, video_id, material_id_in_account,
+              created_at, updated_at
+            ) VALUES (
+              '点点英雄', 'gravity-m-1', 'md5-gravity-m-1', '1001',
+              '点点英雄-账户一', 'completed', 'v-uploaded-1', 'account-material-1',
+              'now', 'now'
+            )
+            """
+        )
+
+    response = TestClient(create_app(project_root=tmp_path)).post(
+        "/api/create-plans/preview",
+        json={**_create_plan_request(), "material_source": "gravity_engine"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["status"] == "warning"
+    assert {"label": "候选引力素材", "value": 2} in payload["summary"]["items"]
+    assert {"label": "已可直接用", "value": "1 个素材 / 1 个账户覆盖"} in payload["summary"]["items"]
+    assert {"label": "需要实时推送", "value": "3 个素材账户组合"} in payload["summary"]["items"]
+    assert "本步骤只做自动选材预览，不上传素材、不创建广告。" in payload["summary"]["warnings"]
+    section = next(section for section in payload["sections"] if section["title"] == "引力素材自动选材")
+    assert section["table"]["columns"] == [
+        "素材名",
+        "引力素材 ID",
+        "7天消耗",
+        "7天转化",
+        "ROI",
+        "推送覆盖",
+        "下一步",
+    ]
+    assert section["table"]["rows"][0]["素材名"] == "引力素材A"
+    assert section["table"]["rows"][0]["推送覆盖"] == "已可用 1/2 个账户"
+    assert section["table"]["rows"][0]["下一步"] == "缺失账户需实时推送"
+    assert payload["raw"]["gravity_material_selection"]["pending_push_pairs"] == 3
 
 
 def test_create_plan_templates_lists_configured_template_catalogs(tmp_path):

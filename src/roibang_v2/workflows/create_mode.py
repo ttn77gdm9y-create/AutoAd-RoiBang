@@ -166,6 +166,33 @@ def _product_config_path(cfg: dict[str, Any], mode_config: dict[str, Any]) -> Pa
     return product_dir / f"{product_key}.example.json"
 
 
+def _product_example_config_path(path: Path, cfg: dict[str, Any], mode_config: dict[str, Any]) -> Path | None:
+    product_key = _text(cfg.get("product_key") or mode_config.get("product_key"))
+    if not product_key:
+        name = path.name
+        for suffix in (".local.json", ".json", ".example.json"):
+            if name.endswith(suffix):
+                product_key = name[: -len(suffix)]
+                break
+    if not product_key:
+        return None
+    candidate = path.parent / f"{product_key}.example.json"
+    if candidate == path or not candidate.exists():
+        return None
+    return candidate
+
+
+def _deep_merge_config(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    result = dict(base)
+    for key, value in override.items():
+        base_value = result.get(key)
+        if isinstance(base_value, dict) and isinstance(value, dict):
+            result[key] = _deep_merge_config(base_value, value)
+        else:
+            result[key] = value
+    return result
+
+
 def _foundation(product_config: dict[str, Any]) -> dict[str, Any]:
     value = product_config.get("foundation")
     return dict(value) if isinstance(value, dict) else {}
@@ -206,6 +233,9 @@ def load_product_config(cfg: dict[str, Any], mode_config: dict[str, Any]) -> dic
     if path is None:
         return {}
     product_config = load_json(path)
+    example_path = _product_example_config_path(path, cfg, mode_config)
+    if example_path is not None:
+        product_config = _deep_merge_config(load_json(example_path), product_config)
     _validate_product_config(product_config)
     return product_config
 

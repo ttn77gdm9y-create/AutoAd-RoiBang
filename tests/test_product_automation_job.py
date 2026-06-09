@@ -3,6 +3,7 @@ from pathlib import Path
 
 from roibang_v2.workflows.product_automation_job import build_product_job_commands
 from roibang_v2.workflows.product_automation_job import build_product_job_request
+from roibang_v2.workflows.product_automation_job import load_product_configs
 from roibang_v2.workflows.product_automation_job import run_product_automation_job
 from roibang_v2.workflows.product_automation_job import workflow_for_job
 
@@ -44,6 +45,42 @@ def _product(tmp_path: Path) -> dict:
             "delivery_patrol": {"enabled": True},
         },
     }
+
+
+def test_load_product_configs_prefers_local_over_example_for_same_product_key(tmp_path: Path):
+    products_dir = tmp_path / "products"
+    products_dir.mkdir()
+    example = _product(tmp_path)
+    example["product_key"] = "yzt-wechat-mini-game"
+    example["product"] = "勇者突进"
+    local = {
+        **example,
+        "automation": {
+            **example["automation"],
+            "material_daily_sync": {"enabled": False},
+            "operation_log_sync": {"enabled": False},
+            "daily_report_sync": {"enabled": False},
+            "source_material_auto_push": {"enabled": False},
+            "source_material_preload": {"enabled": False, "target_scope": "allowed_accounts"},
+            "source_material_rollup": {"enabled": False},
+            "delivery_patrol": {"enabled": False},
+        },
+    }
+    (products_dir / "yzt-wechat-mini-game.example.json").write_text(json.dumps(example, ensure_ascii=False), encoding="utf-8")
+    (products_dir / "yzt-wechat-mini-game.local.json").write_text(json.dumps(local, ensure_ascii=False), encoding="utf-8")
+
+    products = load_product_configs(products_dir, product_key="yzt-wechat-mini-game")
+    commands = build_product_job_commands(
+        job="material_daily_sync",
+        products_dir=products_dir,
+        request_dir=tmp_path / "requests",
+        product_key="yzt-wechat-mini-game",
+    )
+
+    assert len(products) == 1
+    assert products[0]["_config_path"].endswith("yzt-wechat-mini-game.local.json")
+    assert products[0]["automation"]["material_daily_sync"]["enabled"] is False
+    assert commands == []
 
 
 def test_builds_material_daily_sync_request_from_product_config(tmp_path: Path):
