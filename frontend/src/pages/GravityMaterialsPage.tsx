@@ -81,13 +81,19 @@ const qualificationStatsConfig = [
 ];
 
 const GRAVITY_PRELOAD_TARGET_OWNER = "郭靖";
+const DEFAULT_MATERIAL_SORT = { sortBy: "引力创建时间", sortOrder: "descend" };
 
 export function GravityMaterialsPage() {
   const queryClient = useQueryClient();
   const [selectedProduct, setSelectedProduct] = useState("");
   const [keyword, setKeyword] = useState("");
+  const [albumFilter, setAlbumFilter] = useState("");
+  const [folderFilter, setFolderFilter] = useState("");
+  const [createdFrom, setCreatedFrom] = useState("");
+  const [createdTo, setCreatedTo] = useState("");
+  const [metricWindow, setMetricWindow] = useState<"7天" | "30天">("7天");
   const [materialPagination, setMaterialPagination] = useState({ current: 1, pageSize: DEFAULT_TABLE_PAGE_SIZE });
-  const [materialSort, setMaterialSort] = useState({ sortBy: "引力创建时间", sortOrder: "descend" });
+  const [materialSort, setMaterialSort] = useState(DEFAULT_MATERIAL_SORT);
   const [bindingForm, setBindingForm] = useState<BindingForm>(emptyBinding);
   const [saveResult, setSaveResult] = useState<ChineseResult | undefined>();
   const [deleteResult, setDeleteResult] = useState<ChineseResult | undefined>();
@@ -120,11 +126,27 @@ export function GravityMaterialsPage() {
     queryFn: () => apiGet<ChineseResult>("/accounts?status=active"),
   });
   const materials = useQuery({
-    queryKey: ["gravity-materials", "materials", selectedProduct, keyword, materialPagination.current, materialPagination.pageSize, materialSort],
+    queryKey: [
+      "gravity-materials",
+      "materials",
+      selectedProduct,
+      keyword,
+      albumFilter,
+      folderFilter,
+      createdFrom,
+      createdTo,
+      materialPagination.current,
+      materialPagination.pageSize,
+      materialSort,
+    ],
     queryFn: () => {
       const params = new URLSearchParams();
       params.set("product", selectedProduct);
       params.set("keyword", keyword);
+      params.set("album", albumFilter);
+      params.set("folder", folderFilter);
+      params.set("created_from", createdFrom);
+      params.set("created_to", createdTo);
       params.set("page", String(materialPagination.current));
       params.set("page_size", String(materialPagination.pageSize));
       params.set("sort_by", materialSort.sortBy);
@@ -147,6 +169,9 @@ export function GravityMaterialsPage() {
   const albumSelectOptions = useMemo(() => renderAlbumSelectOptions(albumChoiceGroups), [albumChoiceGroups]);
   const bindingRows = useMemo(() => bindingRowsFromResult(bindings.data), [bindings.data]);
   const qualificationStats = useMemo(() => summaryLookup(materials.data), [materials.data]);
+  const materialFilterOptions = useMemo(() => materialFilterOptionsFromResult(materials.data), [materials.data]);
+  const albumFilterOptions = useMemo(() => materialFilterOptions.albums.map((value) => ({ label: value, value })), [materialFilterOptions]);
+  const folderFilterOptions = useMemo(() => materialFilterOptions.folders.map((value) => ({ label: value, value })), [materialFilterOptions]);
   const uploadAccountOptions = useMemo(() => accountOptionsFromResult(accounts.data, selectedProduct), [accounts.data, selectedProduct]);
   const selectedTargetAccounts = useMemo(
     () =>
@@ -232,6 +257,13 @@ export function GravityMaterialsPage() {
     }
     setSelectedGravityTaskId((current) => (current && gravityTaskIds.includes(current) ? current : gravityTaskIds[0]));
   }, [gravityTaskIds]);
+
+  useEffect(() => {
+    setSelectedUploadMaterialIds([]);
+    setUploadPreviewResult(undefined);
+    setUploadExecuteResult(undefined);
+    setUploadStatusRefreshResult(undefined);
+  }, [selectedProduct, keyword, albumFilter, folderFilter, createdFrom, createdTo]);
 
   useEffect(() => {
     if (isTaskCompleted(statusRefreshCurrentStatus)) {
@@ -362,6 +394,13 @@ export function GravityMaterialsPage() {
     setSelectedProduct(product);
     setBindingForm((current) => ({ ...current, product }));
     setMaterialPagination((current) => ({ ...current, current: 1 }));
+    setKeyword("");
+    setAlbumFilter("");
+    setFolderFilter("");
+    setCreatedFrom("");
+    setCreatedTo("");
+    setMetricWindow("7天");
+    setMaterialSort(DEFAULT_MATERIAL_SORT);
     setSelectedUploadMaterialIds([]);
     setTargetAccountIds([]);
     setSyncPreviewResult(undefined);
@@ -724,10 +763,87 @@ export function GravityMaterialsPage() {
                 <Alert
                   type="info"
                   showIcon
-                  message="这里只展示可铺货素材：引力状态不是禁用、本地未停用、没有拒审、并且有 MD5。禁用素材不会出现在这张表里。"
+                  message="默认只展示可铺货素材，并按上传到引力的时间倒序排列，新素材排在前面。禁用、拒审、缺 MD5 或本地停用的素材不会出现在这张表里。"
                 />
-                <Row gutter={[12, 12]}>
-                  <Col xs={24} md={16}>
+                <Row gutter={[12, 12]} align="bottom">
+                  <Col xs={24} md={7}>
+                    <Space direction="vertical" size={4} className="full-width">
+                      <Typography.Text strong>专辑</Typography.Text>
+                      <Select
+                        allowClear
+                        showSearch
+                        className="full-width"
+                        value={albumFilter || undefined}
+                        options={albumFilterOptions}
+                        placeholder="全部专辑"
+                        optionFilterProp="label"
+                        onChange={(value) => {
+                          setAlbumFilter(String(value ?? ""));
+                          setFolderFilter("");
+                          setMaterialPagination((current) => ({ ...current, current: 1 }));
+                        }}
+                      />
+                    </Space>
+                  </Col>
+                  <Col xs={24} md={5}>
+                    <Space direction="vertical" size={4} className="full-width">
+                      <Typography.Text strong>文件夹</Typography.Text>
+                      <Select
+                        allowClear
+                        showSearch
+                        className="full-width"
+                        value={folderFilter || undefined}
+                        options={folderFilterOptions}
+                        placeholder="全部文件夹"
+                        optionFilterProp="label"
+                        onChange={(value) => {
+                          setFolderFilter(String(value ?? ""));
+                          setMaterialPagination((current) => ({ ...current, current: 1 }));
+                        }}
+                      />
+                    </Space>
+                  </Col>
+                  <Col xs={24} md={4}>
+                    <Space direction="vertical" size={4} className="full-width">
+                      <Typography.Text strong>表现窗口</Typography.Text>
+                      <Select
+                        className="full-width"
+                        value={metricWindow}
+                        options={[
+                          { label: "看 7 天表现", value: "7天" },
+                          { label: "看 30 天表现", value: "30天" },
+                        ]}
+                        onChange={(value) => setMetricWindow(value as "7天" | "30天")}
+                      />
+                    </Space>
+                  </Col>
+                  <Col xs={12} md={4}>
+                    <Space direction="vertical" size={4} className="full-width">
+                      <Typography.Text strong>引力上传起始</Typography.Text>
+                      <Input
+                        type="date"
+                        value={createdFrom}
+                        onChange={(event) => {
+                          setCreatedFrom(event.target.value);
+                          setMaterialPagination((current) => ({ ...current, current: 1 }));
+                        }}
+                      />
+                    </Space>
+                  </Col>
+                  <Col xs={12} md={4}>
+                    <Space direction="vertical" size={4} className="full-width">
+                      <Typography.Text strong>引力上传截止</Typography.Text>
+                      <Input
+                        type="date"
+                        value={createdTo}
+                        onChange={(event) => {
+                          setCreatedTo(event.target.value);
+                          setMaterialPagination((current) => ({ ...current, current: 1 }));
+                        }}
+                      />
+                    </Space>
+                  </Col>
+                  <Col xs={24} md={18}>
                     <Space direction="vertical" size={4} className="full-width">
                       <Typography.Text strong>搜索素材</Typography.Text>
                       <Input.Search
@@ -740,13 +856,33 @@ export function GravityMaterialsPage() {
                       />
                     </Space>
                   </Col>
+                  <Col xs={24} md={6}>
+                    <Space wrap className="gravity-material-filter-actions">
+                      <Button
+                        icon={<ReloadOutlined />}
+                        onClick={() => {
+                          setKeyword("");
+                          setAlbumFilter("");
+                          setFolderFilter("");
+                          setCreatedFrom("");
+                          setCreatedTo("");
+                          setMetricWindow("7天");
+                          setMaterialSort(DEFAULT_MATERIAL_SORT);
+                          setMaterialPagination((current) => ({ ...current, current: 1 }));
+                        }}
+                      >
+                        重置筛选
+                      </Button>
+                      <Tag color="blue">默认新素材优先</Tag>
+                    </Space>
+                  </Col>
                 </Row>
                 <Table<MaterialRow>
                   className={businessTableClassName("gravity-materials-table")}
                   rowKey={(row) => String(row["引力素材 ID"] ?? "")}
                   loading={materials.isLoading}
                   size="small"
-                  columns={materialColumns()}
+                  columns={materialColumns(materialSort, metricWindow)}
                   dataSource={materialRows}
                   sticky={businessTableSticky}
                   rowSelection={{
@@ -782,6 +918,8 @@ export function GravityMaterialsPage() {
                         sortBy: String(currentSorter.field ?? currentSorter.columnKey ?? "引力创建时间"),
                         sortOrder: currentSorter.order,
                       });
+                    } else {
+                      setMaterialSort(DEFAULT_MATERIAL_SORT);
                     }
                   }}
                 />
@@ -1119,22 +1257,38 @@ function materialTotalFromResult(result: ChineseResult | undefined, fallback: nu
   return Number.isFinite(total) ? total : fallback;
 }
 
-function materialColumns(): ColumnsType<MaterialRow> {
+function materialFilterOptionsFromResult(result: ChineseResult | undefined): { albums: string[]; folders: string[] } {
+  const options = result?.raw?.filter_options as { albums?: unknown; folders?: unknown } | undefined;
+  return {
+    albums: Array.isArray(options?.albums) ? options.albums.map(String).filter(Boolean) : [],
+    folders: Array.isArray(options?.folders) ? options.folders.map(String).filter(Boolean) : [],
+  };
+}
+
+function materialColumns(materialSort: { sortBy: string; sortOrder: string }, metricWindow: "7天" | "30天"): ColumnsType<MaterialRow> {
+  const sortOrder = (column: string) => (materialSort.sortBy === column ? (materialSort.sortOrder as "ascend" | "descend") : undefined);
+  const costColumn = `${metricWindow}消耗`;
+  const convertColumn = `${metricWindow}转化`;
+  const roiColumn = `${metricWindow}ROI`;
   return [
-    { title: "专辑", dataIndex: "专辑", width: 180, sorter: true },
-    { title: "素材名", dataIndex: "素材名", width: 260, ellipsis: true, sorter: true },
-    { title: "7天消耗", dataIndex: "7天消耗", width: 112, sorter: true, render: renderEmpty },
-    { title: "7天转化", dataIndex: "7天转化", width: 112, sorter: true, render: renderEmpty },
-    { title: "7天ROI", dataIndex: "7天ROI", width: 112, sorter: true, render: renderEmpty },
-    { title: "30天消耗", dataIndex: "30天消耗", width: 120, sorter: true, render: renderEmpty },
-    { title: "30天转化", dataIndex: "30天转化", width: 120, sorter: true, render: renderEmpty },
-    { title: "30天ROI", dataIndex: "30天ROI", width: 120, sorter: true, render: renderEmpty },
-    { title: "引力素材 ID", dataIndex: "引力素材 ID", width: 160, ellipsis: true, sorter: true },
-    { title: "MD5", dataIndex: "MD5", width: 180, ellipsis: true, sorter: true, render: renderEmpty },
-    { title: "引力创建时间", dataIndex: "引力创建时间", width: 190, sorter: true, render: renderEmpty },
-    { title: "最近同步时间", dataIndex: "最近同步时间", width: 190, sorter: true, render: renderEmpty },
+    { title: "专辑", dataIndex: "专辑", width: 190, ellipsis: true, sorter: true, sortOrder: sortOrder("专辑") },
+    { title: "文件夹", dataIndex: "文件夹", width: 160, ellipsis: true, sorter: true, sortOrder: sortOrder("文件夹"), render: renderEmpty },
+    { title: "素材名", dataIndex: "素材名", width: 280, ellipsis: true, sorter: true, sortOrder: sortOrder("素材名") },
+    { title: costColumn, dataIndex: costColumn, width: 120, sorter: true, sortOrder: sortOrder(costColumn), render: renderEmpty },
+    { title: convertColumn, dataIndex: convertColumn, width: 120, sorter: true, sortOrder: sortOrder(convertColumn), render: renderEmpty },
+    { title: roiColumn, dataIndex: roiColumn, width: 112, sorter: true, sortOrder: sortOrder(roiColumn), render: renderEmpty },
+    { title: "引力素材 ID", dataIndex: "引力素材 ID", width: 160, ellipsis: true, sorter: true, sortOrder: sortOrder("引力素材 ID") },
+    { title: "MD5", dataIndex: "MD5", width: 180, ellipsis: true, sorter: true, sortOrder: sortOrder("MD5"), render: renderEmpty },
+    {
+      title: "上传到引力时间",
+      dataIndex: "引力创建时间",
+      width: 190,
+      sorter: true,
+      sortOrder: sortOrder("引力创建时间"),
+      render: renderEmpty,
+    },
+    { title: "最近同步时间", dataIndex: "最近同步时间", width: 190, sorter: true, sortOrder: sortOrder("最近同步时间"), render: renderEmpty },
     { title: "推送覆盖情况", dataIndex: "推送覆盖情况", width: 170, render: renderEmpty },
-    { title: "文件夹", dataIndex: "文件夹", width: 160, ellipsis: true, sorter: true, render: renderEmpty },
   ];
 }
 

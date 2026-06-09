@@ -283,6 +283,16 @@ body {
   margin-top: 6px;
 }
 
+.gravity-material-filter-actions {
+  width: 100%;
+  align-items: flex-end;
+  padding-top: 24px;
+}
+
+.gravity-materials-table .ant-table-thead > tr > th {
+  background: #f8fafc;
+}
+
 .gravity-preload-stats {
   display: flex;
   flex-wrap: wrap;

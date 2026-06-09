@@ -254,6 +254,10 @@ def list_gravity_materials(
     product: str = "",
     status: str = "",
     keyword: str = "",
+    album: str = "",
+    folder: str = "",
+    created_from: str = "",
+    created_to: str = "",
     limit: int = 100,
     page: int = 1,
     page_size: int = 100,
@@ -264,8 +268,15 @@ def list_gravity_materials(
     db_path = database_path(root)
     bootstrap_database(db_path)
     all_rows = _material_rows(db_path, product=product, keyword=keyword)
-    counts = qualification_summary(all_rows)
-    usable_rows = _visible_material_rows(all_rows, status=status)
+    filtered_rows = _filtered_material_rows(
+        all_rows,
+        album=album,
+        folder=folder,
+        created_from=created_from,
+        created_to=created_to,
+    )
+    counts = qualification_summary(filtered_rows)
+    usable_rows = _visible_material_rows(filtered_rows, status=status)
     sorted_rows = _sort_material_rows(usable_rows, sort_by=sort_by, sort_order=sort_order)
     pagination = _pagination(page=page, page_size=page_size, total=len(sorted_rows), fallback_limit=limit)
     rows = sorted_rows[pagination["offset"] : pagination["offset"] + pagination["page_size"]]
@@ -370,6 +381,13 @@ def list_gravity_materials(
                 "total": len(sorted_rows),
                 "total_pages": pagination["total_pages"],
             },
+            "filters": {
+                "album": _text(album),
+                "folder": _text(folder),
+                "created_from": _text(created_from),
+                "created_to": _text(created_to),
+            },
+            "filter_options": _material_filter_options(all_rows),
             "visible_scope": "可铺货素材",
             "target_owner": GRAVITY_PRELOAD_TARGET_OWNER,
             "active_target_account_count": len(active_account_ids),
@@ -766,6 +784,43 @@ def _visible_material_rows(rows: list[dict[str, Any]], *, status: str) -> list[d
     return [row for row in rows if bool(row.get("is_eligible_for_next_step"))]
 
 
+def _filtered_material_rows(
+    rows: list[dict[str, Any]],
+    *,
+    album: str,
+    folder: str,
+    created_from: str,
+    created_to: str,
+) -> list[dict[str, Any]]:
+    album_text = _text(album)
+    folder_text = _text(folder)
+    from_date = _date_text(created_from)
+    to_date = _date_text(created_to)
+    result = []
+    for row in rows:
+        if album_text and _text(row.get("album_name")) != album_text:
+            continue
+        if folder_text and _text(row.get("folder_name")) != folder_text:
+            continue
+        create_date = _date_text(row.get("create_time"))
+        if from_date and create_date and create_date < from_date:
+            continue
+        if from_date and not create_date:
+            continue
+        if to_date and create_date and create_date > to_date:
+            continue
+        if to_date and not create_date:
+            continue
+        result.append(row)
+    return result
+
+
+def _material_filter_options(rows: list[dict[str, Any]]) -> dict[str, list[str]]:
+    albums = sorted({_text(row.get("album_name")) for row in rows if _text(row.get("album_name"))})
+    folders = sorted({_text(row.get("folder_name")) for row in rows if _text(row.get("folder_name"))})
+    return {"albums": albums, "folders": folders}
+
+
 def _sort_material_rows(rows: list[dict[str, Any]], *, sort_by: str, sort_order: str) -> list[dict[str, Any]]:
     key = _text(sort_by) or "引力创建时间"
     reverse = _text(sort_order) != "ascend"
@@ -815,6 +870,13 @@ def _metric_sort_number(value: Any, has_metric: Any) -> float:
         return float(value or 0)
     except (TypeError, ValueError):
         return -1
+
+
+def _date_text(value: Any) -> str:
+    text = _text(value)
+    if len(text) >= 10:
+        return text[:10]
+    return text
 
 
 def _metric_value(value: Any, has_metric: Any) -> float | int | str:

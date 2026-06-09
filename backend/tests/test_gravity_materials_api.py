@@ -485,6 +485,104 @@ def test_gravity_materials_list_paginates_and_sorts_on_backend(tmp_path: Path):
     assert [row["引力素材 ID"] for row in payload["table"]["rows"]] == ["gravity-low"]
 
 
+def test_gravity_materials_list_defaults_to_newest_gravity_create_time_first(tmp_path: Path):
+    db_path = tmp_path / "data" / "roibang_v2.sqlite3"
+    bootstrap_database(db_path)
+    with sqlite3.connect(db_path) as conn:
+        for material_id, name, create_time in [
+            ("gravity-old", "老素材", "2026-05-01T10:00:00+08:00"),
+            ("gravity-new", "新素材", "2026-06-08T10:00:00+08:00"),
+            ("gravity-mid", "中间素材", "2026-06-01T10:00:00+08:00"),
+        ]:
+            conn.execute(
+                """
+                INSERT INTO product_source_materials (
+                  product, source_advertiser_id, organization_id, material_id,
+                  video_id, name, material_type, review_status, signature,
+                  duration, file_size, create_time, tag_ids_json, is_active,
+                  first_seen_at, last_seen_at, cost_lookback, score,
+                  payload_json, source, synced_at
+                ) VALUES (
+                  '点点英雄', 'gravity_engine_182', '182', ?,
+                  '', ?, 'video', '可用', ?,
+                  15, 2048, ?, '[]', 1,
+                  'now', 'now', 0, 0,
+                  '{"album_name":"点点英雄专辑","folder_name":"6月新素材","status":1}', 'gravity_engine', 'now'
+                )
+                """,
+                (material_id, name, f"md5-{material_id}", create_time),
+            )
+
+    response = _client(tmp_path).get(
+        "/api/gravity-materials/materials",
+        params={"product": "点点英雄", "page": 1, "page_size": 100},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert [row["引力素材 ID"] for row in payload["table"]["rows"]] == [
+        "gravity-new",
+        "gravity-mid",
+        "gravity-old",
+    ]
+
+
+def test_gravity_materials_list_filters_by_album_folder_and_create_time(tmp_path: Path):
+    db_path = tmp_path / "data" / "roibang_v2.sqlite3"
+    bootstrap_database(db_path)
+    with sqlite3.connect(db_path) as conn:
+        for material_id, name, album_name, folder_name, create_time in [
+            ("gravity-a-old", "A老素材", "黑旗-6480咸鱼-微小合集", "老素材", "2026-05-01T10:00:00+08:00"),
+            ("gravity-a-new", "A新素材", "黑旗-6480咸鱼-微小合集", "新素材", "2026-06-08T10:00:00+08:00"),
+            ("gravity-b-new", "B新素材", "魔兽开箱子", "新素材", "2026-06-08T10:00:00+08:00"),
+        ]:
+            conn.execute(
+                """
+                INSERT INTO product_source_materials (
+                  product, source_advertiser_id, organization_id, material_id,
+                  video_id, name, material_type, review_status, signature,
+                  duration, file_size, create_time, tag_ids_json, is_active,
+                  first_seen_at, last_seen_at, cost_lookback, score,
+                  payload_json, source, synced_at
+                ) VALUES (
+                  '点点英雄', 'gravity_engine_182', '182', ?,
+                  '', ?, 'video', '可用', ?,
+                  15, 2048, ?, '[]', 1,
+                  'now', 'now', 0, 0,
+                  ?, 'gravity_engine', 'now'
+                )
+                """,
+                (
+                    material_id,
+                    name,
+                    f"md5-{material_id}",
+                    create_time,
+                    json.dumps({"album_name": album_name, "folder_name": folder_name, "status": 1}, ensure_ascii=False),
+                ),
+            )
+
+    response = _client(tmp_path).get(
+        "/api/gravity-materials/materials",
+        params={
+            "product": "点点英雄",
+            "album": "黑旗-6480咸鱼-微小合集",
+            "folder": "新素材",
+            "created_from": "2026-06-01",
+            "created_to": "2026-06-30",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert [row["引力素材 ID"] for row in payload["table"]["rows"]] == ["gravity-a-new"]
+    assert payload["raw"]["filters"] == {
+        "album": "黑旗-6480咸鱼-微小合集",
+        "folder": "新素材",
+        "created_from": "2026-06-01",
+        "created_to": "2026-06-30",
+    }
+
+
 def test_gravity_preload_preview_uses_active_accounts_and_usable_materials(tmp_path: Path):
     db_path = tmp_path / "data" / "roibang_v2.sqlite3"
     bootstrap_database(db_path)
